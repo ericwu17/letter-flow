@@ -58,17 +58,17 @@ void World::advance_tick() {
             generate_letters(id);
     }
 
-    // 2. Departures: fire every schedule that has come due.
+    // 2. Departures: fire every schedule that has come due. A single pass is
+    //    safe: spawn_truck() only touches the office's letters buffer and the
+    //    trucks vector — never the schedules vector being iterated here — and
+    //    post_offices itself does not grow during a tick.
     for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
-        for (const TruckSchedule& schedule : post_offices[id].outbound_schedules) {
-            if (schedule.period > 0 && current_tick >= schedule.next_departure)
-                spawn_truck(id, schedule);
-        }
-        // Advance due dates separately: spawn_truck() touches the letters
-        // buffer, and we don't want iterators into it while it is modified.
         for (TruckSchedule& schedule : post_offices[id].outbound_schedules) {
-            while (schedule.period > 0 && current_tick >= schedule.next_departure)
-                schedule.next_departure += schedule.period;
+            if (schedule.period == 0 || current_tick < schedule.next_departure)
+                continue;
+            spawn_truck(id, schedule);  // at most one truck per schedule per tick...
+            while (current_tick >= schedule.next_departure)
+                schedule.next_departure += schedule.period;  // ...missed departures are skipped
         }
     }
 
@@ -174,6 +174,24 @@ void World::remove_schedule(PostOfficeId src, std::size_t schedule_index) {
         schedules.erase(schedules.begin() + static_cast<std::ptrdiff_t>(schedule_index));
 }
 
+PostOfficeId World::add_office(std::string name, Position pos,
+                               std::size_t letters_per_day,
+                               std::size_t max_outbound_letters) {
+    PostOffice office;
+    office.name = std::move(name);
+    office.pos = pos;
+    office.letters_per_day = letters_per_day;
+    office.max_outbound_letters = max_outbound_letters;
+    const PostOfficeId id = post_offices.size();
+    post_offices.push_back(std::move(office));
+    return id;
+}
+
+void World::seed_letters() {
+    for (PostOfficeId id = 0; id < post_offices.size(); ++id)
+        generate_letters(id);
+}
+
 // ---------------------------------------------------------------------------
 // Starter scenario
 // ---------------------------------------------------------------------------
@@ -192,29 +210,23 @@ World create_default_world() {
         {"Southvale", {740.0f, 520.0f}, 8},
         {"Westbrook", {240.0f, 500.0f}, 6},
     };
-    for (const OfficeDef& def : defs) {
-        PostOffice office;
-        office.name = def.name;
-        office.pos = def.pos;
-        office.letters_per_day = def.letters_per_day;
-        office.max_outbound_letters = 60;
-        world.post_offices.push_back(std::move(office));
-    }
+    for (const OfficeDef& def : defs)
+        world.add_office(def.name, def.pos, def.letters_per_day, /*max_outbound_letters=*/60);
 
     // The basic routing rule only loads letters addressed directly to the
     // truck's destination, so every office needs a route to every other one.
     // (Removing routes in the UI and watching letters pile up / go late is
     // the interesting part of this toy.)
     const Tick default_period = 900;  // one truck every 15 seconds
-    for (PostOfficeId src = 0; src < world.post_offices.size(); ++src)
-        for (PostOfficeId dst = 0; dst < world.post_offices.size(); ++dst)
+    const std::size_t num_offices = world.get_post_offices().size();
+    for (PostOfficeId src = 0; src < num_offices; ++src)
+        for (PostOfficeId dst = 0; dst < num_offices; ++dst)
             world.add_schedule(src, dst, default_period);
 
     // Seed day one's letters immediately so the game is in motion from tick 0
     // (the day-boundary generation would otherwise leave the map empty for
     // the first three minutes).
-    for (PostOfficeId id = 0; id < world.post_offices.size(); ++id)
-        world.generate_letters(id);
+    world.seed_letters();
 
     return world;
 }

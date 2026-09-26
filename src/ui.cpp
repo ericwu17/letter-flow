@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <optional>
 
 namespace {
 
@@ -55,19 +56,20 @@ void DrawWorld(const World& world) {
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const ViewTransform view = ComputeViewTransform();
     const float office_radius = 14.0f * view.scale;
+    const std::vector<PostOffice>& offices = world.get_post_offices();
 
     // Schedule routes (faint lines under everything).
-    for (PostOfficeId src = 0; src < world.post_offices.size(); ++src) {
-        const ImVec2 a = WorldToScreen(view, world.post_offices[src].pos);
-        for (const TruckSchedule& schedule : world.post_offices[src].outbound_schedules) {
-            const ImVec2 b = WorldToScreen(view, world.post_offices[schedule.dst].pos);
+    for (PostOfficeId src = 0; src < offices.size(); ++src) {
+        const ImVec2 a = WorldToScreen(view, offices[src].pos);
+        for (const TruckSchedule& schedule : offices[src].outbound_schedules) {
+            const ImVec2 b = WorldToScreen(view, offices[schedule.dst].pos);
             draw->AddLine(a, b, IM_COL32(110, 120, 150, 70), 1.5f);
         }
     }
 
     // Post offices.
-    for (PostOfficeId id = 0; id < world.post_offices.size(); ++id) {
-        const PostOffice& office = world.post_offices[id];
+    for (PostOfficeId id = 0; id < offices.size(); ++id) {
+        const PostOffice& office = offices[id];
         const ImVec2 c = WorldToScreen(view, office.pos);
         if (id == g_selected_office)
             draw->AddCircle(c, office_radius + 5.0f, IM_COL32(255, 200, 80, 255), 0, 2.5f);
@@ -86,8 +88,8 @@ void DrawWorld(const World& world) {
 
     // Trucks in transit (position is derived from the tick, so they animate
     // smoothly as the simulation advances and freeze when it is paused).
-    for (const Truck& truck : world.trucks) {
-        const ImVec2 c = WorldToScreen(view, truck.get_position(world.current_tick));
+    for (const Truck& truck : world.get_trucks()) {
+        const ImVec2 c = WorldToScreen(view, truck.get_position(world.get_tick()));
         const float r = 5.5f * view.scale;
         draw->AddRectFilled({c.x - r, c.y - r}, {c.x + r, c.y + r}, IM_COL32(240, 150, 60, 255));
         draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r}, IM_COL32(30, 30, 30, 255));
@@ -97,8 +99,8 @@ void DrawWorld(const World& world) {
     // ImGui window (HUD/inspector), so the map ignores those clicks.
     ImGuiIO& io = ImGui::GetIO();
     if (io.MouseClicked[0] && !io.WantCaptureMouse) {
-        for (PostOfficeId id = 0; id < world.post_offices.size(); ++id) {
-            const ImVec2 c = WorldToScreen(view, world.post_offices[id].pos);
+        for (PostOfficeId id = 0; id < offices.size(); ++id) {
+            const ImVec2 c = WorldToScreen(view, offices[id].pos);
             const float dx = io.MousePos.x - c.x;
             const float dy = io.MousePos.y - c.y;
             const float hit_radius = office_radius + 6.0f;
@@ -118,18 +120,18 @@ void DrawHUD(World& world) {
     static bool show_imgui_demo = false;
 
     ImGui::Begin("Letter Flow");
-    const unsigned long long day = world.current_tick / kTicksPerDay + 1;
-    const float day_fraction = static_cast<float>(world.current_tick % kTicksPerDay) / static_cast<float>(kTicksPerDay);
-    ImGui::Text("Day %llu  (tick %llu)", day, static_cast<unsigned long long>(world.current_tick));
+    const unsigned long long day = world.get_tick() / kTicksPerDay + 1;
+    const float day_fraction = static_cast<float>(world.get_tick() % kTicksPerDay) / static_cast<float>(kTicksPerDay);
+    ImGui::Text("Day %llu  (tick %llu)", day, static_cast<unsigned long long>(world.get_tick()));
     ImGui::ProgressBar(day_fraction);
     ImGui::Separator();
-    ImGui::Text("Money: %d", world.money);
-    ImGui::Text("Delivered on time: %zu", world.letters_delivered_on_time);
-    ImGui::Text("Delivered late: %zu", world.letters_delivered_late);
-    ImGui::Text("Trucks en route: %zu", world.trucks.size());
+    ImGui::Text("Money: %d", world.get_money());
+    ImGui::Text("Delivered on time: %zu", world.get_letters_delivered_on_time());
+    ImGui::Text("Delivered late: %zu", world.get_letters_delivered_late());
+    ImGui::Text("Trucks en route: %zu", world.get_trucks().size());
     ImGui::Separator();
-    if (ImGui::Button(world.paused ? "Resume" : "Pause", ImVec2(90.0f, 0.0f)))
-        world.paused = !world.paused;
+    if (ImGui::Button(world.is_paused() ? "Resume" : "Pause", ImVec2(90.0f, 0.0f)))
+        world.set_paused(!world.is_paused());
     ImGui::SameLine();
     ImGui::Checkbox("ImGui demo", &show_imgui_demo);
     ImGui::TextDisabled("Click an office to inspect it.");
@@ -145,18 +147,19 @@ void DrawHUD(World& world) {
 // ---------------------------------------------------------------------------
 
 void DrawInspector(World& world) {
-    if (g_selected_office >= world.post_offices.size())
-        g_selected_office = 0;
-    if (world.post_offices.empty())
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    if (offices.empty())
         return;
-    const PostOffice& office = world.post_offices[g_selected_office];
+    if (g_selected_office >= offices.size())
+        g_selected_office = 0;
+    const PostOffice& office = offices[g_selected_office];
 
     ImGui::Begin("Post office");
 
     // Office picker (map clicking is the other way to change selection).
     if (ImGui::BeginCombo("Office", office.name.c_str())) {
-        for (PostOfficeId id = 0; id < world.post_offices.size(); ++id) {
-            if (ImGui::Selectable(world.post_offices[id].name.c_str(), id == g_selected_office))
+        for (PostOfficeId id = 0; id < offices.size(); ++id) {
+            if (ImGui::Selectable(offices[id].name.c_str(), id == g_selected_office))
                 g_selected_office = id;
         }
         ImGui::EndCombo();
@@ -176,9 +179,9 @@ void DrawInspector(World& world) {
             for (const Letter& letter : office.outbound_letters) {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(world.post_offices[letter.dst].name.c_str());
+                ImGui::TextUnformatted(offices[letter.dst].name.c_str());
                 ImGui::TableSetColumnIndex(1);
-                const long long remaining = static_cast<long long>(letter.deadline) - static_cast<long long>(world.current_tick);
+                const long long remaining = static_cast<long long>(letter.deadline) - static_cast<long long>(world.get_tick());
                 if (remaining >= 0)
                     ImGui::Text("%lld ticks", remaining);
                 else
@@ -193,34 +196,37 @@ void DrawInspector(World& world) {
     }
 
     if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
-        bool removed = false;
-        for (std::size_t i = 0; i < office.outbound_schedules.size() && !removed; ++i) {
+        // Record the removal and apply it after the loop: remove_schedule()
+        // erases from the very vector we are iterating, which would invalidate
+        // the `schedule` reference and shift the indices of every later row.
+        std::optional<std::size_t> schedule_to_remove;
+        for (std::size_t i = 0; i < office.outbound_schedules.size(); ++i) {
             const TruckSchedule& schedule = office.outbound_schedules[i];
-            const long long until = static_cast<long long>(schedule.next_departure) - static_cast<long long>(world.current_tick);
+            const long long until = static_cast<long long>(schedule.next_departure) - static_cast<long long>(world.get_tick());
             ImGui::Text("to %s every %llu ticks (next in %lld)",
-                        world.post_offices[schedule.dst].name.c_str(),
+                        offices[schedule.dst].name.c_str(),
                         static_cast<unsigned long long>(schedule.period), until);
             ImGui::SameLine();
             ImGui::PushID(static_cast<int>(i));
-            if (ImGui::SmallButton("Remove")) {
-                world.remove_schedule(g_selected_office, i);
-                removed = true;
-            }
+            if (ImGui::SmallButton("Remove"))
+                schedule_to_remove = i;
             ImGui::PopID();
         }
+        if (schedule_to_remove.has_value())
+            world.remove_schedule(g_selected_office, *schedule_to_remove);
 
         ImGui::SeparatorText("Add route");
         static int new_period_ticks = 900;
         ImGui::InputInt("period (ticks)", &new_period_ticks);
         new_period_ticks = std::max(new_period_ticks, 60);
-        for (PostOfficeId other = 0; other < world.post_offices.size(); ++other) {
+        for (PostOfficeId other = 0; other < offices.size(); ++other) {
             if (other == g_selected_office)
                 continue;
             char label[96];
-            std::snprintf(label, sizeof(label), "Route to %s", world.post_offices[other].name.c_str());
+            std::snprintf(label, sizeof(label), "Route to %s", offices[other].name.c_str());
             if (ImGui::Button(label))
                 world.add_schedule(g_selected_office, other, static_cast<Tick>(new_period_ticks));
-            if (other + 1 < world.post_offices.size())
+            if (other + 1 < offices.size())
                 ImGui::SameLine();
         }
     }

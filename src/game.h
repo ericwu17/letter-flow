@@ -119,28 +119,40 @@ private:
 
     std::mt19937 rng{20260926u};  // fixed seed -> fully deterministic simulation
 
+    // Simulation internals, driven by advance_tick() / seed_letters().
+    void generate_letters(PostOfficeId office);
+    void spawn_truck(PostOfficeId src, const TruckSchedule& schedule);
+    void deliver(Truck& truck);
+
 public:
     // Advances the simulation by one tick: daily letter generation, schedule
     // departures, truck arrivals and delivery/scoring.
     void advance_tick();
 
+    // Scenario construction. create_default_world() builds the starter map
+    // entirely through this public API — no friendship required.
+    PostOfficeId add_office(std::string name, Position pos,
+                            std::size_t letters_per_day,
+                            std::size_t max_outbound_letters);
+    // Fills every office's buffer with one day's worth of letters right away,
+    // so a scenario starts in motion instead of waiting for the first day
+    // boundary.
+    void seed_letters();
+
     // Player actions (called from the UI).
     void add_schedule(PostOfficeId src, PostOfficeId dst, Tick period);
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
+    void set_paused(bool p) { paused = p; }
 
-    // Internals — public only so create_default_world() can seed the first day.
-    void generate_letters(PostOfficeId office);
-    void spawn_truck(PostOfficeId src, const TruckSchedule& schedule);
-    void deliver(Truck& truck);
-
-    bool is_paused() const {
-        return paused;
-    }
-
-    friend World create_default_world();
-    friend void DrawWorld(const World& world);
-    friend void DrawHUD(World& world);
-    friend void DrawInspector(World& world);
+    // Read-only access for the presentation layer. Named with the same get_*
+    // convention as Truck's accessors above.
+    Tick get_tick() const { return current_tick; }
+    bool is_paused() const { return paused; }
+    int get_money() const { return money; }
+    std::size_t get_letters_delivered_on_time() const { return letters_delivered_on_time; }
+    std::size_t get_letters_delivered_late() const { return letters_delivered_late; }
+    const std::vector<PostOffice>& get_post_offices() const { return post_offices; }
+    const std::vector<Truck>& get_trucks() const { return trucks; }
 };
 
 // A small starter scenario: four offices, fully connected by default routes.
