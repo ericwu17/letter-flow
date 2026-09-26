@@ -6,22 +6,34 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 
 namespace {
 
-// Currently selected office (clicked on the map or picked in the inspector).
-PostOfficeId g_selected_office = 0;
-
-// ---------------------------------------------------------------------------
-// World -> screen mapping: scale the fixed-size world to fit the display.
-// ---------------------------------------------------------------------------
-
 struct ViewTransform {
     float scale = 1.0f;
     ImVec2 offset = {0.0f, 0.0f};
 };
+
+struct CameraState {
+    float zoom = 1.0f;
+    ImVec2 pan = {0.0f, 0.0f};
+};
+
+// Currently selected office (clicked on the map or picked in the inspector).
+PostOfficeId g_selected_office = 0;
+CameraState g_camera;
+constexpr float kZoomStep = 1.2;
+constexpr float kPanStep = 5.0;
+constexpr float kZoomMin = 0.5;
+constexpr float kZoomMax = 8.0;
+
+// ---------------------------------------------------------------------------
+// World -> screen mapping: scale the fixed-size world to fit the display,
+// then apply the camera on top.
+// ---------------------------------------------------------------------------
 
 ViewTransform ComputeViewTransform() {
     ImGuiIO& io = ImGui::GetIO();
@@ -32,7 +44,49 @@ ViewTransform ComputeViewTransform() {
     vt.scale = std::min(avail_w / kWorldWidth, avail_h / kWorldHeight);
     vt.offset.x = margin + (avail_w - kWorldWidth * vt.scale) * 0.5f;
     vt.offset.y = margin + (avail_h - kWorldHeight * vt.scale) * 0.5f;
+
+    // Zoom about the display center c rather than about the world origin:
+    //     screen = c + (fit(world) - c) * zoom + pan
+    // The fit transform maps the world center to c, so this keeps the point
+    // under the display center pinned there for any zoom. Expanding into the
+    // usual screen = offset + world * scale form gives the offset below.
+    const ImVec2 c = {io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f};
+    const ImVec2 fit_offset = vt.offset;
+    const float zoom = g_camera.zoom;
+    vt.scale *= zoom;
+    vt.offset.x = c.x - (c.x - fit_offset.x) * zoom + g_camera.pan.x;
+    vt.offset.y = c.y - (c.y - fit_offset.y) * zoom + g_camera.pan.y;
+
     return vt;
+}
+
+void UpdateCamera() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantCaptureMouse && io.MouseWheel != 0) {
+        const float old_zoom = g_camera.zoom;
+        const float new_zoom = std::clamp(old_zoom * std::pow(kZoomStep, io.MouseWheel),
+                                          kZoomMin, kZoomMax);
+        // `pan` is applied in screen pixels *after* the zoom, so once the view
+        // has been panned, the world point under the display center is no
+        // longer the world center. Rescaling the pan by the zoom ratio keeps
+        // that under-center point pinned there through the zoom.
+        const float pan_scale = new_zoom / old_zoom;
+        g_camera.pan.x *= pan_scale;
+        g_camera.pan.y *= pan_scale;
+        g_camera.zoom = new_zoom;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_D)) {
+        g_camera.pan.x -= kPanStep;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_A)) {
+        g_camera.pan.x += kPanStep;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_S)) {
+        g_camera.pan.y -= kPanStep;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_W)) {
+        g_camera.pan.y += kPanStep;
+    }
 }
 
 ImVec2 WorldToScreen(const ViewTransform& vt, Position p) {
@@ -146,6 +200,9 @@ TransportLayout ComputeTransportLayout(const World& world) {
 // ---------------------------------------------------------------------------
 
 void DrawWorld(const World& world) {
+
+    UpdateCamera();
+
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const ViewTransform view = ComputeViewTransform();
     const float office_radius = 14.0f * view.scale;
