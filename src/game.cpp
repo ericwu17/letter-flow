@@ -1,0 +1,220 @@
+// game.cpp — simulation rules. Pure logic, no rendering, no input.
+#include "game.h"
+
+#include <cmath>
+#include <utility>
+
+// ---------------------------------------------------------------------------
+// Truck motion helpers
+// ---------------------------------------------------------------------------
+
+float Truck::route_length() const {
+    const float dx = to.x - from.x;
+    const float dy = to.y - from.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+Position Truck::get_position( Tick now) const {
+    const float length = route_length();
+    if (length < 1e-6f)
+        return to;
+    const Tick elapsed = (now > departure_tick) ? (now - departure_tick) : 0;
+    float fraction = (static_cast<float>(elapsed) * speed) / length;
+    if (fraction > 1.0f)
+        fraction = 1.0f;
+    return {
+        from.x + (to.x - from.x) * fraction,
+        from.y + (to.y - from.y) * fraction,
+    };
+}
+
+bool Truck::has_arrived(Tick now) const {
+    const Tick elapsed = (now > departure_tick) ? (now - departure_tick) : 0;
+    return static_cast<float>(elapsed) * speed >= route_length();
+}
+void Truck::push_back_letter(Letter letter) {
+    carried_letters.push_back(std::move(letter));
+}
+std::size_t Truck::get_num_letters() const {
+    return carried_letters.size();
+}
+std::vector<Letter>const& Truck::get_letters() const {
+    return carried_letters;
+}
+void Truck::clear_letters() {
+    carried_letters.clear();
+}
+
+// ---------------------------------------------------------------------------
+// World
+// ---------------------------------------------------------------------------
+
+void World::advance_tick() {
+    current_tick += 1;
+
+    // 1. Day boundary: every office produces its daily batch of letters.
+    if (current_tick % kTicksPerDay == 0) {
+        for (PostOfficeId id = 0; id < post_offices.size(); ++id)
+            generate_letters(id);
+    }
+
+    // 2. Departures: fire every schedule that has come due.
+    for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
+        for (const TruckSchedule& schedule : post_offices[id].outbound_schedules) {
+            if (schedule.period > 0 && current_tick >= schedule.next_departure)
+                spawn_truck(id, schedule);
+        }
+        // Advance due dates separately: spawn_truck() touches the letters
+        // buffer, and we don't want iterators into it while it is modified.
+        for (TruckSchedule& schedule : post_offices[id].outbound_schedules) {
+            while (schedule.period > 0 && current_tick >= schedule.next_departure)
+                schedule.next_departure += schedule.period;
+        }
+    }
+
+    // 3. Arrivals: deliver cargo and retire the truck (swap-and-pop removal).
+    for (std::size_t i = 0; i < trucks.size();) {
+        if (trucks[i].has_arrived(current_tick)) {
+            deliver(trucks[i]);
+            trucks[i] = std::move(trucks.back());
+            trucks.pop_back();
+        } else {
+            ++i;
+        }
+    }
+}
+
+void World::generate_letters(PostOfficeId office_id) {
+    if (post_offices.size() < 2)
+        return;
+    PostOffice& office = post_offices[office_id];
+
+    std::uniform_int_distribution<PostOfficeId> pick_office(0, post_offices.size() - 1);
+    std::uniform_int_distribution<Tick> pick_deadline(kTicksPerDay / 2, 2 * kTicksPerDay);
+    std::uniform_int_distribution<int> pick_value(5, 15);
+    std::uniform_int_distribution<int> pick_fine(3, 10);
+
+    for (std::size_t i = 0; i < office.letters_per_day; ++i) {
+        if (office.outbound_letters.size() >= office.max_outbound_letters)
+            break;  // buffer full: today's remaining letters are lost
+        PostOfficeId dst = office_id;
+        while (dst == office_id)
+            dst = pick_office(rng);
+        Letter letter;
+        letter.src = office_id;
+        letter.dst = dst;
+        letter.deadline = current_tick + pick_deadline(rng);
+        letter.value = pick_value(rng);
+        letter.fine = pick_fine(rng);
+        office.outbound_letters.push_back(letter);
+    }
+}
+
+void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
+    PostOffice& src = post_offices[src_id];
+
+    // Basic routing rule: the truck takes every outbound letter addressed to
+    // its destination. This is the extension point for fancier RoutingRules
+    // (capacity limits, priority by deadline, multi-hop forwarding, ...).
+    Truck truck(
+        src_id,
+        schedule.dst,
+        src.pos,
+        post_offices[schedule.dst].pos,
+        current_tick,
+        kTruckSpeed
+    );
+
+    std::vector<Letter>& outbound = src.outbound_letters;
+    std::size_t keep = 0;
+    for (std::size_t i = 0; i < outbound.size(); ++i) {
+        if (outbound[i].dst == schedule.dst)
+            truck.push_back_letter(std::move(outbound[i]));
+        else
+            outbound[keep++] = std::move(outbound[i]);
+    }
+    outbound.resize(keep);
+
+    if (truck.get_num_letters() > 0)  // no cargo, no truck
+        trucks.push_back(std::move(truck));
+}
+
+void World::deliver(Truck& truck) {
+    for (const Letter& letter : truck.get_letters()) {
+        if (current_tick <= letter.deadline) {
+            money += letter.value;
+            letters_delivered_on_time += 1;
+        } else {
+            money -= letter.fine;
+            letters_delivered_late += 1;
+        }
+    }
+    truck.clear_letters();
+}
+
+void World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period) {
+    if (src >= post_offices.size() || dst >= post_offices.size() || src == dst || period == 0)
+        return;
+    for (const TruckSchedule& existing : post_offices[src].outbound_schedules) {
+        if (existing.dst == dst)
+            return;  // route already exists
+    }
+    TruckSchedule schedule;
+    schedule.dst = dst;
+    schedule.period = period;
+    schedule.next_departure = current_tick + period;
+    post_offices[src].outbound_schedules.push_back(schedule);
+}
+
+void World::remove_schedule(PostOfficeId src, std::size_t schedule_index) {
+    if (src >= post_offices.size())
+        return;
+    std::vector<TruckSchedule>& schedules = post_offices[src].outbound_schedules;
+    if (schedule_index < schedules.size())
+        schedules.erase(schedules.begin() + static_cast<std::ptrdiff_t>(schedule_index));
+}
+
+// ---------------------------------------------------------------------------
+// Starter scenario
+// ---------------------------------------------------------------------------
+
+World create_default_world() {
+    World world;
+
+    struct OfficeDef {
+        const char* name;
+        Position pos;
+        std::size_t letters_per_day;
+    };
+    const OfficeDef defs[] = {
+        {"Northgate", {220.0f, 140.0f}, 8},
+        {"Eastport",  {780.0f, 160.0f}, 6},
+        {"Southvale", {740.0f, 520.0f}, 8},
+        {"Westbrook", {240.0f, 500.0f}, 6},
+    };
+    for (const OfficeDef& def : defs) {
+        PostOffice office;
+        office.name = def.name;
+        office.pos = def.pos;
+        office.letters_per_day = def.letters_per_day;
+        office.max_outbound_letters = 60;
+        world.post_offices.push_back(std::move(office));
+    }
+
+    // The basic routing rule only loads letters addressed directly to the
+    // truck's destination, so every office needs a route to every other one.
+    // (Removing routes in the UI and watching letters pile up / go late is
+    // the interesting part of this toy.)
+    const Tick default_period = 900;  // one truck every 15 seconds
+    for (PostOfficeId src = 0; src < world.post_offices.size(); ++src)
+        for (PostOfficeId dst = 0; dst < world.post_offices.size(); ++dst)
+            world.add_schedule(src, dst, default_period);
+
+    // Seed day one's letters immediately so the game is in motion from tick 0
+    // (the day-boundary generation would otherwise leave the map empty for
+    // the first three minutes).
+    for (PostOfficeId id = 0; id < world.post_offices.size(); ++id)
+        world.generate_letters(id);
+
+    return world;
+}

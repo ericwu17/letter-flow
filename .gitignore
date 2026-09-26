@@ -1,1 +1,15 @@
 .DS_Store
+
+# build artifacts
+build/
+/letter-flow
+*.o
+*.d
+
+.cache
+
+# imgui runtime window-layout state
+imgui.ini
+
+# machine-specific IDE index (regenerate if Makefile flags change)
+compile_commands.json
