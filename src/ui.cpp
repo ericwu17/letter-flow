@@ -46,6 +46,99 @@ void DrawCenteredText(ImDrawList* draw, ImVec2 center, const char* text) {
     draw->AddText(pos, IM_COL32(235, 235, 240, 255), text);
 }
 
+// ---------------------------------------------------------------------------
+// Transport bar layout: play/pause + fast-forward buttons and the day/time
+// readout, anchored top-center of the display. Every rect is recomputed from
+// io.DisplaySize and font metrics each frame, so the bar stays centered and
+// correctly sized across window resizes (and follows DPI scaling); on very
+// narrow windows the day progress bar shrinks first.
+// ---------------------------------------------------------------------------
+
+constexpr float kFastForwardMultiplier = 4.0f;
+
+struct TransportLayout {
+    char time_text[64];
+    float button_size = 0.0f;
+    ImVec2 bar_min = {0.0f, 0.0f}, bar_max = {0.0f, 0.0f};
+    ImVec2 play_min = {0.0f, 0.0f}, play_max = {0.0f, 0.0f};
+    ImVec2 ff_min = {0.0f, 0.0f}, ff_max = {0.0f, 0.0f};
+    ImVec2 speed_text_pos = {0.0f, 0.0f};  // "x4" label; only valid while fast-forwarding
+    ImVec2 separator_top = {0.0f, 0.0f}, separator_bottom = {0.0f, 0.0f};
+    ImVec2 text_pos = {0.0f, 0.0f};
+    ImVec2 progress_min = {0.0f, 0.0f}, progress_max = {0.0f, 0.0f};
+};
+
+// Manual point-in-rect instead of ImGui::IsMouseHoveringRect: the latter
+// clips against the current window, and the transport bar is drawn at the
+// top level, outside any Begin/End pair.
+bool PointInRect(ImVec2 p, ImVec2 r_min, ImVec2 r_max) {
+    return p.x >= r_min.x && p.y >= r_min.y && p.x < r_max.x && p.y < r_max.y;
+}
+
+TransportLayout ComputeTransportLayout(const World& world) {
+    ImGuiIO& io = ImGui::GetIO();
+    TransportLayout l;
+
+    const float fh = ImGui::GetFrameHeight();  // follows font size / DPI scaling
+    const float button = fh;
+    const float gap = fh * 0.25f;
+    const float pad = fh * 0.3f;
+    const float separator_w = 1.0f;
+    const bool fast_forward = world.get_speed_multiplier() > 1.0f;
+
+    const unsigned long long tick = static_cast<unsigned long long>(world.get_tick());
+    std::snprintf(l.time_text, sizeof(l.time_text), "Day %llu  (tick %llu)",
+                  tick / kTicksPerDay + 1, tick);
+
+    const float time_w = ImGui::CalcTextSize(l.time_text).x;
+    const float speed_w = fast_forward ? ImGui::CalcTextSize("x4").x : 0.0f;
+    const float fixed_w = button + gap + button
+                        + (fast_forward ? gap + speed_w : 0.0f)
+                        + gap + separator_w + gap + time_w + gap;
+    float progress_w = std::min(140.0f, io.DisplaySize.x * 0.15f);
+
+    // Shrink the progress bar first on narrow windows.
+    const float avail_w = io.DisplaySize.x - 2.0f * pad - fh;
+    if (fixed_w + progress_w > avail_w)
+        progress_w = std::max(0.0f, avail_w - fixed_w);
+
+    const float bar_w = fixed_w + progress_w + 2.0f * pad;
+    const float bar_h = button + 2.0f * pad;
+    l.button_size = button;
+    l.bar_min = {std::max((io.DisplaySize.x - bar_w) * 0.5f, fh * 0.25f), fh * 0.4f};
+    l.bar_max = {l.bar_min.x + bar_w, l.bar_min.y + bar_h};
+
+    const float cy = (l.bar_min.y + l.bar_max.y) * 0.5f;
+    float x = l.bar_min.x + pad;
+
+    l.play_min = {x, cy - button * 0.5f};
+    l.play_max = {x + button, cy + button * 0.5f};
+    x += button + gap;
+
+    l.ff_min = {x, cy - button * 0.5f};
+    l.ff_max = {x + button, cy + button * 0.5f};
+    x += button;
+    if (fast_forward) {
+        x += gap;
+        l.speed_text_pos = {x, cy - ImGui::CalcTextSize("x4").y * 0.5f};
+        x += speed_w;
+    }
+    x += gap;
+
+    l.separator_top = {x, cy - button * 0.4f};
+    l.separator_bottom = {x, cy + button * 0.4f};
+    x += separator_w + gap;
+
+    l.text_pos = {x, cy - ImGui::CalcTextSize(l.time_text).y * 0.5f};
+    x += time_w + gap;
+
+    const float progress_h = std::max(4.0f, fh * 0.2f);
+    l.progress_min = {x, cy - progress_h * 0.5f};
+    l.progress_max = {x + progress_w, cy + progress_h * 0.5f};
+
+    return l;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -96,9 +189,11 @@ void DrawWorld(const World& world) {
     }
 
     // Click-to-select. io.WantCaptureMouse is true when the click landed on an
-    // ImGui window (HUD/inspector), so the map ignores those clicks.
+    // ImGui window (HUD/inspector), so the map ignores those clicks; clicks on
+    // the transport bar are likewise not the map's business.
     ImGuiIO& io = ImGui::GetIO();
-    if (io.MouseClicked[0] && !io.WantCaptureMouse) {
+    const TransportLayout bar = ComputeTransportLayout(world);
+    if (io.MouseClicked[0] && !io.WantCaptureMouse && !PointInRect(io.MousePos, bar.bar_min, bar.bar_max)) {
         for (PostOfficeId id = 0; id < offices.size(); ++id) {
             const ImVec2 c = WorldToScreen(view, offices[id].pos);
             const float dx = io.MousePos.x - c.x;
@@ -113,26 +208,96 @@ void DrawWorld(const World& world) {
 }
 
 // ---------------------------------------------------------------------------
+// Transport bar (play/pause, fast-forward, day/time) — drawn into the
+// background draw list, on top of the map but underneath ImGui windows.
+// ---------------------------------------------------------------------------
+
+void DrawTransportBar(World& world) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const TransportLayout l = ComputeTransportLayout(world);
+    const bool fast_forward = world.get_speed_multiplier() > 1.0f;
+    const float b = l.button_size;
+    const float rounding = b * 0.2f;
+
+    // Panel.
+    draw->AddRectFilled(l.bar_min, l.bar_max, IM_COL32(24, 27, 34, 220), rounding * 1.5f);
+    draw->AddRect(l.bar_min, l.bar_max, IM_COL32(110, 120, 150, 100), rounding * 1.5f);
+
+    // Background drawing has no widget behaviour, so the buttons are plain
+    // rects hit-tested against the mouse. WantCaptureMouse keeps clicks that
+    // landed on an ImGui window from leaking through to the bar.
+    const bool interactive = !io.WantCaptureMouse;
+    const bool hover_play = interactive && PointInRect(io.MousePos, l.play_min, l.play_max);
+    const bool hover_ff = interactive && PointInRect(io.MousePos, l.ff_min, l.ff_max);
+    if (hover_play || hover_ff)
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+    const ImU32 icon_color = IM_COL32(235, 235, 240, 255);
+    const ImU32 hover_bg = IM_COL32(70, 130, 220, 90);
+
+    // Play/pause: a triangle when paused, two bars when running.
+    if (hover_play)
+        draw->AddRectFilled(l.play_min, l.play_max, hover_bg, rounding);
+    if (world.is_paused())
+        draw->AddTriangleFilled({l.play_min.x + b * 0.36f, l.play_min.y + b * 0.26f},
+                                {l.play_min.x + b * 0.36f, l.play_min.y + b * 0.74f},
+                                {l.play_min.x + b * 0.76f, l.play_min.y + b * 0.50f}, icon_color);
+    else {
+        draw->AddRectFilled({l.play_min.x + b * 0.30f, l.play_min.y + b * 0.28f},
+                            {l.play_min.x + b * 0.44f, l.play_min.y + b * 0.72f}, icon_color);
+        draw->AddRectFilled({l.play_min.x + b * 0.56f, l.play_min.y + b * 0.28f},
+                            {l.play_min.x + b * 0.70f, l.play_min.y + b * 0.72f}, icon_color);
+    }
+
+    // Fast-forward: double triangle, orange while active, plus an "x4" label.
+    if (hover_ff)
+        draw->AddRectFilled(l.ff_min, l.ff_max, hover_bg, rounding);
+    const ImU32 ff_color = fast_forward ? IM_COL32(240, 150, 60, 255) : IM_COL32(235, 235, 240, 200);
+    draw->AddTriangleFilled({l.ff_min.x + b * 0.18f, l.ff_min.y + b * 0.30f},
+                            {l.ff_min.x + b * 0.18f, l.ff_min.y + b * 0.70f},
+                            {l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.50f}, ff_color);
+    draw->AddTriangleFilled({l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.30f},
+                            {l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.70f},
+                            {l.ff_min.x + b * 0.78f, l.ff_min.y + b * 0.50f}, ff_color);
+    if (fast_forward)
+        draw->AddText(l.speed_text_pos, IM_COL32(240, 150, 60, 255), "x4");
+
+    // Separator, day/time readout, day progress.
+    draw->AddLine(l.separator_top, l.separator_bottom, IM_COL32(110, 120, 150, 140), 1.0f);
+    draw->AddText(l.text_pos, IM_COL32(235, 235, 240, 255), l.time_text);
+    const float progress_rounding = (l.progress_max.y - l.progress_min.y) * 0.5f;
+    draw->AddRectFilled(l.progress_min, l.progress_max, IM_COL32(255, 255, 255, 40), progress_rounding);
+    const float day_fraction = static_cast<float>(world.get_tick() % kTicksPerDay) / static_cast<float>(kTicksPerDay);
+    if (day_fraction > 0.0f)
+        draw->AddRectFilled(l.progress_min,
+                            {l.progress_min.x + (l.progress_max.x - l.progress_min.x) * day_fraction, l.progress_max.y},
+                            IM_COL32(70, 130, 220, 255), progress_rounding);
+
+    // Clicks.
+    if (interactive && io.MouseClicked[0]) {
+        if (hover_play)
+            world.set_paused(!world.is_paused());
+        else if (hover_ff)
+            world.set_speed_multiplier(fast_forward ? 1.0f : kFastForwardMultiplier);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // HUD
 // ---------------------------------------------------------------------------
 
-void DrawHUD(World& world) {
+void DrawHUD(const World& world) {
     static bool show_imgui_demo = false;
 
+    // Day/time and play/pause now live in the background transport bar
+    // (DrawTransportBar); this window is just the score board.
     ImGui::Begin("Letter Flow");
-    const unsigned long long day = world.get_tick() / kTicksPerDay + 1;
-    const float day_fraction = static_cast<float>(world.get_tick() % kTicksPerDay) / static_cast<float>(kTicksPerDay);
-    ImGui::Text("Day %llu  (tick %llu)", day, static_cast<unsigned long long>(world.get_tick()));
-    ImGui::ProgressBar(day_fraction);
-    ImGui::Separator();
     ImGui::Text("Money: %d", world.get_money());
     ImGui::Text("Delivered on time: %zu", world.get_letters_delivered_on_time());
     ImGui::Text("Delivered late: %zu", world.get_letters_delivered_late());
     ImGui::Text("Trucks en route: %zu", world.get_trucks().size());
     ImGui::Separator();
-    if (ImGui::Button(world.is_paused() ? "Resume" : "Pause", ImVec2(90.0f, 0.0f)))
-        world.set_paused(!world.is_paused());
-    ImGui::SameLine();
     ImGui::Checkbox("ImGui demo", &show_imgui_demo);
     ImGui::TextDisabled("Click an office to inspect it.");
     ImGui::End();

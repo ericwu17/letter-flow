@@ -10,8 +10,13 @@ class World;
 // all ImGui windows) and handles click-to-select on the map.
 void DrawWorld(const World& world);
 
-// Top-left status window: day/tick, money, delivery stats, pause.
-void DrawHUD(World& world);
+// Top-center transport bar: play/pause, fast-forward and the day/time
+// readout, drawn into the background draw list on top of the map. Laid out
+// from the display size each frame, so it survives window resizes.
+void DrawTransportBar(World& world);
+
+// Status window: money and delivery stats.
+void DrawHUD(const World& world);
 
 // Inspector for the selected post office: outbound letter table and
 // schedule editing.

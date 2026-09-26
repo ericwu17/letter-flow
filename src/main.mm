@@ -127,7 +127,7 @@ int main(int, char**)
             //    goes into an accumulator; whole ticks are drained from it.
             if (!world.is_paused())
             {
-                tick_accumulator += io.DeltaTime;
+                tick_accumulator += io.DeltaTime * world.get_speed_multiplier();
                 if (tick_accumulator > 0.25f)
                     tick_accumulator = 0.25f;  // after a long hitch, don't try to catch up forever
                 while (tick_accumulator >= kSecondsPerTick)
@@ -142,8 +142,10 @@ int main(int, char**)
             }
 
             // 3. Build this frame's UI. Order matters: the map goes into the
-            //    background draw list (under the windows), then HUD/inspector.
+            //    background draw list (under the windows), the transport bar
+            //    is drawn on top of the map, then the HUD/inspector windows.
             DrawWorld(world);
+            DrawTransportBar(world);
             DrawHUD(world);
             DrawInspector(world);
 

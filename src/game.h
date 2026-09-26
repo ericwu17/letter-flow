@@ -112,6 +112,7 @@ private:
     std::vector<Truck> trucks;
     Tick current_tick = 0;
     bool paused = false;
+    float speed_multiplier = 1.0f;  // 1 = real time; >1 = fast-forward (transport bar)
 
     int money = 0;
     std::size_t letters_delivered_on_time = 0;
@@ -143,11 +144,13 @@ public:
     void add_schedule(PostOfficeId src, PostOfficeId dst, Tick period);
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
     void set_paused(bool p) { paused = p; }
+    void set_speed_multiplier(float m) { speed_multiplier = m; }
 
     // Read-only access for the presentation layer. Named with the same get_*
     // convention as Truck's accessors above.
     Tick get_tick() const { return current_tick; }
     bool is_paused() const { return paused; }
+    float get_speed_multiplier() const { return speed_multiplier; }
     int get_money() const { return money; }
     std::size_t get_letters_delivered_on_time() const { return letters_delivered_on_time; }
     std::size_t get_letters_delivered_late() const { return letters_delivered_late; }
