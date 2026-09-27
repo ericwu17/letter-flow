@@ -26,13 +26,14 @@ private:
     std::mt19937 rng{20260926u};  // fixed seed -> fully deterministic simulation
 
     // Simulation internals, driven by advance_tick() / seed_letters().
-    void generate_letters(PostOfficeId office);
+    void maybe_spawn_letter(PostOfficeId office);  // per-tick Bernoulli roll
+    void spawn_letter(PostOfficeId office);        // one letter, buffer permitting
     void spawn_truck(PostOfficeId src, const TruckSchedule& schedule);
     void deliver(Truck& truck);
 
 public:
-    // Advances the simulation by one tick: daily letter generation, schedule
-    // departures, truck arrivals and delivery/scoring.
+    // Advances the simulation by one tick: probabilistic letter spawning,
+    // schedule departures, truck arrivals and delivery/scoring.
     void advance_tick();
 
     // Scenario construction. create_default_world() (scenario.h) builds the
@@ -41,8 +42,8 @@ public:
                             std::size_t letters_per_day,
                             std::size_t max_outbound_letters);
     // Fills every office's buffer with one day's worth of letters right away,
-    // so a scenario starts in motion instead of waiting for the first day
-    // boundary.
+    // so a scenario starts in motion instead of waiting for letters to trickle
+    // in one probabilistic spawn at a time.
     void seed_letters();
 
     // Player actions (called from the UI).

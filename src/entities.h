@@ -33,7 +33,8 @@ struct PostOffice {
     Position pos;
     std::string name;
     std::size_t max_outbound_letters = 0;  // game-rule cap on the buffer (not vector::capacity!)
-    std::size_t letters_per_day = 0;       // letters generated at each day boundary
+    std::size_t letters_per_day = 0;       // expected letters per day: each tick spawns
+                                           // one with probability letters_per_day / kTicksPerDay
     std::vector<Letter> outbound_letters;
     std::vector<TruckSchedule> outbound_schedules;
 };

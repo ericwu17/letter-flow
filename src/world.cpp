@@ -6,11 +6,11 @@
 void World::advance_tick() {
     current_tick += 1;
 
-    // 1. Day boundary: every office produces its daily batch of letters.
-    if (current_tick % kTicksPerDay == 0) {
-        for (PostOfficeId id = 0; id < post_offices.size(); ++id)
-            generate_letters(id);
-    }
+    // 1. Letters trickle in: on every tick each office spawns a single letter
+    //    with probability letters_per_day / kTicksPerDay, so the expected
+    //    number of letters per office per day is still letters_per_day.
+    for (PostOfficeId id = 0; id < post_offices.size(); ++id)
+        maybe_spawn_letter(id);
 
     // 2. Departures: fire every schedule that has come due. A single pass is
     //    safe: spawn_truck() only touches the office's letters buffer and the
@@ -38,30 +38,42 @@ void World::advance_tick() {
     }
 }
 
-void World::generate_letters(PostOfficeId office_id) {
+void World::maybe_spawn_letter(PostOfficeId office_id) {
+    const PostOffice& office = post_offices[office_id];
+
+    // Exact integer roll: a uniform value in [0, kTicksPerDay) lands below
+    // letters_per_day with probability letters_per_day / kTicksPerDay.
+    // Over a full day that is kTicksPerDay rolls, so the expected number of
+    // letters is kTicksPerDay * (letters_per_day / kTicksPerDay) = letters_per_day,
+    // matching the old day-boundary batch exactly.
+    std::uniform_int_distribution<Tick> roll(0, kTicksPerDay - 1);
+    if (roll(rng) < office.letters_per_day)
+        spawn_letter(office_id);
+}
+
+void World::spawn_letter(PostOfficeId office_id) {
     if (post_offices.size() < 2)
         return;
     PostOffice& office = post_offices[office_id];
+
+    if (office.outbound_letters.size() >= office.max_outbound_letters)
+        return;  // buffer full: this letter is lost
 
     std::uniform_int_distribution<PostOfficeId> pick_office(0, post_offices.size() - 1);
     std::uniform_int_distribution<Tick> pick_deadline(kTicksPerDay / 2, 2 * kTicksPerDay);
     std::uniform_int_distribution<int> pick_value(5, 15);
     std::uniform_int_distribution<int> pick_fine(3, 10);
 
-    for (std::size_t i = 0; i < office.letters_per_day; ++i) {
-        if (office.outbound_letters.size() >= office.max_outbound_letters)
-            break;  // buffer full: today's remaining letters are lost
-        PostOfficeId dst = office_id;
-        while (dst == office_id)
-            dst = pick_office(rng);
-        Letter letter;
-        letter.src = office_id;
-        letter.dst = dst;
-        letter.deadline = current_tick + pick_deadline(rng);
-        letter.value = pick_value(rng);
-        letter.fine = pick_fine(rng);
-        office.outbound_letters.push_back(letter);
-    }
+    PostOfficeId dst = office_id;
+    while (dst == office_id)
+        dst = pick_office(rng);
+    Letter letter;
+    letter.src = office_id;
+    letter.dst = dst;
+    letter.deadline = current_tick + pick_deadline(rng);
+    letter.value = pick_value(rng);
+    letter.fine = pick_fine(rng);
+    office.outbound_letters.push_back(letter);
 }
 
 void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
@@ -143,5 +155,6 @@ PostOfficeId World::add_office(std::string name, Position pos,
 
 void World::seed_letters() {
     for (PostOfficeId id = 0; id < post_offices.size(); ++id)
-        generate_letters(id);
+        for (std::size_t i = 0; i < post_offices[id].letters_per_day; ++i)
+            spawn_letter(id);
 }

@@ -35,8 +35,8 @@ World create_default_world() {
             world.add_schedule(src, dst, default_period);
 
     // Seed day one's letters immediately so the game is in motion from tick 0
-    // (the day-boundary generation would otherwise leave the map empty for
-    // the first three minutes).
+    // (per-tick spawning would otherwise leave the map nearly empty for the
+    // first minutes while letters trickle in one at a time).
     world.seed_letters();
 
     return world;
