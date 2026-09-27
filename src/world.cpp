@@ -1,53 +1,7 @@
-// game.cpp — simulation rules. Pure logic, no rendering, no input.
-#include "game.h"
+// world.cpp — simulation rules. Pure logic, no rendering, no input.
+#include "world.h"
 
-#include <cmath>
 #include <utility>
-
-// ---------------------------------------------------------------------------
-// Truck motion helpers
-// ---------------------------------------------------------------------------
-
-float Truck::route_length() const {
-    const float dx = to.x - from.x;
-    const float dy = to.y - from.y;
-    return std::sqrt(dx * dx + dy * dy);
-}
-
-Position Truck::get_position( Tick now) const {
-    const float length = route_length();
-    if (length < 1e-6f)
-        return to;
-    const Tick elapsed = (now > departure_tick) ? (now - departure_tick) : 0;
-    float fraction = (static_cast<float>(elapsed) * speed) / length;
-    if (fraction > 1.0f)
-        fraction = 1.0f;
-    return {
-        from.x + (to.x - from.x) * fraction,
-        from.y + (to.y - from.y) * fraction,
-    };
-}
-
-bool Truck::has_arrived(Tick now) const {
-    const Tick elapsed = (now > departure_tick) ? (now - departure_tick) : 0;
-    return static_cast<float>(elapsed) * speed >= route_length();
-}
-void Truck::push_back_letter(Letter letter) {
-    carried_letters.push_back(std::move(letter));
-}
-std::size_t Truck::get_num_letters() const {
-    return carried_letters.size();
-}
-std::vector<Letter>const& Truck::get_letters() const {
-    return carried_letters;
-}
-void Truck::clear_letters() {
-    carried_letters.clear();
-}
-
-// ---------------------------------------------------------------------------
-// World
-// ---------------------------------------------------------------------------
 
 void World::advance_tick() {
     current_tick += 1;
@@ -190,43 +144,4 @@ PostOfficeId World::add_office(std::string name, Position pos,
 void World::seed_letters() {
     for (PostOfficeId id = 0; id < post_offices.size(); ++id)
         generate_letters(id);
-}
-
-// ---------------------------------------------------------------------------
-// Starter scenario
-// ---------------------------------------------------------------------------
-
-World create_default_world() {
-    World world;
-
-    struct OfficeDef {
-        const char* name;
-        Position pos;
-        std::size_t letters_per_day;
-    };
-    const OfficeDef defs[] = {
-        {"Northgate", {220.0f, 140.0f}, 8},
-        {"Eastport",  {780.0f, 160.0f}, 6},
-        {"Southvale", {740.0f, 520.0f}, 8},
-        {"Westbrook", {240.0f, 500.0f}, 6},
-    };
-    for (const OfficeDef& def : defs)
-        world.add_office(def.name, def.pos, def.letters_per_day, /*max_outbound_letters=*/60);
-
-    // The basic routing rule only loads letters addressed directly to the
-    // truck's destination, so every office needs a route to every other one.
-    // (Removing routes in the UI and watching letters pile up / go late is
-    // the interesting part of this toy.)
-    const Tick default_period = 900;  // one truck every 15 seconds
-    const std::size_t num_offices = world.get_post_offices().size();
-    for (PostOfficeId src = 0; src < num_offices; ++src)
-        for (PostOfficeId dst = 0; dst < num_offices; ++dst)
-            world.add_schedule(src, dst, default_period);
-
-    // Seed day one's letters immediately so the game is in motion from tick 0
-    // (the day-boundary generation would otherwise leave the map empty for
-    // the first three minutes).
-    world.seed_letters();
-
-    return world;
 }

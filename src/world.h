@@ -1,0 +1,64 @@
+// world.h — World: owns all simulation state and drives it tick by tick.
+// Pure simulation layer: no imgui/SDL/Metal headers (see game_types.h).
+#pragma once
+
+#include "entities.h"
+#include "game_types.h"
+#include "truck.h"
+
+#include <cstddef>
+#include <random>
+#include <string>
+#include <vector>
+
+class World {
+private:
+    std::vector<PostOffice> post_offices;  // stable storage; PostOfficeId indexes into this
+    std::vector<Truck> trucks;
+    Tick current_tick = 0;
+    bool paused = false;
+    float speed_multiplier = 1.0f;  // 1 = real time; >1 = fast-forward (transport bar)
+
+    int money = 0;
+    std::size_t letters_delivered_on_time = 0;
+    std::size_t letters_delivered_late = 0;
+
+    std::mt19937 rng{20260926u};  // fixed seed -> fully deterministic simulation
+
+    // Simulation internals, driven by advance_tick() / seed_letters().
+    void generate_letters(PostOfficeId office);
+    void spawn_truck(PostOfficeId src, const TruckSchedule& schedule);
+    void deliver(Truck& truck);
+
+public:
+    // Advances the simulation by one tick: daily letter generation, schedule
+    // departures, truck arrivals and delivery/scoring.
+    void advance_tick();
+
+    // Scenario construction. create_default_world() (scenario.h) builds the
+    // starter map entirely through this public API — no friendship required.
+    PostOfficeId add_office(std::string name, Position pos,
+                            std::size_t letters_per_day,
+                            std::size_t max_outbound_letters);
+    // Fills every office's buffer with one day's worth of letters right away,
+    // so a scenario starts in motion instead of waiting for the first day
+    // boundary.
+    void seed_letters();
+
+    // Player actions (called from the UI).
+    void add_schedule(PostOfficeId src, PostOfficeId dst, Tick period);
+    void remove_schedule(PostOfficeId src, std::size_t schedule_index);
+    void set_paused(bool p) { paused = p; }
+    void set_speed_multiplier(float m) { speed_multiplier = m; }
+
+    // Read-only access for the presentation layer. Named with the same get_*
+    // convention as Truck's accessors.
+    Tick get_tick() const { return current_tick; }
+    bool is_paused() const { return paused; }
+    float get_speed_multiplier() const { return speed_multiplier; }
+    int get_money() const { return money; }
+    std::size_t get_letters_delivered_on_time() const { return letters_delivered_on_time; }
+    std::size_t get_letters_delivered_late() const { return letters_delivered_late; }
+    const std::vector<PostOffice>& get_post_offices() const { return post_offices; }
+    const std::vector<Truck>& get_trucks() const { return trucks; }
+};

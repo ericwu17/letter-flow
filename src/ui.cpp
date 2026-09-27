@@ -2,7 +2,10 @@
 // HUD and inspector, and turns player clicks into World mutations.
 #include "ui.h"
 
-#include "game.h"
+#include "entities.h"
+#include "game_types.h"
+#include "truck.h"
+#include "world.h"
 #include "imgui.h"
 
 #include <algorithm>

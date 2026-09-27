@@ -21,7 +21,7 @@ CXXFLAGS += -MMD -MP   # header dependency tracking
 LIBS  = -framework Metal -framework MetalKit -framework Cocoa -framework IOKit -framework CoreVideo -framework QuartzCore
 LIBS += $(shell sdl2-config --libs)
 
-APP_SOURCES = src/game.cpp src/ui.cpp src/main.mm
+APP_SOURCES = src/truck.cpp src/world.cpp src/scenario.cpp src/ui.cpp src/main.mm
 
 IMGUI_SOURCES  = $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_demo.cpp $(IMGUI_DIR)/imgui_draw.cpp
 IMGUI_SOURCES += $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp
@@ -29,7 +29,7 @@ IMGUI_SOURCES += $(IMGUI_DIR)/backends/imgui_impl_sdl2.cpp $(IMGUI_DIR)/backends
 
 SOURCES = $(APP_SOURCES) $(IMGUI_SOURCES)
 
-# src/game.cpp -> build/src/game.o, imgui/imgui.cpp -> build/imgui/imgui.o, etc.
+# src/world.cpp -> build/src/world.o, imgui/imgui.cpp -> build/imgui/imgui.o, etc.
 OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SOURCES))
 OBJS := $(patsubst %.mm,$(BUILD_DIR)/%.o,$(OBJS))
 DEPS := $(OBJS:.o=.d)
