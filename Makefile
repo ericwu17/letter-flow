@@ -13,7 +13,7 @@ BUILD_DIR = build
 
 CXX ?= clang++
 
-CXXFLAGS = -std=c++17 -g -Wall -Wextra
+CXXFLAGS = -std=c++20 -g -Wall -Wextra
 CXXFLAGS += -Isrc -I$(IMGUI_DIR) -I$(IMGUI_DIR)/backends
 CXXFLAGS += $(shell sdl2-config --cflags)
 CXXFLAGS += -MMD -MP   # header dependency tracking
