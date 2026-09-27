@@ -68,6 +68,7 @@ int main(int, char**)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // requires the imgui 'docking' branch
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
@@ -143,9 +144,11 @@ int main(int, char**)
                 tick_accumulator = 0.0f;
             }
 
-            // 3. Build this frame's UI. Order matters: the map goes into the
-            //    background draw list (under the windows), the transport bar
-            //    is drawn on top of the map, then the HUD/inspector windows.
+            // 3. Build this frame's UI. Order matters: the dockspace hosts the
+            //    windows, the map goes into the background draw list (under the
+            //    windows), the transport bar is drawn on top of the map, then
+            //    the HUD/inspector windows.
+            DrawDockspace();
             DrawWorld(world);
             DrawTransportBar(world);
             DrawHUD(world);

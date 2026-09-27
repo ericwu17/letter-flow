@@ -7,6 +7,7 @@
 #include "truck.h"
 #include "world.h"
 #include "imgui.h"
+#include "imgui_internal.h"  // DockBuilder* (imgui 'docking' branch)
 
 #include <algorithm>
 #include <cmath>
@@ -197,6 +198,42 @@ TransportLayout ComputeTransportLayout(const World& world) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// Dockspace: a fullscreen docking area over the main viewport.
+//
+// The central node is passthrough (ImGuiDockNodeFlags_PassthruCentralNode), so
+// the map — drawn into the background draw list — stays visible and clickable
+// through it. On first run (when imgui.ini holds no docking data for the
+// dockspace yet) the default layout is built programmatically: "Post office"
+// is docked into a bottom split. From then on the layout lives in imgui.ini
+// and the user can rearrange/undock windows freely without the code fighting
+// it every frame.
+// ---------------------------------------------------------------------------
+
+void DrawDockspace() {
+    const ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
+
+    // DockBuilder* must run before the dockspace node is submitted this frame.
+    if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
+        ImGui::DockBuilderRemoveNode(dockspace_id);  // no-op on a fresh node
+        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
+
+        // Split off the bottom third for the inspector; the remainder stays
+        // as the passthrough central node over the map.
+        ImGuiID central_id = dockspace_id;
+        const ImGuiID bottom_id =
+            ImGui::DockBuilderSplitNode(central_id, ImGuiDir_Down, 0.35f, nullptr, &central_id);
+        ImGui::DockBuilderFinish(dockspace_id);
+
+        // Queued by name: applied when the window is submitted this frame and
+        // persisted into imgui.ini, so it only happens on the first run.
+        ImGui::DockBuilderDockWindow("Post office", bottom_id);
+    }
+
+    ImGui::DockSpaceOverViewport(dockspace_id, nullptr, ImGuiDockNodeFlags_PassthruCentralNode);
+}
 
 // ---------------------------------------------------------------------------
 // The map
