@@ -16,23 +16,31 @@ World create_default_world() {
         std::size_t letters_per_day;
     };
     const OfficeDef defs[] = {
-        {"Northgate", {220.0f, 140.0f}, 8},
-        {"Eastport",  {780.0f, 160.0f}, 6},
-        {"Southvale", {740.0f, 520.0f}, 8},
-        {"Westbrook", {240.0f, 500.0f}, 6},
+        // Local cluster (Mercer County)
+        {"Lawrenceville", {145.0f, 614.0f}, 5},
+        {"Princeton",     {197.0f, 547.0f}, 7},
+        {"Trenton",       {133.0f, 703.0f}, 9},
+        {"Hopewell",      {116.0f, 512.0f}, 3},
+
+        // Central Jersey
+        {"Monroe",        {398.0f, 589.0f}, 5},
+        {"Edison",        {413.0f, 367.0f}, 8},
+
+        // North Jersey
+        {"Florham Park",  {432.0f,  70.0f}, 4},
+        {"Newark",        {616.0f, 127.0f}, 12},
+
+        // Jersey Shore
+        {"Asbury Park",   {751.0f, 699.0f}, 5},
+        {"Long Branch",   {768.0f, 606.0f}, 6},
+
+        // New York City
+        {"Manhattan",     {766.0f, 108.0f}, 15},
+        {"Brooklyn",      {809.0f, 191.0f}, 13},
+        {"Queens",        {940.0f, 164.0f}, 11},
     };
     for (const OfficeDef& def : defs)
         world.add_office(def.name, def.pos, def.letters_per_day, /*max_outbound_letters=*/60);
-
-    // The basic routing rule only loads letters addressed directly to the
-    // truck's destination, so every office needs a route to every other one.
-    // (Removing routes in the UI and watching letters pile up / go late is
-    // the interesting part of this toy.)
-    const Tick default_period = 900;  // one truck every 15 seconds
-    const std::size_t num_offices = world.get_post_offices().size();
-    for (PostOfficeId src = 0; src < num_offices; ++src)
-        for (PostOfficeId dst = 0; dst < num_offices; ++dst)
-            world.add_schedule(src, dst, default_period);
 
     // Seed day one's letters immediately so the game is in motion from tick 0
     // (per-tick spawning would otherwise leave the map nearly empty for the
