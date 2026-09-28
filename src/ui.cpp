@@ -105,11 +105,30 @@ void DrawCenteredText(ImDrawList* draw, ImVec2 center, const char* text) {
 }
 
 // ---------------------------------------------------------------------------
+// Tick -> 24-hour clock formatting. Every time shown to the player goes
+// through these helpers; internally the simulation only ever uses ticks.
+// ---------------------------------------------------------------------------
+
+// Format an absolute tick as "Day N HH:MM".
+void FormatDayTime(Tick tick, char* buf, std::size_t buf_len) {
+    const ClockTime t = tick_to_time_of_day(tick);
+    std::snprintf(buf, buf_len, "Day %llu  %02d:%02d",
+                  static_cast<unsigned long long>(tick / kTicksPerDay) + 1, t.hour, t.minute);
+}
+
+// Format a tick duration as "HH:MM" (hours may exceed 23).
+void FormatDuration(Tick duration, char* buf, std::size_t buf_len) {
+    const ClockTime t = duration_to_hours_minutes(duration);
+    std::snprintf(buf, buf_len, "%02d:%02d", t.hour, t.minute);
+}
+
+// ---------------------------------------------------------------------------
 // Transport bar layout: play/pause + fast-forward buttons and the day/time
-// readout, anchored top-center of the display. Every rect is recomputed from
-// io.DisplaySize and font metrics each frame, so the bar stays centered and
-// correctly sized across window resizes (and follows DPI scaling); on very
-// narrow windows the day progress bar shrinks first.
+// readout, anchored top-center of the map area — the dockspace's central
+// node, i.e. the display minus the docked "Post office" panel. Every rect is
+// recomputed from that area and font metrics each frame, so the bar stays
+// centered and correctly sized across window resizes, dock-layout changes and
+// DPI scaling; on very narrow areas the day progress bar shrinks first.
 // ---------------------------------------------------------------------------
 
 constexpr float kFastForwardMultiplier = 4.0f;
@@ -133,9 +152,20 @@ bool PointInRect(ImVec2 p, ImVec2 r_min, ImVec2 r_max) {
     return p.x >= r_min.x && p.y >= r_min.y && p.x < r_max.x && p.y < r_max.y;
 }
 
+ImGuiID MainDockSpaceId() { return ImGui::GetID("MainDockSpace"); }
+
 TransportLayout ComputeTransportLayout(const World& world) {
     ImGuiIO& io = ImGui::GetIO();
     TransportLayout l;
+
+    // Anchor the bar to the dockspace's central node — the visible map area,
+    // which excludes the docked "Post office" panel
+    ImVec2 area_min = {0.0f, 0.0f};
+    ImVec2 area_size = io.DisplaySize;
+    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(MainDockSpaceId())) {
+        area_min = central->Pos;
+        area_size = central->Size;
+    }
 
     const float fh = ImGui::GetFrameHeight();  // follows font size / DPI scaling
     const float button = fh;
@@ -144,26 +174,25 @@ TransportLayout ComputeTransportLayout(const World& world) {
     const float separator_w = 1.0f;
     const bool fast_forward = world.get_speed_multiplier() > 1.0f;
 
-    const unsigned long long tick = static_cast<unsigned long long>(world.get_tick());
-    std::snprintf(l.time_text, sizeof(l.time_text), "Day %llu  (tick %llu)",
-                  tick / kTicksPerDay + 1, tick);
+    FormatDayTime(world.get_tick(), l.time_text, sizeof(l.time_text));
 
     const float time_w = ImGui::CalcTextSize(l.time_text).x;
     const float speed_w = fast_forward ? ImGui::CalcTextSize("x4").x : 0.0f;
     const float fixed_w = button + gap + button
                         + (fast_forward ? gap + speed_w : 0.0f)
                         + gap + separator_w + gap + time_w + gap;
-    float progress_w = std::min(140.0f, io.DisplaySize.x * 0.15f);
+    float progress_w = std::min(140.0f, area_size.x * 0.15f);
 
-    // Shrink the progress bar first on narrow windows.
-    const float avail_w = io.DisplaySize.x - 2.0f * pad - fh;
+    // Shrink the progress bar first on narrow areas.
+    const float avail_w = area_size.x - 2.0f * pad - fh;
     if (fixed_w + progress_w > avail_w)
         progress_w = std::max(0.0f, avail_w - fixed_w);
 
     const float bar_w = fixed_w + progress_w + 2.0f * pad;
     const float bar_h = button + 2.0f * pad;
     l.button_size = button;
-    l.bar_min = {std::max((io.DisplaySize.x - bar_w) * 0.5f, fh * 0.25f), fh * 0.4f};
+    l.bar_min = {area_min.x + std::max((area_size.x - bar_w) * 0.5f, fh * 0.25f),
+                 area_min.y + fh * 0.4f};
     l.bar_max = {l.bar_min.x + bar_w, l.bar_min.y + bar_h};
 
     const float cy = (l.bar_min.y + l.bar_max.y) * 0.5f;
@@ -206,13 +235,13 @@ TransportLayout ComputeTransportLayout(const World& world) {
 // the map — drawn into the background draw list — stays visible and clickable
 // through it. On first run (when imgui.ini holds no docking data for the
 // dockspace yet) the default layout is built programmatically: "Post office"
-// is docked into a bottom split. From then on the layout lives in imgui.ini
+// is docked into a left split. From then on the layout lives in imgui.ini
 // and the user can rearrange/undock windows freely without the code fighting
 // it every frame.
 // ---------------------------------------------------------------------------
 
 void DrawDockspace() {
-    const ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
+    const ImGuiID dockspace_id = MainDockSpaceId();
 
     // DockBuilder* must run before the dockspace node is submitted this frame.
     if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
@@ -220,16 +249,16 @@ void DrawDockspace() {
         ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
         ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
 
-        // Split off the bottom third for the inspector; the remainder stays
+        // Split off the left third for the inspector; the remainder stays
         // as the passthrough central node over the map.
         ImGuiID central_id = dockspace_id;
-        const ImGuiID bottom_id =
-            ImGui::DockBuilderSplitNode(central_id, ImGuiDir_Down, 0.35f, nullptr, &central_id);
+        const ImGuiID dock_id =
+            ImGui::DockBuilderSplitNode(central_id, ImGuiDir_Left, 0.35f, nullptr, &central_id);
         ImGui::DockBuilderFinish(dockspace_id);
 
         // Queued by name: applied when the window is submitted this frame and
         // persisted into imgui.ini, so it only happens on the first run.
-        ImGui::DockBuilderDockWindow("Post office", bottom_id);
+        ImGui::DockBuilderDockWindow("Post office", dock_id);
     }
 
     ImGui::DockSpaceOverViewport(dockspace_id, nullptr, ImGuiDockNodeFlags_PassthruCentralNode);
@@ -390,7 +419,7 @@ void DrawHUD(const World& world) {
     // Day/time and play/pause now live in the background transport bar
     // (DrawTransportBar); this window is just the score board.
     ImGui::Begin("Letter Flow");
-    ImGui::Text("Money: %d", world.get_money());
+    ImGui::Text("Money: $%d", world.get_money());
     ImGui::Text("Delivered on time: %zu", world.get_letters_delivered_on_time());
     ImGui::Text("Delivered late: %zu", world.get_letters_delivered_late());
     ImGui::Text("Trucks en route: %zu", world.get_trucks().size());
@@ -443,11 +472,12 @@ void DrawInspector(World& world) {
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(offices[letter.dst].name.c_str());
                 ImGui::TableSetColumnIndex(1);
-                const long long remaining = static_cast<long long>(letter.deadline) - static_cast<long long>(world.get_tick());
-                if (remaining >= 0)
-                    ImGui::Text("%lld ticks", remaining);
+                char due[32];
+                FormatDayTime(letter.deadline, due, sizeof(due));
+                if (letter.deadline >= world.get_tick())
+                    ImGui::TextUnformatted(due);
                 else
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "LATE by %lld", -remaining);
+                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "LATE (was due %s)", due);
                 ImGui::TableSetColumnIndex(2);
                 ImGui::Text("%d", letter.value);
                 ImGui::TableSetColumnIndex(3);
@@ -464,10 +494,12 @@ void DrawInspector(World& world) {
         std::optional<std::size_t> schedule_to_remove;
         for (std::size_t i = 0; i < office.outbound_schedules.size(); ++i) {
             const TruckSchedule& schedule = office.outbound_schedules[i];
-            const long long until = static_cast<long long>(schedule.next_departure) - static_cast<long long>(world.get_tick());
-            ImGui::Text("to %s every %llu ticks (next in %lld)",
-                        offices[schedule.dst].name.c_str(),
-                        static_cast<unsigned long long>(schedule.period), until);
+            char every[16], start[16], next[32];
+            FormatDuration(schedule.period, every, sizeof(every));
+            FormatDuration(schedule.start_offset, start, sizeof(start));
+            FormatDayTime(schedule.next_departure, next, sizeof(next));
+            ImGui::Text("to %s every %s starting at %s (next: %s)",
+                        offices[schedule.dst].name.c_str(), every, start, next);
             ImGui::SameLine();
             ImGui::PushID(static_cast<int>(i));
             if (ImGui::SmallButton("Remove"))
@@ -478,16 +510,44 @@ void DrawInspector(World& world) {
             world.remove_schedule(g_selected_office, *schedule_to_remove);
 
         ImGui::SeparatorText("Add route");
-        static int new_period_ticks = 900;
-        ImGui::InputInt("period (ticks)", &new_period_ticks);
-        new_period_ticks = std::max(new_period_ticks, 60);
+        // Frequency and offset are entered as 24-hour HH:MM and converted to
+        // ticks right away — the World only ever sees ticks. Defaults spell
+        // out the canonical example: every 3 hours starting at 00:30.
+        static int frequency_hhmm[2] = {3, 0};
+        static int start_hhmm[2] = {0, 30};
+        ImGui::InputInt2("Every (hh:mm)", frequency_hhmm);
+        ImGui::InputInt2("Starting at (hh:mm)", start_hhmm);
+        frequency_hhmm[0] = std::clamp(frequency_hhmm[0], 0, 24);
+        frequency_hhmm[1] = std::clamp(frequency_hhmm[1], 0, 59);
+        start_hhmm[0] = std::clamp(start_hhmm[0], 0, 23);
+        start_hhmm[1] = std::clamp(start_hhmm[1], 0, 59);
+        const Tick period = std::clamp(hours_minutes_to_ticks(frequency_hhmm[0], frequency_hhmm[1]),
+                                       kMinSchedulePeriod, kTicksPerDay);
+        const Tick start_offset = hours_minutes_to_ticks(start_hhmm[0], start_hhmm[1]);
+
+        // Creating a schedule costs money up front, priced by frequency.
+        const int cost = schedule_cost(period);
+        const bool affordable = world.get_money() >= cost;
+        if (affordable)
+            ImGui::Text("Up-front cost: $%d", cost);
+        else
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "Up-front cost: $%d (you only have $%d)", cost, world.get_money());
+
         for (PostOfficeId other = 0; other < offices.size(); ++other) {
             if (other == g_selected_office)
                 continue;
+            const bool route_exists =
+                std::any_of(office.outbound_schedules.begin(), office.outbound_schedules.end(),
+                            [other](const TruckSchedule& s) { return s.dst == other; });
             char label[96];
-            std::snprintf(label, sizeof(label), "Route to %s", offices[other].name.c_str());
+            std::snprintf(label, sizeof(label), "Route to %s ($%d)",
+                          offices[other].name.c_str(), cost);
+            // Grey out routes that already exist or that the player can't afford.
+            ImGui::BeginDisabled(route_exists || !affordable);
             if (ImGui::Button(label))
-                world.add_schedule(g_selected_office, other, static_cast<Tick>(new_period_ticks));
+                world.add_schedule(g_selected_office, other, period, start_offset);
+            ImGui::EndDisabled();
             if (other + 1 < offices.size())
                 ImGui::SameLine();
         }

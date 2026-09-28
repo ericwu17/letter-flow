@@ -4,5 +4,6 @@
 
 #include "world.h"
 
-// A small starter scenario: four offices, fully connected by default routes.
+// A small starter scenario: four offices and no truck routes — the player
+// buys the schedules they want, and each one costs money (see add_schedule).
 World create_default_world();

@@ -19,7 +19,7 @@ private:
     bool paused = false;
     float speed_multiplier = 1.0f;  // 1 = real time; >1 = fast-forward (transport bar)
 
-    int money = 0;
+    int money = kStartingMoney;
     std::size_t letters_delivered_on_time = 0;
     std::size_t letters_delivered_late = 0;
 
@@ -47,7 +47,13 @@ public:
     void seed_letters();
 
     // Player actions (called from the UI).
-    void add_schedule(PostOfficeId src, PostOfficeId dst, Tick period);
+    // Creates a truck schedule on the src -> dst route: departures fall on the
+    // grid start_offset + k * period (both in ticks; start_offset is a time of
+    // day, i.e. ticks since midnight of day one). Creating a schedule costs
+    // schedule_cost(period) money up front — the higher the frequency, the
+    // higher the price. Returns false and changes nothing if the route is
+    // invalid, already exists, or the player cannot afford it.
+    bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset);
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
     void set_paused(bool p) { paused = p; }
     void set_speed_multiplier(float m) { speed_multiplier = m; }

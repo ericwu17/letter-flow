@@ -3,6 +3,21 @@
 
 #include <utility>
 
+namespace {
+
+// First departure tick strictly after `now` for a schedule anchored at
+// `start_offset` with departures every `period` ticks. The departure grid is
+// start_offset + k * period for k = 0, 1, 2, ... — e.g. "every 3 hours
+// starting at 00:30" fires at 00:30, 03:30, 06:30, ... and keeps that phase
+// across day boundaries.
+Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
+    if (now < start_offset)
+        return start_offset;
+    return start_offset + ((now - start_offset) / period + 1) * period;
+}
+
+}  // namespace
+
 void World::advance_tick() {
     current_tick += 1;
 
@@ -118,18 +133,28 @@ void World::deliver(Truck& truck) {
     truck.clear_letters();
 }
 
-void World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period) {
+bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset) {
     if (src >= post_offices.size() || dst >= post_offices.size() || src == dst || period == 0)
-        return;
+        return false;
     for (const TruckSchedule& existing : post_offices[src].outbound_schedules) {
         if (existing.dst == dst)
-            return;  // route already exists
+            return false;  // route already exists
     }
+
+    // Higher-frequency schedules cost more; creating one is only allowed if
+    // the player can pay the up-front price.
+    const int cost = schedule_cost(period);
+    if (money < cost)
+        return false;
+    money -= cost;
+
     TruckSchedule schedule;
     schedule.dst = dst;
     schedule.period = period;
-    schedule.next_departure = current_tick + period;
+    schedule.start_offset = start_offset;
+    schedule.next_departure = first_departure_after(start_offset, period, current_tick);
     post_offices[src].outbound_schedules.push_back(schedule);
+    return true;
 }
 
 void World::remove_schedule(PostOfficeId src, std::size_t schedule_index) {

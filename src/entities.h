@@ -26,6 +26,9 @@ struct Letter {
 struct TruckSchedule {
     PostOfficeId dst = kNoPostOffice;  // src is implicitly the office that owns this schedule
     Tick period = 0;                   // one departure every `period` ticks (must be > 0)
+    Tick start_offset = 0;             // time of day of the first possible departure, in ticks
+                                       // since midnight; departures fall on the grid
+                                       // start_offset + k * period (k = 0, 1, 2, ...)
     Tick next_departure = 0;           // absolute tick of the next departure
 };
 
