@@ -34,6 +34,11 @@ constexpr float kPanStep = 5.0;
 constexpr float kZoomMin = 0.5;
 constexpr float kZoomMax = 8.0;
 
+// Map label for an office's postal code: smaller and muted-green so it reads
+// as a subtitle under the (full-size, near-white) office name.
+constexpr float kPostalCodeFontScale = 0.7f;
+constexpr ImU32 kPostalCodeColor = IM_COL32(150, 205, 165, 255);
+
 // ---------------------------------------------------------------------------
 // World -> screen mapping: scale the fixed-size world to fit the display,
 // then apply the camera on top.
@@ -79,17 +84,19 @@ void UpdateCamera() {
         g_camera.pan.y *= pan_scale;
         g_camera.zoom = new_zoom;
     }
-    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_D)) {
-        g_camera.pan.x -= kPanStep;
-    }
-    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_A)) {
-        g_camera.pan.x += kPanStep;
-    }
-    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_S)) {
-        g_camera.pan.y -= kPanStep;
-    }
-    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_W)) {
-        g_camera.pan.y += kPanStep;
+    if (!io.WantCaptureKeyboard) {
+        if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_D)) {
+            g_camera.pan.x -= kPanStep;
+        }
+        if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_A)) {
+            g_camera.pan.x += kPanStep;
+        }
+        if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_S)) {
+            g_camera.pan.y -= kPanStep;
+        }
+        if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_W)) {
+            g_camera.pan.y += kPanStep;
+        }
     }
 }
 
@@ -300,6 +307,20 @@ void DrawWorld(const World& world) {
         draw->AddText({name_pos.x + 1.0f, name_pos.y + 1.0f}, IM_COL32(0, 0, 0, 255), office.name.c_str());
         draw->AddText(name_pos, IM_COL32(235, 235, 240, 255), office.name.c_str());
 
+        // Postal code, centered directly below the name in a smaller, muted
+        // green font. PushFont(nullptr, size) rescales the current font (both
+        // CalcTextSize and AddText honor it); FontSizeBase rather than
+        // GetFontSize() so the DPI/global scale is applied exactly once.
+        if (!office.postal_code.empty()) {
+            const float code_font_size = ImGui::GetStyle().FontSizeBase * kPostalCodeFontScale;
+            ImGui::PushFont(nullptr, code_font_size);
+            const ImVec2 code_extent = ImGui::CalcTextSize(office.postal_code.c_str());
+            const ImVec2 code_pos(c.x - code_extent.x * 0.5f, name_pos.y + name_size.y + 1.0f);
+            draw->AddText({code_pos.x + 1.0f, code_pos.y + 1.0f}, IM_COL32(0, 0, 0, 255), office.postal_code.c_str());
+            draw->AddText(code_pos, kPostalCodeColor, office.postal_code.c_str());
+            ImGui::PopFont();
+        }
+
         char buf[64];
         std::snprintf(buf, sizeof(buf), "%zu letters", office.outbound_letters.size());
         DrawCenteredText(draw, {c.x, c.y + office_radius + 12.0f}, buf);
@@ -455,6 +476,19 @@ void DrawInspector(World& world) {
         }
         ImGui::EndCombo();
     }
+
+    // Postal code, editable. InputText needs a mutable buffer, so keep one
+    // static buffer that is reloaded whenever the selection changes, and
+    // commit every keystroke to the World — the map label updates live.
+    static char postal_buf[128];
+    static PostOfficeId postal_buf_owner = kNoPostOffice;
+    if (postal_buf_owner != g_selected_office) {
+        std::snprintf(postal_buf, sizeof(postal_buf), "%s", office.postal_code.c_str());
+        postal_buf_owner = g_selected_office;
+    }
+    if (ImGui::InputText("Postal code", postal_buf, sizeof(postal_buf)))
+        world.set_postal_code(g_selected_office, postal_buf);
+
     ImGui::Text("Outbound: %zu / %zu   (%zu per day)",
                 office.outbound_letters.size(), office.max_outbound_letters, office.letters_per_day);
 

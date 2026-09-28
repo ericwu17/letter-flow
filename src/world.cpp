@@ -165,11 +165,17 @@ void World::remove_schedule(PostOfficeId src, std::size_t schedule_index) {
         schedules.erase(schedules.begin() + static_cast<std::ptrdiff_t>(schedule_index));
 }
 
-PostOfficeId World::add_office(std::string name, Position pos,
+void World::set_postal_code(PostOfficeId office, std::string postal_code) {
+    if (office < post_offices.size())
+        post_offices[office].postal_code = std::move(postal_code);
+}
+
+PostOfficeId World::add_office(std::string name, std::string postal_code, Position pos,
                                std::size_t letters_per_day,
                                std::size_t max_outbound_letters) {
     PostOffice office;
     office.name = std::move(name);
+    office.postal_code = std::move(postal_code);
     office.pos = pos;
     office.letters_per_day = letters_per_day;
     office.max_outbound_letters = max_outbound_letters;

@@ -35,6 +35,8 @@ struct TruckSchedule {
 struct PostOffice {
     Position pos;
     std::string name;
+    std::string postal_code;               // hierarchical code, e.g. "NJ/Mercer/Princeton";
+                                           // future routing rules will match on prefixes of it
     std::size_t max_outbound_letters = 0;  // game-rule cap on the buffer (not vector::capacity!)
     std::size_t letters_per_day = 0;       // expected letters per day: each tick spawns
                                            // one with probability letters_per_day / kTicksPerDay

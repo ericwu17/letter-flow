@@ -38,7 +38,7 @@ public:
 
     // Scenario construction. create_default_world() (scenario.h) builds the
     // starter map entirely through this public API — no friendship required.
-    PostOfficeId add_office(std::string name, Position pos,
+    PostOfficeId add_office(std::string name, std::string postal_code, Position pos,
                             std::size_t letters_per_day,
                             std::size_t max_outbound_letters);
     // Fills every office's buffer with one day's worth of letters right away,
@@ -55,6 +55,8 @@ public:
     // invalid, already exists, or the player cannot afford it.
     bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset);
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
+    // Replaces an office's postal code (edited in the inspector).
+    void set_postal_code(PostOfficeId office, std::string postal_code);
     void set_paused(bool p) { paused = p; }
     void set_speed_multiplier(float m) { speed_multiplier = m; }
 
