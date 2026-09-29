@@ -15,12 +15,21 @@
 using PostOfficeId = std::size_t;
 inline constexpr PostOfficeId kNoPostOffice = std::numeric_limits<PostOfficeId>::max();
 
+// Every entity provides full-state member-wise equality, defaulted so fields
+// added later are compared automatically. This backs the save/load round-trip
+// test (tests/test_serialization.cpp): its fixture gives every serialized
+// field a non-default value, so a field forgotten in serialization.cpp comes
+// back from a save as its default and the test fails loudly instead of the
+// data being quietly lost. Truck and World have private fields and maintain
+// their operator== by hand — see the notes there.
 struct Letter {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;
     Tick deadline = 0;  // delivered by this tick -> earn value; later -> pay fine
     int value = 0;      // earned on on-time delivery
     int fine = 0;       // paid on late delivery
+
+    bool operator==(const Letter&) const = default;
 };
 
 // Which letters a departing truck takes from its office's outbound buffer.
@@ -67,6 +76,8 @@ struct TruckSchedule {
                                        // since midnight; departures fall on the grid
                                        // start_offset + k * period (k = 0, 1, 2, ...)
     Tick next_departure = 0;           // absolute tick of the next departure
+
+    bool operator==(const TruckSchedule&) const = default;
 };
 
 struct PostOffice {
@@ -79,4 +90,6 @@ struct PostOffice {
                                            // one with probability letters_per_day / kTicksPerDay
     std::vector<Letter> outbound_letters;
     std::vector<TruckSchedule> outbound_schedules;
+
+    bool operator==(const PostOffice&) const = default;
 };

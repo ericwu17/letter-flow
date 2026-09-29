@@ -9,7 +9,15 @@
 #include <cstddef>
 #include <vector>
 
+// Snapshots and restores a Truck's full state for save files (defined in
+// serialization.cpp). The motion fields from/to/departure_tick/speed have no
+// public getters — the presentation layer derives everything from
+// get_position() — so serialization reaches them through this friend.
+struct TruckSerializer;
+
 class Truck {
+    friend struct TruckSerializer;
+
 private:
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;
@@ -44,4 +52,17 @@ public:
     // the World can score final deliveries and forward the rest onward.
     std::vector<Letter> take_letters();
 
+    // Full-state equality, field by field — Truck has private fields, so this
+    // cannot be defaulted from outside. Hand-maintained: when adding a field,
+    // extend this operator, serialization.cpp, and the test fixture (see the
+    // note in entities.h).
+    bool operator==(const Truck& other) const {
+        return src == other.src
+            && dst == other.dst
+            && from == other.from
+            && to == other.to
+            && departure_tick == other.departure_tick
+            && speed == other.speed
+            && carried_letters == other.carried_letters;
+    }
 };

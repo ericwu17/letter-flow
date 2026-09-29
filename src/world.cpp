@@ -1,6 +1,8 @@
 // world.cpp — simulation rules. Pure logic, no rendering, no input.
 #include "world.h"
 
+#include <sstream>
+#include <string>
 #include <utility>
 
 namespace {
@@ -16,7 +18,28 @@ Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
     return start_offset + ((now - start_offset) / period + 1) * period;
 }
 
+// std::mt19937 has no operator==; its standard-library text dump (the same
+// one save files store) fully captures the engine state, so comparing the
+// dumps compares the generators.
+std::string rng_state_dump(const std::mt19937& rng) {
+    std::ostringstream out;
+    out << rng;
+    return out.str();
+}
+
 }  // namespace
+
+bool World::operator==(const World& other) const {
+    return current_tick == other.current_tick
+        && paused == other.paused
+        && speed_multiplier == other.speed_multiplier
+        && money == other.money
+        && letters_delivered_on_time == other.letters_delivered_on_time
+        && letters_delivered_late == other.letters_delivered_late
+        && post_offices == other.post_offices
+        && trucks == other.trucks
+        && rng_state_dump(rng) == rng_state_dump(other.rng);
+}
 
 void World::advance_tick() {
     current_tick += 1;

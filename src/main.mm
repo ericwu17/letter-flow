@@ -17,6 +17,8 @@
 #include "ui.h"
 
 #include <cstdio>
+#include <string>
+#include <utility>
 
 #include <SDL.h>
 
@@ -84,7 +86,22 @@ int main(int, char**)
 
     // Our state: the whole game lives here. The UI layer reads/mutates it,
     // and the frame loop below steps it forward at a fixed tick rate.
+    //
+    // Persistence: the save lives in SDL's per-user app-data directory
+    // (~/Library/Application Support/LetterFlow/LetterFlow/ on macOS —
+    // SDL_GetPrefPath takes an org and an app name — created if needed).
+    // Startup continues the previous session if a save exists; the autosave
+    // after the main loop writes it back on quit.
+    char* pref_path = SDL_GetPrefPath("LetterFlow", "LetterFlow");
+    const std::string save_path = std::string(pref_path ? pref_path : "") + "save.json";
+    SDL_free(pref_path);
+
     World world = create_default_world();
+    if (auto saved = World::load_from_file(save_path))
+    {
+        world = std::move(*saved);
+        printf("Loaded saved game from %s\n", save_path.c_str());
+    }
     float tick_accumulator = 0.0f;
     constexpr float kSecondsPerTick = 1.0f / (float)kTicksPerSecond;
     const float clear_color[4] = {0.07f, 0.08f, 0.10f, 1.00f};
@@ -166,6 +183,12 @@ int main(int, char**)
             [commandBuffer commit];
         }
     }
+
+    // Autosave on quit so the next launch continues this session.
+    if (world.save_to_file(save_path))
+        printf("Saved game to %s\n", save_path.c_str());
+    else
+        printf("Warning: failed to save game to %s\n", save_path.c_str());
 
     // Cleanup
     ImGui_ImplMetal_Shutdown();

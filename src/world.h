@@ -7,6 +7,7 @@
 #include "truck.h"
 
 #include <cstddef>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
@@ -69,6 +70,24 @@ public:
     void set_postal_code(PostOfficeId office, std::string postal_code);
     void set_paused(bool p) { paused = p; }
     void set_speed_multiplier(float m) { speed_multiplier = m; }
+
+    // Persistence, implemented in serialization.cpp — the only translation
+    // unit that knows nlohmann/json exists, keeping the simulation headers
+    // dependency-free. save_to_file() writes the ENTIRE state (offices,
+    // letters, schedules, in-flight trucks, clock, money, and the RNG's
+    // internal state, so a loaded game continues the identical random
+    // sequence) as JSON, atomically via temp-file + rename.
+    // load_from_file() returns nullopt if the file is missing or unusable in
+    // any way (corrupt JSON, incompatible version, dangling references), so
+    // callers simply fall back to a fresh world.
+    bool save_to_file(const std::string& path) const;
+    static std::optional<World> load_from_file(const std::string& path);
+
+    // Full simulation-state equality, including the RNG (compared via its
+    // text dump — std::mt19937 has no operator==). Hand-maintained like
+    // Truck's: when adding a World field, extend this operator (world.cpp),
+    // serialization.cpp, and the test fixture (see the note in entities.h).
+    bool operator==(const World& other) const;
 
     // Read-only access for the presentation layer. Named with the same get_*
     // convention as Truck's accessors.
