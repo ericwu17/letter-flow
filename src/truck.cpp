@@ -38,6 +38,8 @@ std::size_t Truck::get_num_letters() const {
 std::vector<Letter>const& Truck::get_letters() const {
     return carried_letters;
 }
-void Truck::clear_letters() {
-    carried_letters.clear();
+std::vector<Letter> Truck::take_letters() {
+    std::vector<Letter> taken;
+    taken.swap(carried_letters);
+    return taken;
 }

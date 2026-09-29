@@ -49,12 +49,22 @@ public:
     // Player actions (called from the UI).
     // Creates a truck schedule on the src -> dst route: departures fall on the
     // grid start_offset + k * period (both in ticks; start_offset is a time of
-    // day, i.e. ticks since midnight of day one). Creating a schedule costs
-    // schedule_cost(period) money up front — the higher the frequency, the
-    // higher the price. Returns false and changes nothing if the route is
-    // invalid, already exists, or the player cannot afford it.
-    bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset);
+    // day, i.e. ticks since midnight of day one). The routing rule decides
+    // which outbound letters each departure picks up. Creating a schedule
+    // costs schedule_cost(period) money up front — the higher the frequency,
+    // the higher the price. Returns false and changes nothing if the route is
+    // invalid (bad ids, zero period, empty postal prefix), an identical
+    // (dst, rule) schedule already exists, or the player cannot afford it.
+    // Schedules to the same dst with different rules are allowed; on a tick
+    // where both depart, the earlier one in the list takes contested letters.
+    bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
+                      const RoutingRule& rule);
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
+    // Moves the schedule at index `from` to index `to` (drag-to-reorder in the
+    // inspector). List order is the pick-up priority: departures fire in list
+    // order and spawn_truck() moves letters out of the buffer, so when several
+    // schedules depart on the same tick, the first matching one wins a letter.
+    void move_schedule(PostOfficeId src, std::size_t from, std::size_t to);
     // Replaces an office's postal code (edited in the inspector).
     void set_postal_code(PostOfficeId office, std::string postal_code);
     void set_paused(bool p) { paused = p; }

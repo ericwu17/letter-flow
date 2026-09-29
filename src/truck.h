@@ -35,9 +35,13 @@ public:
     float route_length() const;
     Position get_position(Tick now) const;
     bool has_arrived(Tick now) const;
+    PostOfficeId get_src() const { return src; }
+    PostOfficeId get_dst() const { return dst; }
     void push_back_letter(Letter);
     std::size_t get_num_letters() const;
     std::vector<Letter>const& get_letters() const;
-    void clear_letters();
+    // Moves the whole cargo out and leaves the truck empty; used on arrival so
+    // the World can score final deliveries and forward the rest onward.
+    std::vector<Letter> take_letters();
 
 };

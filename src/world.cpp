@@ -31,6 +31,10 @@ void World::advance_tick() {
     //    safe: spawn_truck() only touches the office's letters buffer and the
     //    trucks vector — never the schedules vector being iterated here — and
     //    post_offices itself does not grow during a tick.
+    //    Schedules fire in list order (the order shown in the inspector) and
+    //    spawn_truck() MOVES picked-up letters out of the buffer, so when
+    //    several schedules of one office depart on the same tick and their
+    //    rules both match a letter, the first schedule in the list wins it.
     for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
         for (TruckSchedule& schedule : post_offices[id].outbound_schedules) {
             if (schedule.period == 0 || current_tick < schedule.next_departure)
@@ -94,9 +98,10 @@ void World::spawn_letter(PostOfficeId office_id) {
 void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     PostOffice& src = post_offices[src_id];
 
-    // Basic routing rule: the truck takes every outbound letter addressed to
-    // its destination. This is the extension point for fancier RoutingRules
-    // (capacity limits, priority by deadline, multi-hop forwarding, ...).
+    // The schedule's routing rule decides which of the office's letters board
+    // the truck: the exact destination, every letter addressed to a postal
+    // code prefix, or the whole buffer. This is the extension point for even
+    // fancier RoutingRules (capacity limits, priority by deadline, ...).
     Truck truck(
         src_id,
         schedule.dst,
@@ -109,7 +114,8 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     std::vector<Letter>& outbound = src.outbound_letters;
     std::size_t keep = 0;
     for (std::size_t i = 0; i < outbound.size(); ++i) {
-        if (outbound[i].dst == schedule.dst)
+        const PostOffice& letter_dst = post_offices[outbound[i].dst];
+        if (schedule.rule.matches(outbound[i].dst, letter_dst.postal_code, schedule.dst))
             truck.push_back_letter(std::move(outbound[i]));
         else
             outbound[keep++] = std::move(outbound[i]);
@@ -121,24 +127,46 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
 }
 
 void World::deliver(Truck& truck) {
-    for (const Letter& letter : truck.get_letters()) {
-        if (current_tick <= letter.deadline) {
-            money += letter.value;
-            letters_delivered_on_time += 1;
+    const PostOfficeId arrived_at = truck.get_dst();
+    PostOffice& office = post_offices[arrived_at];
+
+    for (Letter& letter : truck.take_letters()) {
+        if (letter.dst == arrived_at) {
+            // Final delivery: score against the deadline.
+            if (current_tick <= letter.deadline) {
+                money += letter.value;
+                letters_delivered_on_time += 1;
+            } else {
+                money -= letter.fine;
+                letters_delivered_late += 1;
+            }
         } else {
-            money -= letter.fine;
-            letters_delivered_late += 1;
+            // Multi-hop forwarding: the letter is addressed somewhere else, so
+            // it joins this office's outbound buffer, where later schedules
+            // can pick it up (hub-and-spoke routing). Forwarding bypasses
+            // max_outbound_letters — the cap only gates spawning — so no
+            // letter is ever lost in transit; an over-cap buffer simply stops
+            // new spawns until it drains below the cap again.
+            office.outbound_letters.push_back(std::move(letter));
         }
     }
-    truck.clear_letters();
 }
 
-bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset) {
+bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
+                         const RoutingRule& rule) {
     if (src >= post_offices.size() || dst >= post_offices.size() || src == dst || period == 0)
         return false;
+    if (rule.type == RoutingRuleType::PostalPrefix && rule.prefix.empty())
+        return false;  // an empty prefix must be an explicit AllLetters rule
+    // Normalize: only PostalPrefix rules carry a prefix, so equality (and the
+    // duplicate check below) compares like with like.
+    RoutingRule normalized_rule = rule;
+    if (normalized_rule.type != RoutingRuleType::PostalPrefix)
+        normalized_rule.prefix.clear();
+
     for (const TruckSchedule& existing : post_offices[src].outbound_schedules) {
-        if (existing.dst == dst)
-            return false;  // route already exists
+        if (existing.dst == dst && existing.rule == normalized_rule)
+            return false;  // identical schedule already exists
     }
 
     // Higher-frequency schedules cost more; creating one is only allowed if
@@ -150,10 +178,11 @@ bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick s
 
     TruckSchedule schedule;
     schedule.dst = dst;
+    schedule.rule = std::move(normalized_rule);
     schedule.period = period;
     schedule.start_offset = start_offset;
     schedule.next_departure = first_departure_after(start_offset, period, current_tick);
-    post_offices[src].outbound_schedules.push_back(schedule);
+    post_offices[src].outbound_schedules.push_back(std::move(schedule));
     return true;
 }
 
@@ -163,6 +192,19 @@ void World::remove_schedule(PostOfficeId src, std::size_t schedule_index) {
     std::vector<TruckSchedule>& schedules = post_offices[src].outbound_schedules;
     if (schedule_index < schedules.size())
         schedules.erase(schedules.begin() + static_cast<std::ptrdiff_t>(schedule_index));
+}
+
+void World::move_schedule(PostOfficeId src, std::size_t from, std::size_t to) {
+    if (src >= post_offices.size())
+        return;
+    std::vector<TruckSchedule>& schedules = post_offices[src].outbound_schedules;
+    if (from >= schedules.size() || to >= schedules.size() || from == to)
+        return;
+    // "Drag row `from` onto row `to`": the dragged schedule ends up at index
+    // `to` and the rows in between shift by one, the usual list-reorder feel.
+    TruckSchedule moved = std::move(schedules[from]);
+    schedules.erase(schedules.begin() + static_cast<std::ptrdiff_t>(from));
+    schedules.insert(schedules.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
 }
 
 void World::set_postal_code(PostOfficeId office, std::string postal_code) {

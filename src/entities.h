@@ -23,8 +23,45 @@ struct Letter {
     int fine = 0;       // paid on late delivery
 };
 
+// Which letters a departing truck takes from its office's outbound buffer.
+// A schedule's rule is evaluated at departure time against the destination
+// offices' *current* postal codes, so runtime edits take effect immediately.
+enum class RoutingRuleType {
+    ExactDestination,  // only letters addressed to the schedule's dst office
+    PostalPrefix,      // letters addressed to offices whose postal code starts
+                       // with `prefix` — hub-style collection; letters not
+                       // addressed to dst are forwarded on arrival
+    AllLetters,        // the whole buffer, regardless of address
+};
+
+struct RoutingRule {
+    RoutingRuleType type = RoutingRuleType::ExactDestination;
+    std::string prefix;  // only meaningful (and required non-empty) for PostalPrefix
+
+    // `letter_dst` is the office the letter is addressed to and
+    // `dst_postal_code` its current postal code; `schedule_dst` is the office
+    // the truck departs for.
+    bool matches(PostOfficeId letter_dst, const std::string& dst_postal_code,
+                 PostOfficeId schedule_dst) const {
+        switch (type) {
+        case RoutingRuleType::ExactDestination:
+            return letter_dst == schedule_dst;
+        case RoutingRuleType::PostalPrefix:
+            // An empty prefix would match everything; treat it as matching
+            // nothing so a misconfigured rule never silently acts as AllLetters.
+            return !prefix.empty() && dst_postal_code.starts_with(prefix);
+        case RoutingRuleType::AllLetters:
+            return true;
+        }
+        return false;
+    }
+
+    bool operator==(const RoutingRule&) const = default;
+};
+
 struct TruckSchedule {
     PostOfficeId dst = kNoPostOffice;  // src is implicitly the office that owns this schedule
+    RoutingRule rule;                  // which outbound letters the truck picks up
     Tick period = 0;                   // one departure every `period` ticks (must be > 0)
     Tick start_offset = 0;             // time of day of the first possible departure, in ticks
                                        // since midnight; departures fall on the grid
@@ -36,7 +73,7 @@ struct PostOffice {
     Position pos;
     std::string name;
     std::string postal_code;               // hierarchical code, e.g. "NJ/Mercer/Princeton";
-                                           // future routing rules will match on prefixes of it
+                                           // PostalPrefix routing rules match on prefixes of it
     std::size_t max_outbound_letters = 0;  // game-rule cap on the buffer (not vector::capacity!)
     std::size_t letters_per_day = 0;       // expected letters per day: each tick spawns
                                            // one with probability letters_per_day / kTicksPerDay

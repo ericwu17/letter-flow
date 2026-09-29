@@ -18,7 +18,13 @@ make && ./letter-flow
 
 ## Controls
 
-- **Click an office**: inspect its mail, add/remove truck routes
+- **Click an office**: inspect its mail, add/remove truck schedules
+- **Truck schedules**: each schedule has a routing rule — only letters for the
+  destination, letters addressed to a postal-code prefix, or all letters.
+  Letters that arrive at an office they are not addressed to are forwarded
+  from there (hub and spoke). Drag the schedule list to reorder it: when
+  several schedules depart at the same time, the topmost matching one picks
+  up a letter first.
 - **Mouse wheel / WASD**: zoom and pan the map
 - **Transport bar**: play/pause, x4 fast-forward, day/time readout
 

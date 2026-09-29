@@ -13,6 +13,9 @@
 #include <cmath>
 #include <cstdio>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -127,6 +130,43 @@ void FormatDayTime(Tick tick, char* buf, std::size_t buf_len) {
 void FormatDuration(Tick duration, char* buf, std::size_t buf_len) {
     const ClockTime t = duration_to_hours_minutes(duration);
     std::snprintf(buf, buf_len, "%02d:%02d", t.hour, t.minute);
+}
+
+// Short human-readable summary of a schedule's pick-up rule, e.g.
+// "Princeton mail", "NJ/Mercer/*" or "all mail".
+void FormatRoutingRule(const TruckSchedule& schedule, const std::vector<PostOffice>& offices,
+                       char* buf, std::size_t buf_len) {
+    switch (schedule.rule.type) {
+    case RoutingRuleType::ExactDestination:
+        std::snprintf(buf, buf_len, "%s mail", offices[schedule.dst].name.c_str());
+        break;
+    case RoutingRuleType::PostalPrefix:
+        std::snprintf(buf, buf_len, "%s*", schedule.rule.prefix.c_str());
+        break;
+    case RoutingRuleType::AllLetters:
+        std::snprintf(buf, buf_len, "all mail");
+        break;
+    }
+}
+
+// Every '/'-delimited prefix of every office's postal code ("NJ",
+// "NJ/Mercer", "NJ/Mercer/Princeton", ...), sorted and deduplicated — the
+// suggestion list for the prefix field of a PostalPrefix rule. Recomputed
+// each frame, which is trivially cheap at this map size.
+std::vector<std::string> CollectPostalPrefixes(const std::vector<PostOffice>& offices) {
+    std::vector<std::string> prefixes;
+    for (const PostOffice& office : offices) {
+        const std::string& code = office.postal_code;
+        if (code.empty())
+            continue;
+        for (std::size_t slash = code.find('/'); slash != std::string::npos;
+             slash = code.find('/', slash + 1))
+            prefixes.push_back(code.substr(0, slash));
+        prefixes.push_back(code);  // the full code itself is a valid prefix
+    }
+    std::sort(prefixes.begin(), prefixes.end());
+    prefixes.erase(std::unique(prefixes.begin(), prefixes.end()), prefixes.end());
+    return prefixes;
 }
 
 // ---------------------------------------------------------------------------
@@ -522,28 +562,129 @@ void DrawInspector(World& world) {
     }
 
     if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Record the removal and apply it after the loop: remove_schedule()
-        // erases from the very vector we are iterating, which would invalidate
-        // the `schedule` reference and shift the indices of every later row.
+        ImGui::TextDisabled("Departures run top to bottom: on simultaneous departures the");
+        ImGui::TextDisabled("first schedule whose rule matches a letter picks it up. Drag to reorder.");
+
+        // Record removals/reorders and apply them after the loop: the World
+        // mutates the very vector we are iterating, which would invalidate the
+        // `schedule` reference and shift the indices of every later row (and
+        // of a pending drag-and-drop payload).
         std::optional<std::size_t> schedule_to_remove;
+        std::optional<std::pair<std::size_t, std::size_t>> schedule_to_move;  // from, to
         for (std::size_t i = 0; i < office.outbound_schedules.size(); ++i) {
             const TruckSchedule& schedule = office.outbound_schedules[i];
-            char every[16], start[16], next[32];
+            char every[16], start[16], next[32], pickup[160], label[288];
             FormatDuration(schedule.period, every, sizeof(every));
             FormatDuration(schedule.start_offset, start, sizeof(start));
             FormatDayTime(schedule.next_departure, next, sizeof(next));
-            ImGui::Text("to %s every %s starting at %s (next: %s)",
-                        offices[schedule.dst].name.c_str(), every, start, next);
-            ImGui::SameLine();
+            FormatRoutingRule(schedule, offices, pickup, sizeof(pickup));
+            std::snprintf(label, sizeof(label), "#%zu  to %s  [pickup: %s]  every %s starting at %s (next: %s)",
+                          i + 1, offices[schedule.dst].name.c_str(), pickup, every, start, next);
+
             ImGui::PushID(static_cast<int>(i));
+            // The row itself is the drag handle; dropping it on another row
+            // reorders the schedule to that position.
+            ImGui::Selectable(label);
+            if (ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload("SCHEDULE_REORDER", &i, sizeof(i));
+                ImGui::TextUnformatted(label);  // drag preview
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCHEDULE_REORDER")) {
+                    const std::size_t from = *static_cast<const std::size_t*>(payload->Data);
+                    if (from != i)
+                        schedule_to_move = {from, i};
+                }
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::SameLine();
             if (ImGui::SmallButton("Remove"))
                 schedule_to_remove = i;
             ImGui::PopID();
         }
         if (schedule_to_remove.has_value())
             world.remove_schedule(g_selected_office, *schedule_to_remove);
+        else if (schedule_to_move.has_value())
+            world.move_schedule(g_selected_office, schedule_to_move->first, schedule_to_move->second);
 
         ImGui::SeparatorText("Add route");
+
+        // Add-route widget state. Statics are reset whenever the inspected
+        // office changes (same pattern as the postal-code buffer above).
+        static PostOfficeId add_owner = kNoPostOffice;
+        static PostOfficeId add_dst = kNoPostOffice;
+        static int add_rule_type = 0;  // 0 = exact dst, 1 = postal prefix, 2 = all letters
+        static char add_prefix[128] = "";
+        static ImGuiTextFilter dst_filter;
+        if (add_owner != g_selected_office) {
+            add_owner = g_selected_office;
+            add_dst = kNoPostOffice;
+            add_rule_type = 0;
+            add_prefix[0] = '\0';
+            dst_filter.Clear();
+        }
+
+        // Destination: a dropdown that narrows as you type, matching both
+        // office names and postal codes.
+        const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size();
+        const char* dst_preview = dst_ok ? offices[add_dst].name.c_str() : "Choose destination...";
+        if (ImGui::BeginCombo("To", dst_preview)) {
+            if (ImGui::IsWindowAppearing()) {
+                dst_filter.Clear();
+                ImGui::SetKeyboardFocusHere();  // typing filters immediately
+            }
+            dst_filter.Draw("Search name or postal code##add_dst_filter");
+            for (PostOfficeId id = 0; id < offices.size(); ++id) {
+                if (id == g_selected_office)
+                    continue;
+                const PostOffice& other = offices[id];
+                if (!dst_filter.PassFilter(other.name.c_str()) &&
+                    !dst_filter.PassFilter(other.postal_code.c_str()))
+                    continue;
+                char item[192];
+                std::snprintf(item, sizeof(item), "%s   %s",
+                              other.name.c_str(), other.postal_code.c_str());
+                if (ImGui::Selectable(item, id == add_dst))
+                    add_dst = id;
+                if (id == add_dst)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        // Routing rule: which of this office's letters each departure takes.
+        char exact_label[128];
+        if (dst_ok)
+            std::snprintf(exact_label, sizeof(exact_label),
+                          "Only letters addressed to %s", offices[add_dst].name.c_str());
+        else
+            std::snprintf(exact_label, sizeof(exact_label),
+                          "Only letters addressed to the destination");
+        ImGui::RadioButton(exact_label, &add_rule_type, 0);
+        ImGui::RadioButton("Letters addressed to a postal-code prefix", &add_rule_type, 1);
+        ImGui::RadioButton("All letters (the rest forward onward from the destination)",
+                           &add_rule_type, 2);
+
+        bool prefix_ok = true;
+        if (add_rule_type == 1) {
+            ImGui::SetNextItemWidth(220.0f);
+            ImGui::InputTextWithHint("Prefix##add_rule_prefix", "e.g. NJ/North",
+                                     add_prefix, sizeof(add_prefix));
+            prefix_ok = add_prefix[0] != '\0';
+            ImGui::SameLine();
+            // Suggestions: every real '/'-delimited prefix in use on the map.
+            if (ImGui::BeginCombo("##add_prefix_suggest", "Suggestions")) {
+                for (const std::string& suggestion : CollectPostalPrefixes(offices)) {
+                    if (ImGui::Selectable(suggestion.c_str()))
+                        std::snprintf(add_prefix, sizeof(add_prefix), "%s", suggestion.c_str());
+                }
+                ImGui::EndCombo();
+            }
+            if (!prefix_ok)
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "The prefix must not be empty.");
+        }
+
         // Frequency and offset are entered as 24-hour HH:MM and converted to
         // ticks right away — the World only ever sees ticks. Defaults spell
         // out the canonical example: every 3 hours starting at 00:30.
@@ -568,23 +709,39 @@ void DrawInspector(World& world) {
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
                                "Up-front cost: $%d (you only have $%d)", cost, world.get_money());
 
-        for (PostOfficeId other = 0; other < offices.size(); ++other) {
-            if (other == g_selected_office)
-                continue;
-            const bool route_exists =
-                std::any_of(office.outbound_schedules.begin(), office.outbound_schedules.end(),
-                            [other](const TruckSchedule& s) { return s.dst == other; });
-            char label[96];
-            std::snprintf(label, sizeof(label), "Route to %s ($%d)",
-                          offices[other].name.c_str(), cost);
-            // Grey out routes that already exist or that the player can't afford.
-            ImGui::BeginDisabled(route_exists || !affordable);
-            if (ImGui::Button(label))
-                world.add_schedule(g_selected_office, other, period, start_offset);
-            ImGui::EndDisabled();
-            if (other + 1 < offices.size())
-                ImGui::SameLine();
+        // The fully configured rule, used for the live match count, the
+        // duplicate check and the World call.
+        RoutingRule rule;
+        if (add_rule_type == 1) {
+            rule.type = RoutingRuleType::PostalPrefix;
+            rule.prefix = add_prefix;
+        } else if (add_rule_type == 2) {
+            rule.type = RoutingRuleType::AllLetters;
         }
+
+        // Live feedback: how much of the current buffer this rule would load.
+        if (dst_ok && prefix_ok) {
+            std::size_t matched = 0;
+            for (const Letter& letter : office.outbound_letters)
+                if (rule.matches(letter.dst, offices[letter.dst].postal_code, add_dst))
+                    ++matched;
+            ImGui::TextDisabled("This rule currently matches %zu of %zu outbound letters.",
+                                matched, office.outbound_letters.size());
+        }
+
+        const bool duplicate = dst_ok && std::any_of(
+            office.outbound_schedules.begin(), office.outbound_schedules.end(),
+            [&](const TruckSchedule& s) { return s.dst == add_dst && s.rule == rule; });
+
+        ImGui::BeginDisabled(!dst_ok || !prefix_ok || duplicate || !affordable);
+        char add_label[64];
+        std::snprintf(add_label, sizeof(add_label), "Add schedule ($%d)", cost);
+        if (ImGui::Button(add_label))
+            world.add_schedule(g_selected_office, add_dst, period, start_offset, rule);
+        ImGui::EndDisabled();
+        if (dst_ok && duplicate)
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                               "An identical schedule already exists.");
     }
 
     ImGui::End();
