@@ -65,9 +65,10 @@ World build_fixture_world() {
 
     // Force some late deliveries so letters_delivered_late is non-zero:
     // AllLetters schedules whose first departure is later than any waiting
-    // letter's deadline can be (deadlines are at most two days after spawn,
-    // and these offices have no earlier departures), so the trucks arrive
-    // with guaranteed-late cargo.
+    // letter's deadline can be (deadlines are at most two days after spawn).
+    // Every src below except office 0 — which also has the hourly exact
+    // route to office 1 added above — has no earlier departures, so its
+    // trucks arrive with guaranteed-late cargo.
     const Tick late_start = 3 * kTicksPerDay;
     constexpr PostOfficeId kLateSrcs[] = {0, 2, 5, 7, 11};
     for (const PostOfficeId src : kLateSrcs)

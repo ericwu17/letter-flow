@@ -316,7 +316,6 @@ void DrawDockspace() {
 // ---------------------------------------------------------------------------
 
 void DrawWorld(const World& world) {
-
     UpdateCamera();
 
     ImDrawList* draw = ImGui::GetBackgroundDrawList();

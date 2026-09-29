@@ -9,7 +9,7 @@ class World;
 // Fullscreen dockspace over the main viewport, hosting the dockable windows.
 // The central node is passthrough (transparent and click-through) so the map
 // drawn into the background draw list stays visible and interactive. On first
-// run builds the default layout: "Post office" docked along the bottom edge;
+// run builds the default layout: "Post office" docked into a left split;
 // afterwards the user's own arrangement is loaded from imgui.ini untouched.
 void DrawDockspace();
 

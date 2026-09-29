@@ -35,7 +35,7 @@ public:
         Position to,
         Tick departure_tick,
         float speed
-    ): src(src), dst(dst), from(from), to(to), departure_tick(departure_tick), speed(speed) {};
+    ): src(src), dst(dst), from(from), to(to), departure_tick(departure_tick), speed(speed) {}
 
     // Truck position is computed from (departure point + direction * elapsed time)
     // rather than accumulated frame by frame, so it never drifts and is exactly
@@ -47,7 +47,7 @@ public:
     PostOfficeId get_dst() const { return dst; }
     void push_back_letter(Letter);
     std::size_t get_num_letters() const;
-    std::vector<Letter>const& get_letters() const;
+    const std::vector<Letter>& get_letters() const;
     // Moves the whole cargo out and leaves the truck empty; used on arrival so
     // the World can score final deliveries and forward the rest onward.
     std::vector<Letter> take_letters();

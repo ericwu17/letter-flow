@@ -11,7 +11,7 @@ float Truck::route_length() const {
     return std::sqrt(dx * dx + dy * dy);
 }
 
-Position Truck::get_position( Tick now) const {
+Position Truck::get_position(Tick now) const {
     const float length = route_length();
     if (length < 1e-6f)
         return to;
@@ -29,13 +29,16 @@ bool Truck::has_arrived(Tick now) const {
     const Tick elapsed = (now > departure_tick) ? (now - departure_tick) : 0;
     return static_cast<float>(elapsed) * speed >= route_length();
 }
+
 void Truck::push_back_letter(Letter letter) {
     carried_letters.push_back(std::move(letter));
 }
+
 std::size_t Truck::get_num_letters() const {
     return carried_letters.size();
 }
-std::vector<Letter>const& Truck::get_letters() const {
+
+const std::vector<Letter>& Truck::get_letters() const {
     return carried_letters;
 }
 std::vector<Letter> Truck::take_letters() {

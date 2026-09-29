@@ -36,7 +36,7 @@ make && ./letter-flow
 
 ```
 src/game_types.h      shared primitives: Tick, Position, world constants
-src/entities.h        data entities: Letter, TruckSchedule, PostOffice
+src/entities.h        data entities: Letter, RoutingRule, TruckSchedule, PostOffice
 src/truck.*           Truck: deterministic point-to-point motion
 src/world.*           World: owns all state, advances the sim in fixed 60 Hz ticks
 src/scenario.*        create_default_world() starter map
