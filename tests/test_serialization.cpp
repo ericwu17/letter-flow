@@ -7,10 +7,10 @@
 // field forgotten in serialization.cpp comes back from a save as its default
 // and the equality assert fails loudly instead of the data being quietly
 // lost. The entity operator== are defaulted and pick up new struct fields
-// automatically; when adding a field to Truck or World (hand-maintained
-// operator==) or any new state at all, also extend their operators and make
-// the fixture give the new field a distinct value (see the note in
-// entities.h).
+// automatically (Truck's included, via its plain-data TruckState); when
+// adding a field to World (hand-maintained operator==) or any new state at
+// all, also extend its operator and make the fixture give the new field a
+// distinct value (see the note in entities.h).
 //
 // Test artifacts are written under build/test-saves/ (gitignored); the test
 // must run with the repo root as working directory (`make test` does).

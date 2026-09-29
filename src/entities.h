@@ -20,8 +20,9 @@ inline constexpr PostOfficeId kNoPostOffice = std::numeric_limits<PostOfficeId>:
 // test (tests/test_serialization.cpp): its fixture gives every serialized
 // field a non-default value, so a field forgotten in serialization.cpp comes
 // back from a save as its default and the test fails loudly instead of the
-// data being quietly lost. Truck and World have private fields and maintain
-// their operator== by hand — see the notes there.
+// data being quietly lost. Truck's fields live in a plain-data TruckState
+// with defaulted comparison, so its operator== is defaulted too; only World
+// maintains its operator== by hand — see the notes there.
 struct Letter {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;

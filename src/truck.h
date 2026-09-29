@@ -7,18 +7,16 @@
 #include "game_types.h"
 
 #include <cstddef>
+#include <utility>
 #include <vector>
 
-// Snapshots and restores a Truck's full state for save files (defined in
-// serialization.cpp). The motion fields from/to/departure_tick/speed have no
-// public getters — the presentation layer derives everything from
-// get_position() — so serialization reaches them through this friend.
-struct TruckSerializer;
-
-class Truck {
-    friend struct TruckSerializer;
-
-private:
+// A truck's full state as plain data. Truck wraps one of these; serialization
+// (serialization.cpp) round-trips it through the public get_state() accessor
+// and the state constructor — no friend access into Truck needed. Its
+// member-wise equality is defaulted, so Truck's is too: when adding a field,
+// add it here (comparison updates automatically) and extend serialization.cpp
+// and the test fixture (see the note in entities.h).
+struct TruckState {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;
     Position from;               // world position at departure
@@ -26,6 +24,13 @@ private:
     Tick departure_tick = 0;
     float speed = kTruckSpeed;   // world units per tick
     std::vector<Letter> carried_letters;
+
+    bool operator==(const TruckState&) const = default;
+};
+
+class Truck {
+private:
+    TruckState state;
 
 public:
     Truck(
@@ -35,7 +40,8 @@ public:
         Position to,
         Tick departure_tick,
         float speed
-    ): src(src), dst(dst), from(from), to(to), departure_tick(departure_tick), speed(speed) {}
+    ): state{src, dst, from, to, departure_tick, speed, {}} {}
+    explicit Truck(TruckState initial_state): state(std::move(initial_state)) {}
 
     // Truck position is computed from (departure point + direction * elapsed time)
     // rather than accumulated frame by frame, so it never drifts and is exactly
@@ -43,26 +49,18 @@ public:
     float route_length() const;
     Position get_position(Tick now) const;
     bool has_arrived(Tick now) const;
-    PostOfficeId get_src() const { return src; }
-    PostOfficeId get_dst() const { return dst; }
+    PostOfficeId get_src() const { return state.src; }
+    PostOfficeId get_dst() const { return state.dst; }
     void push_back_letter(Letter);
     std::size_t get_num_letters() const;
     const std::vector<Letter>& get_letters() const;
     // Moves the whole cargo out and leaves the truck empty; used on arrival so
     // the World can score final deliveries and forward the rest onward.
     std::vector<Letter> take_letters();
+    // Full state (motion + cargo); save files store exactly this.
+    const TruckState& get_state() const { return state; }
 
-    // Full-state equality, field by field — Truck has private fields, so this
-    // cannot be defaulted from outside. Hand-maintained: when adding a field,
-    // extend this operator, serialization.cpp, and the test fixture (see the
-    // note in entities.h).
-    bool operator==(const Truck& other) const {
-        return src == other.src
-            && dst == other.dst
-            && from == other.from
-            && to == other.to
-            && departure_tick == other.departure_tick
-            && speed == other.speed
-            && carried_letters == other.carried_letters;
-    }
+    // Full-state equality — defaulted, comparing the TruckState member whose
+    // own equality is defaulted in turn (see the note in entities.h).
+    bool operator==(const Truck&) const = default;
 };

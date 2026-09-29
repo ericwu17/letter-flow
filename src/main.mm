@@ -25,6 +25,28 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
+// Advance the simulation at a FIXED timestep: the game ticks 60 times per
+// second no matter what the display refresh rate is (60/120/144 Hz all work).
+// Real time since the last frame goes into an accumulator, scaled by the
+// world's fast-forward multiplier; whole ticks are drained from it.
+static void step_world(World& world, float delta_time, float& tick_accumulator)
+{
+    constexpr float kSecondsPerTick = 1.0f / (float)kTicksPerSecond;
+    if (world.is_paused())
+    {
+        tick_accumulator = 0.0f;
+        return;
+    }
+    tick_accumulator += delta_time * world.get_speed_multiplier();
+    if (tick_accumulator > 0.25f)
+        tick_accumulator = 0.25f;  // after a long hitch, don't try to catch up forever
+    while (tick_accumulator >= kSecondsPerTick)
+    {
+        world.advance_tick();
+        tick_accumulator -= kSecondsPerTick;
+    }
+}
+
 int main(int, char**)
 {
     // Setup SDL
@@ -103,8 +125,7 @@ int main(int, char**)
         printf("Loaded saved game from %s\n", save_path.c_str());
     }
     float tick_accumulator = 0.0f;
-    constexpr float kSecondsPerTick = 1.0f / (float)kTicksPerSecond;
-    const float clear_color[4] = {0.07f, 0.08f, 0.10f, 1.00f};
+    const double clear_color[4] = {0.07, 0.08, 0.10, 1.00};  // MTLClearColorMake takes doubles
 
     // Main loop
     bool done = false;
@@ -141,25 +162,8 @@ int main(int, char**)
             ImGui_ImplSDL2_NewFrame();
             ImGui::NewFrame();
 
-            // 2. Advance the simulation at a FIXED timestep: the game ticks
-            //    60 times per second no matter what the display refresh rate
-            //    is (60/120/144 Hz all work). Real time since the last frame
-            //    goes into an accumulator; whole ticks are drained from it.
-            if (!world.is_paused())
-            {
-                tick_accumulator += io.DeltaTime * world.get_speed_multiplier();
-                if (tick_accumulator > 0.25f)
-                    tick_accumulator = 0.25f;  // after a long hitch, don't try to catch up forever
-                while (tick_accumulator >= kSecondsPerTick)
-                {
-                    world.advance_tick();
-                    tick_accumulator -= kSecondsPerTick;
-                }
-            }
-            else
-            {
-                tick_accumulator = 0.0f;
-            }
+            // 2. Advance the simulation (fixed timestep, see step_world).
+            step_world(world, io.DeltaTime, tick_accumulator);
 
             // 3. Build this frame's UI. Order matters: the dockspace hosts the
             //    windows, the map goes into the background draw list (under the

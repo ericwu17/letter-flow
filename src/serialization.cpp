@@ -129,6 +129,30 @@ void from_json(const nlohmann::json& j, PostOffice& office) {
     j.at("outbound_schedules").get_to(office.outbound_schedules);
 }
 
+// TruckState converts like any other entity; Truck itself goes through it
+// (get_state() / the state constructor) because it has no default
+// constructor, so it cannot use the vector-wide from_json path — trucks are
+// converted one by one in save_to_file / load_from_file.
+void to_json(nlohmann::json& j, const TruckState& truck) {
+    j = {{"src", truck.src},
+         {"dst", truck.dst},
+         {"from", truck.from},
+         {"to", truck.to},
+         {"departure_tick", truck.departure_tick},
+         {"speed", truck.speed},
+         {"carried_letters", truck.carried_letters}};
+}
+
+void from_json(const nlohmann::json& j, TruckState& truck) {
+    j.at("src").get_to(truck.src);
+    j.at("dst").get_to(truck.dst);
+    j.at("from").get_to(truck.from);
+    j.at("to").get_to(truck.to);
+    j.at("departure_tick").get_to(truck.departure_tick);
+    j.at("speed").get_to(truck.speed);
+    j.at("carried_letters").get_to(truck.carried_letters);
+}
+
 namespace {
 
 // Cross-reference and invariant check for a freshly loaded world. nlohmann
@@ -162,35 +186,6 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
 
 }  // namespace
 
-// Friend of Truck (see truck.h), at global scope so the friendship declared
-// in truck.h refers to exactly this type. Saving reads the private motion
-// fields directly; loading rebuilds a truck through its public constructor.
-// (Trucks have no default constructor, so they cannot use the vector-wide
-// from_json path above and are converted one by one in load_from_file.)
-struct TruckSerializer {
-    static nlohmann::json to_json(const Truck& truck) {
-        return {{"src", truck.src},
-                {"dst", truck.dst},
-                {"from", truck.from},
-                {"to", truck.to},
-                {"departure_tick", truck.departure_tick},
-                {"speed", truck.speed},
-                {"carried_letters", truck.carried_letters}};
-    }
-
-    static Truck from_json(const nlohmann::json& j) {
-        Truck truck(j.at("src").get<PostOfficeId>(),
-                    j.at("dst").get<PostOfficeId>(),
-                    j.at("from").get<Position>(),
-                    j.at("to").get<Position>(),
-                    j.at("departure_tick").get<Tick>(),
-                    j.at("speed").get<float>());
-        for (const Letter& letter : j.at("carried_letters").get<std::vector<Letter>>())
-            truck.push_back_letter(letter);
-        return truck;
-    }
-};
-
 // ---------------------------------------------------------------------------
 // World::save_to_file / World::load_from_file
 // ---------------------------------------------------------------------------
@@ -208,7 +203,7 @@ bool World::save_to_file(const std::string& path) const {
 
     nlohmann::json trucks_json = nlohmann::json::array();
     for (const Truck& truck : trucks)
-        trucks_json.push_back(TruckSerializer::to_json(truck));
+        trucks_json.push_back(truck.get_state());
     j["trucks"] = std::move(trucks_json);
 
     // The RNG's complete internal state, dumped with the standard-library
@@ -267,7 +262,7 @@ std::optional<World> World::load_from_file(const std::string& path) {
         if (!trucks_json.is_array())
             return std::nullopt;
         for (const nlohmann::json& truck_json : trucks_json)
-            world.trucks.push_back(TruckSerializer::from_json(truck_json));
+            world.trucks.push_back(Truck(truck_json.get<TruckState>()));
 
         // Restore the RNG's full internal state (see save_to_file). operator>>
         // validates the dump and sets failbit on malformed input.

@@ -44,7 +44,8 @@ src/serialization.cpp JSON save/load: implements World::save_to_file / load_from
 src/ui.*              Dear ImGui presentation layer (the only place ImGui exists)
 src/main.mm           SDL2 + Metal bootstrap and frame loop
 
-tests/test_serialization.cpp  headless save/load round-trip test (make test)
+tests/test_serialization.cpp  headless save/load round-trip tests (make test)
+tests/test_simulation.cpp     headless simulation-rule tests (make test)
 third_party/nlohmann/json.hpp vendored single-header JSON library (only
                               serialization.cpp includes it)
 ```
@@ -60,8 +61,9 @@ serialized field holds a non-default value**, saves it, loads it back and
 asserts full-state equality. If you add a field to the simulation and forget
 `serialization.cpp`, the loaded copy comes back with the default and the test
 fails loudly. Entity `operator==` are `= default` (new fields are covered
-automatically); `Truck`'s and `World`'s are hand-maintained — extend those and
-the fixture when you add fields there.
+automatically — `Truck`'s included, via its plain-data `TruckState`); only
+`World`'s is hand-maintained — extend it and the fixture when you add World
+fields.
 
 Everything except `ui.*` and `main.mm` handles simulation,
 and is fully deterministic (fixed RNG seed, fixed timestep — the RNG state is

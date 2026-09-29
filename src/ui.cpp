@@ -42,6 +42,24 @@ constexpr float kZoomMax = 8.0;
 constexpr float kPostalCodeFontScale = 0.7f;
 constexpr ImU32 kPostalCodeColor = IM_COL32(150, 205, 165, 255);
 
+// Shared color palette: every literal color used by the drawing code below,
+// named in one place so re-theming the app is a single edit.
+constexpr ImU32 kColorText         = IM_COL32(235, 235, 240, 255);  // near-white labels/icons
+constexpr ImU32 kColorTextShadow   = IM_COL32(0, 0, 0, 255);
+constexpr ImU32 kColorTextDim      = IM_COL32(235, 235, 240, 200);  // inactive icons
+constexpr ImU32 kColorAccent       = IM_COL32(70, 130, 220, 255);    // offices, day-progress fill
+constexpr ImU32 kColorHoverBg      = IM_COL32(70, 130, 220, 90);     // hovered transport buttons
+constexpr ImU32 kColorSelection    = IM_COL32(255, 200, 80, 255);    // selected-office ring
+constexpr ImU32 kColorTruck        = IM_COL32(240, 150, 60, 255);    // trucks, active fast-forward
+constexpr ImU32 kColorTruckOutline = IM_COL32(30, 30, 30, 255);
+constexpr ImU32 kColorOfficeRing   = IM_COL32(255, 255, 255, 140);
+constexpr ImU32 kColorRouteLine    = IM_COL32(110, 120, 150, 70);    // schedule routes on the map
+constexpr ImU32 kColorSeparator    = IM_COL32(110, 120, 150, 140);
+constexpr ImU32 kColorBarBorder    = IM_COL32(110, 120, 150, 100);
+constexpr ImU32 kColorBarBg        = IM_COL32(24, 27, 34, 220);      // transport-bar panel
+constexpr ImU32 kColorProgressBg   = IM_COL32(255, 255, 255, 40);
+constexpr ImVec4 kColorErrorText{1.0f, 0.4f, 0.4f, 1.0f};            // red inline messages
+
 // ---------------------------------------------------------------------------
 // World -> screen mapping: scale the fixed-size world to fit the display,
 // then apply the camera on top.
@@ -110,8 +128,8 @@ ImVec2 WorldToScreen(const ViewTransform& vt, Position p) {
 void DrawCenteredText(ImDrawList* draw, ImVec2 center, const char* text) {
     const ImVec2 size = ImGui::CalcTextSize(text);
     const ImVec2 pos(center.x - size.x * 0.5f, center.y - size.y * 0.5f);
-    draw->AddText({pos.x + 1.0f, pos.y + 1.0f}, IM_COL32(0, 0, 0, 255), text);  // shadow
-    draw->AddText(pos, IM_COL32(235, 235, 240, 255), text);
+    draw->AddText({pos.x + 1.0f, pos.y + 1.0f}, kColorTextShadow, text);
+    draw->AddText(pos, kColorText, text);
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +346,7 @@ void DrawWorld(const World& world) {
         const ImVec2 a = WorldToScreen(view, offices[src].pos);
         for (const TruckSchedule& schedule : offices[src].outbound_schedules) {
             const ImVec2 b = WorldToScreen(view, offices[schedule.dst].pos);
-            draw->AddLine(a, b, IM_COL32(110, 120, 150, 70), 1.5f);
+            draw->AddLine(a, b, kColorRouteLine, 1.5f);
         }
     }
 
@@ -337,14 +355,14 @@ void DrawWorld(const World& world) {
         const PostOffice& office = offices[id];
         const ImVec2 c = WorldToScreen(view, office.pos);
         if (id == g_selected_office)
-            draw->AddCircle(c, office_radius + 5.0f, IM_COL32(255, 200, 80, 255), 0, 2.5f);
-        draw->AddCircleFilled(c, office_radius, IM_COL32(70, 130, 220, 255));
-        draw->AddCircle(c, office_radius, IM_COL32(255, 255, 255, 140), 0, 1.5f);
+            draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 2.5f);
+        draw->AddCircleFilled(c, office_radius, kColorAccent);
+        draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 1.5f);
 
         const ImVec2 name_size = ImGui::CalcTextSize(office.name.c_str());
         const ImVec2 name_pos(c.x - name_size.x * 0.5f, c.y - office_radius - name_size.y - 5.0f);
-        draw->AddText({name_pos.x + 1.0f, name_pos.y + 1.0f}, IM_COL32(0, 0, 0, 255), office.name.c_str());
-        draw->AddText(name_pos, IM_COL32(235, 235, 240, 255), office.name.c_str());
+        draw->AddText({name_pos.x + 1.0f, name_pos.y + 1.0f}, kColorTextShadow, office.name.c_str());
+        draw->AddText(name_pos, kColorText, office.name.c_str());
 
         // Postal code, centered directly below the name in a smaller, muted
         // green font. PushFont(nullptr, size) rescales the current font (both
@@ -355,7 +373,7 @@ void DrawWorld(const World& world) {
             ImGui::PushFont(nullptr, code_font_size);
             const ImVec2 code_extent = ImGui::CalcTextSize(office.postal_code.c_str());
             const ImVec2 code_pos(c.x - code_extent.x * 0.5f, name_pos.y + name_size.y + 1.0f);
-            draw->AddText({code_pos.x + 1.0f, code_pos.y + 1.0f}, IM_COL32(0, 0, 0, 255), office.postal_code.c_str());
+            draw->AddText({code_pos.x + 1.0f, code_pos.y + 1.0f}, kColorTextShadow, office.postal_code.c_str());
             draw->AddText(code_pos, kPostalCodeColor, office.postal_code.c_str());
             ImGui::PopFont();
         }
@@ -370,8 +388,8 @@ void DrawWorld(const World& world) {
     for (const Truck& truck : world.get_trucks()) {
         const ImVec2 c = WorldToScreen(view, truck.get_position(world.get_tick()));
         const float r = 5.5f * view.scale;
-        draw->AddRectFilled({c.x - r, c.y - r}, {c.x + r, c.y + r}, IM_COL32(240, 150, 60, 255));
-        draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r}, IM_COL32(30, 30, 30, 255));
+        draw->AddRectFilled({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruck);
+        draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruckOutline);
     }
 
     // Click-to-select. io.WantCaptureMouse is true when the click landed on an
@@ -407,8 +425,8 @@ void DrawTransportBar(World& world) {
     const float rounding = b * 0.2f;
 
     // Panel.
-    draw->AddRectFilled(l.bar_min, l.bar_max, IM_COL32(24, 27, 34, 220), rounding * 1.5f);
-    draw->AddRect(l.bar_min, l.bar_max, IM_COL32(110, 120, 150, 100), rounding * 1.5f);
+    draw->AddRectFilled(l.bar_min, l.bar_max, kColorBarBg, rounding * 1.5f);
+    draw->AddRect(l.bar_min, l.bar_max, kColorBarBorder, rounding * 1.5f);
 
     // Background drawing has no widget behaviour, so the buttons are plain
     // rects hit-tested against the mouse. WantCaptureMouse keeps clicks that
@@ -419,8 +437,8 @@ void DrawTransportBar(World& world) {
     if (hover_play || hover_ff)
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
-    const ImU32 icon_color = IM_COL32(235, 235, 240, 255);
-    const ImU32 hover_bg = IM_COL32(70, 130, 220, 90);
+    const ImU32 icon_color = kColorText;
+    const ImU32 hover_bg = kColorHoverBg;
 
     // Play/pause: a triangle when paused, two bars when running.
     if (hover_play)
@@ -439,7 +457,7 @@ void DrawTransportBar(World& world) {
     // Fast-forward: double triangle, orange while active, plus an "x4" label.
     if (hover_ff)
         draw->AddRectFilled(l.ff_min, l.ff_max, hover_bg, rounding);
-    const ImU32 ff_color = fast_forward ? IM_COL32(240, 150, 60, 255) : IM_COL32(235, 235, 240, 200);
+    const ImU32 ff_color = fast_forward ? kColorTruck : kColorTextDim;
     draw->AddTriangleFilled({l.ff_min.x + b * 0.18f, l.ff_min.y + b * 0.30f},
                             {l.ff_min.x + b * 0.18f, l.ff_min.y + b * 0.70f},
                             {l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.50f}, ff_color);
@@ -447,18 +465,18 @@ void DrawTransportBar(World& world) {
                             {l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.70f},
                             {l.ff_min.x + b * 0.78f, l.ff_min.y + b * 0.50f}, ff_color);
     if (fast_forward)
-        draw->AddText(l.speed_text_pos, IM_COL32(240, 150, 60, 255), "x4");
+        draw->AddText(l.speed_text_pos, kColorTruck, "x4");
 
     // Separator, day/time readout, day progress.
-    draw->AddLine(l.separator_top, l.separator_bottom, IM_COL32(110, 120, 150, 140), 1.0f);
-    draw->AddText(l.text_pos, IM_COL32(235, 235, 240, 255), l.time_text);
+    draw->AddLine(l.separator_top, l.separator_bottom, kColorSeparator, 1.0f);
+    draw->AddText(l.text_pos, kColorText, l.time_text);
     const float progress_rounding = (l.progress_max.y - l.progress_min.y) * 0.5f;
-    draw->AddRectFilled(l.progress_min, l.progress_max, IM_COL32(255, 255, 255, 40), progress_rounding);
+    draw->AddRectFilled(l.progress_min, l.progress_max, kColorProgressBg, progress_rounding);
     const float day_fraction = static_cast<float>(world.get_tick() % kTicksPerDay) / static_cast<float>(kTicksPerDay);
     if (day_fraction > 0.0f)
         draw->AddRectFilled(l.progress_min,
                             {l.progress_min.x + (l.progress_max.x - l.progress_min.x) * day_fraction, l.progress_max.y},
-                            IM_COL32(70, 130, 220, 255), progress_rounding);
+                            kColorAccent, progress_rounding);
 
     // Clicks.
     if (interactive && io.MouseClicked[0]) {
@@ -550,7 +568,7 @@ void DrawInspector(World& world) {
                 if (letter.deadline >= world.get_tick())
                     ImGui::TextUnformatted(due);
                 else
-                    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "LATE (was due %s)", due);
+                    ImGui::TextColored(kColorErrorText, "LATE (was due %s)", due);
                 ImGui::TableSetColumnIndex(2);
                 ImGui::Text("%d", letter.value);
                 ImGui::TableSetColumnIndex(3);
@@ -681,7 +699,7 @@ void DrawInspector(World& world) {
                 ImGui::EndCombo();
             }
             if (!prefix_ok)
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "The prefix must not be empty.");
+                ImGui::TextColored(kColorErrorText, "The prefix must not be empty.");
         }
 
         // Frequency and offset are entered as 24-hour HH:MM and converted to
@@ -705,7 +723,7 @@ void DrawInspector(World& world) {
         if (affordable)
             ImGui::Text("Up-front cost: $%d", cost);
         else
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(kColorErrorText,
                                "Up-front cost: $%d (you only have $%d)", cost, world.get_money());
 
         // The fully configured rule, used for the live match count, the
@@ -739,7 +757,7 @@ void DrawInspector(World& world) {
             world.add_schedule(g_selected_office, add_dst, period, start_offset, rule);
         ImGui::EndDisabled();
         if (dst_ok && duplicate)
-            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+            ImGui::TextColored(kColorErrorText,
                                "An identical schedule already exists.");
     }
 
