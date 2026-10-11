@@ -15,7 +15,7 @@ void DrawDockspace();
 
 // Draws offices, routes and trucks into the background draw list (underneath
 // all ImGui windows) and handles click-to-select on the map.
-void DrawWorld(const World& world);
+void DrawWorld(World& world);
 
 // Top-center transport bar: play/pause, fast-forward and the day/time
 // readout, drawn into the background draw list on top of the map. Laid out

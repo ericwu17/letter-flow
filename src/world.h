@@ -4,6 +4,7 @@
 
 #include "entities.h"
 #include "game_types.h"
+#include "road.h"
 #include "truck.h"
 
 #include <cstddef>
@@ -16,6 +17,7 @@ class World {
 private:
     std::vector<PostOffice> post_offices;  // stable storage; PostOfficeId indexes into this
     std::vector<Truck> trucks;
+    std::vector<Road> roads;               // the road network
     Tick current_tick = 0;
     bool paused = false;
     float speed_multiplier = 1.0f;  // 1 = real time; >1 = fast-forward (transport bar)
@@ -55,7 +57,8 @@ public:
     // costs schedule_cost(period) money up front — the higher the frequency,
     // the higher the price. Returns false and changes nothing if the route is
     // invalid (bad ids, zero period, empty postal prefix), an identical
-    // (dst, rule) schedule already exists, or the player cannot afford it.
+    // (dst, rule) schedule already exists, the player cannot afford it, or
+    // no road connects src and dst.
     // Schedules to the same dst with different rules are allowed; on a tick
     // where both depart, the earlier one in the list takes contested letters.
     bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
@@ -70,6 +73,29 @@ public:
     void set_postal_code(PostOfficeId office, std::string postal_code);
     void set_paused(bool p) { paused = p; }
     void set_speed_multiplier(float m) { speed_multiplier = m; }
+
+    // --- Road API ---
+
+
+    // Build a road from `src` to `dst`. `vertices` is the complete polyline:
+    // vertices[0] must equal post_offices[src].pos and vertices.back() must
+    // equal post_offices[dst].pos. All segments must be horizontal, vertical,
+    // or exactly 45° diagonal; the road must not self-intersect or cross any
+    // existing road. The player pays road_cost(road) up front. Internally the
+    // road is normalized so src < dst. Returns false and changes nothing on
+    // failure.
+    bool add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> vertices);
+
+    // True if any road connects a and b (undirected).
+    bool has_road(PostOfficeId a, PostOfficeId b) const;
+
+    // Returns a pointer to the Road connecting a and b, or nullptr.
+    const Road* find_road(PostOfficeId a, PostOfficeId b) const;
+
+    std::vector<Position> get_road_vertices_from_a_to_b(PostOfficeId src, PostOfficeId dst) const;
+
+    bool polyline_intersects_any(const std::vector<Position>& vertices) const;
+    const std::vector<Road>& get_roads() const { return roads; }
 
     // Persistence, implemented in serialization.cpp — the only translation
     // unit that knows nlohmann/json exists, keeping the simulation headers

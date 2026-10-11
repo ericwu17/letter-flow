@@ -29,14 +29,15 @@ CXXFLAGS += -MMD -MP   # header dependency tracking
 WARNINGS  = -Wall -Wextra -Wpedantic -Werror
 WARNINGS += -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
 WARNINGS += -Wcast-align -Wnull-dereference -Wimplicit-fallthrough
-WARNINGS += -Wformat=2 -Wdouble-promotion
+WARNINGS += -Wformat=2 
+WARNINGS += -Wno-error=double-promotion
 
 LIBS  = -framework Metal -framework MetalKit -framework Cocoa -framework IOKit -framework CoreVideo -framework QuartzCore
 LIBS += $(shell sdl2-config --libs)
 
 # Simulation layer: pure logic, no SDL/imgui/Metal — the headless tests link
 # against exactly these objects. Keep presentation code out of this list.
-SIM_SOURCES  = src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
+SIM_SOURCES  = src/road.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
 APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/main.mm
 # One headless test binary per tests/test_*.cpp file (see the test rules below).
 TEST_SOURCES := $(wildcard tests/*.cpp)

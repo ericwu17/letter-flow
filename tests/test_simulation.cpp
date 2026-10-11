@@ -27,7 +27,7 @@ World make_line_world(std::size_t count, std::size_t letters_at_source) {
     for (std::size_t i = 0; i < count; ++i) {
         const std::string name = "O" + std::to_string(i);
         const std::string code = "T/" + std::to_string(i);
-        w.add_office(name, code, {100.0f * static_cast<float>(i), 0.0f},
+        w.add_office(name, code, {100 * static_cast<int64_t>(i), 0},
                      i == 0 ? letters_at_source : 0, /*max_outbound_letters=*/1000);
     }
     w.seed_letters();
@@ -136,19 +136,23 @@ void departures_follow_the_offset_grid() {
 
 // List order is pick-up priority: when two schedules depart on the same tick
 // and both match, the first in the list wins the contested letters — and
-// move_schedule() (drag-to-reorder) flips the winner.
+// move_schedule() (drag-to-reorder) flips the winner. Both trucks still
+// depart: a truck leaves even when the winner took everything.
 void first_matching_schedule_wins_contested_letters() {
     const RoutingRule all{RoutingRuleType::AllLetters, ""};
     const Tick huge = 100 * kTicksPerDay;
 
     // The first AllLetters departure takes the whole buffer; the second finds
-    // nothing and spawns no truck ("no cargo, no truck").
+    // nothing and departs empty. Trucks spawn in schedule (list) order.
     World w = make_line_world(3, 40);
     assert(w.add_schedule(0, 1, huge, 1, all));
     assert(w.add_schedule(0, 2, huge, 1, all));
     w.advance_tick();  // tick 1: both come due
-    assert(w.get_trucks().size() == 1);
+    assert(w.get_trucks().size() == 2);
     assert(w.get_trucks()[0].get_dst() == 1);
+    assert(w.get_trucks()[0].get_num_letters() > 0);   // the winner is loaded
+    assert(w.get_trucks()[1].get_dst() == 2);
+    assert(w.get_trucks()[1].get_num_letters() == 0);  // the loser departs empty
     assert(w.get_post_offices()[0].outbound_letters.empty());
 
     World w2 = make_line_world(3, 40);
@@ -156,16 +160,24 @@ void first_matching_schedule_wins_contested_letters() {
     assert(w2.add_schedule(0, 2, huge, 1, all));
     w2.move_schedule(0, 0, 1);  // drag the route-to-1 below the route-to-2
     w2.advance_tick();
-    assert(w2.get_trucks().size() == 1);
+    assert(w2.get_trucks().size() == 2);
     assert(w2.get_trucks()[0].get_dst() == 2);
+    assert(w2.get_trucks()[0].get_num_letters() > 0);
+    assert(w2.get_trucks()[1].get_dst() == 1);
+    assert(w2.get_trucks()[1].get_num_letters() == 0);
 }
 
-void empty_buffer_spawns_no_truck() {
+// Trucks depart on schedule even with an empty buffer — they just carry
+// nothing — and retire on arrival like any other truck.
+void empty_buffer_still_spawns_a_truck() {
     World w = make_line_world(2, 0);  // nobody ever produces mail
     assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, ""}));
-    for (Tick t = 0; t < 2000; ++t)  // several departures come and go
+    w.advance_tick();  // tick 1: first departure
+    assert(w.get_trucks().size() == 1);
+    assert(w.get_trucks()[0].get_num_letters() == 0);  // departs empty
+    for (Tick t = 1; t < 2000; ++t)  // several departures come and go
         w.advance_tick();
-    assert(w.get_trucks().empty());
+    assert(w.get_trucks().empty());  // every empty truck arrived and retired
 }
 
 // A schedule's rule is evaluated at departure against the destination
@@ -177,15 +189,20 @@ void postal_code_edits_take_effect_at_departure() {
     assert(w.add_schedule(0, 1, huge, 5, {RoutingRuleType::PostalPrefix, "ZZZ"}));
     while (w.get_tick() < 5)
         w.advance_tick();
-    assert(w.get_trucks().empty());  // no code starts with "ZZZ": nothing boarded
+    // No code starts with "ZZZ": the truck still departs, but empty.
+    assert(w.get_trucks().size() == 1);
+    assert(w.get_trucks()[0].get_num_letters() == 0);
 
     w.set_postal_code(1, "ZZZ/rebranded");
     // Same prefix idea, different string (an identical (dst, rule) pair would
     // be rejected as a duplicate).
     assert(w.add_schedule(0, 1, huge, 50, {RoutingRuleType::PostalPrefix, "ZZ"}));
-    while (w.get_tick() < 50)
+    // Run to tick 55: the loaded truck departs at 50, and the empty one
+    // (departed at 5, one 50-tick hop) arrives and retires at exactly 55.
+    while (w.get_tick() < 55)
         w.advance_tick();
     assert(w.get_trucks().size() == 1);
+    assert(w.get_trucks()[0].get_num_letters() > 0);
     // Only office-1 mail (now "ZZZ/...") boarded; office-2 mail waited.
     for (const Letter& letter : w.get_trucks()[0].get_letters())
         assert(letter.dst == 1);
@@ -198,9 +215,9 @@ void postal_code_edits_take_effect_at_departure() {
 // schedule delivers it onward — every seeded letter ends up scored, on time.
 void multi_hop_forwarding_delivers_every_letter() {
     World w;
-    const PostOfficeId a = w.add_office("A", "P/A", {0.0f, 0.0f}, 12, 100);
-    const PostOfficeId b = w.add_office("B", "P/B", {100.0f, 0.0f}, 0, 100);
-    const PostOfficeId c = w.add_office("C", "P/C", {200.0f, 0.0f}, 0, 100);
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 12, 100);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100);
+    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100);
     w.seed_letters();  // 12 letters at A, addressed to B or C at random
 
     // Leg 1 (A -> B) takes everything: both downstream codes start with "P".
@@ -230,8 +247,8 @@ int main() {
     printf("PASS departures_follow_the_offset_grid\n");
     first_matching_schedule_wins_contested_letters();
     printf("PASS first_matching_schedule_wins_contested_letters\n");
-    empty_buffer_spawns_no_truck();
-    printf("PASS empty_buffer_spawns_no_truck\n");
+    empty_buffer_still_spawns_a_truck();
+    printf("PASS empty_buffer_still_spawns_a_truck\n");
     postal_code_edits_take_effect_at_departure();
     printf("PASS postal_code_edits_take_effect_at_departure\n");
     multi_hop_forwarding_delivers_every_letter();

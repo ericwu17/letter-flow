@@ -136,8 +136,8 @@ void from_json(const nlohmann::json& j, PostOffice& office) {
 void to_json(nlohmann::json& j, const TruckState& truck) {
     j = {{"src", truck.src},
          {"dst", truck.dst},
-         {"from", truck.from},
-         {"to", truck.to},
+         {"vertices", truck.vertices},
+         {"distances", truck.distances},
          {"departure_tick", truck.departure_tick},
          {"speed", truck.speed},
          {"carried_letters", truck.carried_letters}};
@@ -146,8 +146,8 @@ void to_json(nlohmann::json& j, const TruckState& truck) {
 void from_json(const nlohmann::json& j, TruckState& truck) {
     j.at("src").get_to(truck.src);
     j.at("dst").get_to(truck.dst);
-    j.at("from").get_to(truck.from);
-    j.at("to").get_to(truck.to);
+    j.at("vertices").get_to(truck.vertices),
+    j.at("distances").get_to(truck.distances),
     j.at("departure_tick").get_to(truck.departure_tick);
     j.at("speed").get_to(truck.speed);
     j.at("carried_letters").get_to(truck.carried_letters);

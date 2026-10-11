@@ -5,24 +5,36 @@
 #include <cmath>
 #include <utility>
 
-float Truck::route_length() const {
-    const float dx = state.to.x - state.from.x;
-    const float dy = state.to.y - state.from.y;
-    return std::sqrt(dx * dx + dy * dy);
+double Truck::route_length() const {
+    double sum = 0;
+    for (double d : state.distances) {
+        sum += d;
+    }
+    return sum;
 }
 
 Position Truck::get_position(Tick now) const {
     const float length = route_length();
-    if (length < 1e-6f)
-        return state.to;
+    if (length < 1e-6f) {
+        return state.vertices.back();
+    }
     const Tick elapsed = (now > state.departure_tick) ? (now - state.departure_tick) : 0;
-    float fraction = (static_cast<float>(elapsed) * state.speed) / length;
-    if (fraction > 1.0f)
-        fraction = 1.0f;
-    return {
-        (int64_t)(state.from.x + (state.to.x - state.from.x) * fraction),
-        (int64_t)(state.from.y + (state.to.y - state.from.y) * fraction),
-    };
+    double dist = static_cast<double>(elapsed) * state.speed;
+    
+
+
+    for (size_t i = 0; i + 1 < state.vertices.size(); i++) {
+        if (dist > state.distances[i]) {
+            dist -= state.distances[i];
+        } else {
+            float fraction = dist / state.distances[i];
+            return {
+                (int64_t)(state.vertices[i].x + (state.vertices[i+1].x - state.vertices[i].x) * fraction),
+                (int64_t)(state.vertices[i].y + (state.vertices[i+1].y - state.vertices[i].y) * fraction),
+            };
+        }
+    }
+    return state.vertices.back();
 }
 
 bool Truck::has_arrived(Tick now) const {

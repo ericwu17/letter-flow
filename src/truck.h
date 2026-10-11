@@ -5,6 +5,7 @@
 
 #include "entities.h"
 #include "game_types.h"
+#include "road.h"
 
 #include <cstddef>
 #include <utility>
@@ -19,8 +20,9 @@
 struct TruckState {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;
-    Position from;               // world position at departure
-    Position to;                 // world position of destination
+    std::vector<Position> vertices;
+    std::vector<double> distances;
+
     Tick departure_tick = 0;
     float speed = kTruckSpeed;   // world units per tick
     std::vector<Letter> carried_letters;
@@ -36,17 +38,20 @@ public:
     Truck(
         PostOfficeId src,
         PostOfficeId dst,
-        Position from,
-        Position to,
+        std::vector<Position> vertices,
         Tick departure_tick,
         float speed
-    ): state{src, dst, from, to, departure_tick, speed, {}} {}
+    ): state{src, dst, vertices, {}, departure_tick, speed, {}} {
+        for (size_t i = 1; i < vertices.size(); i++) {
+            state.distances.push_back((length(vertices[i] - vertices[i-1])));
+        }
+    }
     explicit Truck(TruckState initial_state): state(std::move(initial_state)) {}
 
     // Truck position is computed from (departure point + direction * elapsed time)
     // rather than accumulated frame by frame, so it never drifts and is exactly
     // reproducible (deterministic replay).
-    float route_length() const;
+    double route_length() const;
     Position get_position(Tick now) const;
     bool has_arrived(Tick now) const;
     PostOfficeId get_src() const { return state.src; }

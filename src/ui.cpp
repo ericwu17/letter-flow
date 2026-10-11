@@ -4,6 +4,8 @@
 
 #include "entities.h"
 #include "game_types.h"
+#include "road.h"
+#include "road_builder.h"
 #include "truck.h"
 #include "world.h"
 #include "imgui.h"
@@ -53,12 +55,23 @@ constexpr ImU32 kColorSelection    = IM_COL32(255, 200, 80, 255);    // selected
 constexpr ImU32 kColorTruck        = IM_COL32(240, 150, 60, 255);    // trucks, active fast-forward
 constexpr ImU32 kColorTruckOutline = IM_COL32(30, 30, 30, 255);
 constexpr ImU32 kColorOfficeRing   = IM_COL32(255, 255, 255, 140);
-constexpr ImU32 kColorRouteLine    = IM_COL32(110, 120, 150, 70);    // schedule routes on the map
 constexpr ImU32 kColorSeparator    = IM_COL32(110, 120, 150, 140);
 constexpr ImU32 kColorBarBorder    = IM_COL32(110, 120, 150, 100);
 constexpr ImU32 kColorBarBg        = IM_COL32(24, 27, 34, 220);      // transport-bar panel
 constexpr ImU32 kColorProgressBg   = IM_COL32(255, 255, 255, 40);
 constexpr ImVec4 kColorErrorText{1.0f, 0.4f, 0.4f, 1.0f};            // red inline messages
+
+// Road colors
+constexpr ImU32 kColorRoadLine    = IM_COL32(100, 180, 140, 220);  // built roads (greenish)
+constexpr ImU32 kColorRoadPreview = IM_COL32(255, 255, 100, 200);  // road-building preview
+constexpr ImU32 kColorRoadVertex  = IM_COL32(255, 255, 100, 180);  // placed vertices in preview
+constexpr ImU32 kColorRoadBad     = IM_COL32(255, 80, 80, 200);    // invalid preview (crossing)
+
+// Road-building state machine
+enum class RoadBuildState { Idle, SelectSource, PlacingVertices };
+RoadBuildState g_road_build_state = RoadBuildState::Idle;
+RoadBuilder g_road_builder;
+
 
 // ---------------------------------------------------------------------------
 // World -> screen mapping: scale the fixed-size world to fit the display,
@@ -123,6 +136,11 @@ void UpdateCamera() {
 
 ImVec2 WorldToScreen(const ViewTransform& vt, Position p) {
     return {vt.offset.x + p.x * vt.scale, vt.offset.y + p.y * vt.scale};
+}
+
+Position ScreenToWorld(const ViewTransform& vt, ImVec2 screen) {
+    return {static_cast<int64_t>((screen.x - vt.offset.x) / vt.scale),
+            static_cast<int64_t>((screen.y - vt.offset.y) / vt.scale)};
 }
 
 void DrawCenteredText(ImDrawList* draw, ImVec2 center, const char* text) {
@@ -333,7 +351,7 @@ void DrawDockspace() {
 // The map
 // ---------------------------------------------------------------------------
 
-void DrawWorld(const World& world) {
+void DrawWorld(World& world) {
     UpdateCamera();
 
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
@@ -341,12 +359,93 @@ void DrawWorld(const World& world) {
     const float office_radius = 14.0f * view.scale;
     const std::vector<PostOffice>& offices = world.get_post_offices();
 
-    // Schedule routes (faint lines under everything).
-    for (PostOfficeId src = 0; src < offices.size(); ++src) {
-        const ImVec2 a = WorldToScreen(view, offices[src].pos);
-        for (const TruckSchedule& schedule : offices[src].outbound_schedules) {
-            const ImVec2 b = WorldToScreen(view, offices[schedule.dst].pos);
-            draw->AddLine(a, b, kColorRouteLine, 1.5f);
+    ImGuiIO& io = ImGui::GetIO();
+    const Position mouse_world = ScreenToWorld(view, io.MousePos);
+
+    // Roads (built, underneath schedule routes).
+    for (const Road& road : world.get_roads()) {
+        for (std::size_t i = 1; i < road.vertices.size(); ++i) {
+            const ImVec2 a = WorldToScreen(view, road.vertices[i - 1]);
+            const ImVec2 b = WorldToScreen(view, road.vertices[i]);
+            draw->AddLine(a, b, kColorRoadLine, 2.5f * view.scale);
+        }
+        // Small circles at intermediate vertices.
+        for (std::size_t i = 1; i + 1 < road.vertices.size(); ++i) {
+            const ImVec2 v = WorldToScreen(view, road.vertices[i]);
+            draw->AddCircleFilled(v, 3.0f * view.scale, kColorRoadLine);
+        }
+    }
+
+    // Road-building preview.
+    if (g_road_build_state == RoadBuildState::PlacingVertices) {
+        
+        g_road_builder.build_to(mouse_world);
+        g_road_builder.check_road(world);
+
+        const ImU32 road_color = g_road_builder.is_invalid ? kColorRoadBad : kColorRoadPreview;
+
+        // Draw placed vertices and segments.
+        for (std::size_t i = 1; i < g_road_builder.vertices.size(); ++i) {
+            const ImVec2 a = WorldToScreen(view, g_road_builder.vertices[i - 1]);
+            const ImVec2 b = WorldToScreen(view, g_road_builder.vertices[i]);
+            draw->AddLine(a, b, road_color, 2.5f * view.scale);
+            draw->AddCircleFilled(b, 3.0f * view.scale, kColorRoadVertex);
+        }
+        Position last_vertex = g_road_builder.vertices.back();
+        if (g_road_builder.middle.has_value()) {
+            const ImVec2 a = WorldToScreen(view, last_vertex);
+            const ImVec2 b = WorldToScreen(view, g_road_builder.middle.value());
+            draw->AddLine(a, b, road_color, 2.5f * view.scale);
+            draw->AddCircleFilled(b, 3.0f * view.scale, kColorRoadVertex);
+            last_vertex = g_road_builder.middle.value();
+        }
+        if (g_road_builder.head.has_value()) {
+            const ImVec2 a = WorldToScreen(view, last_vertex);
+            const ImVec2 b = WorldToScreen(view, g_road_builder.head.value());
+            draw->AddLine(a, b, road_color, 2.5f * view.scale);
+            draw->AddCircleFilled(b, 3.0f * view.scale, kColorRoadVertex);
+            last_vertex = g_road_builder.head.value();
+        }
+
+        // Show live cost.
+        const std::vector<Position> full_path = [&]() {
+            auto path = g_road_builder.vertices;
+            if (g_road_builder.middle.has_value()) {
+                path.push_back(g_road_builder.middle.value());
+            }
+            if (g_road_builder.head.has_value()) {
+                path.push_back(g_road_builder.head.value());
+            }
+            return path;
+        }();
+        const float total_len = polyline_length(full_path);
+        const int cost = road_cost(full_path);
+        char cost_text[64];
+        std::snprintf(cost_text, sizeof(cost_text), "$%d (%.0f units)", cost, static_cast<double>(total_len));
+        const ImVec2 text_pos(io.MousePos.x + 8.0f, io.MousePos.y - ImGui::GetFontSize() * 0.5f);
+        draw->AddText(text_pos, kColorText, cost_text);
+
+        // Highlight destination office near the cursor.
+        {
+            const float near_radius = office_radius * 3.0f;
+            PostOfficeId near_office = kNoPostOffice;
+            float best_dist = near_radius * near_radius;
+            for (PostOfficeId id = 0; id < offices.size(); ++id) {
+                if (id == g_road_builder.src) continue;
+                const ImVec2 oc = WorldToScreen(view, offices[id].pos);
+                const float dx = io.MousePos.x - oc.x;
+                const float dy = io.MousePos.y - oc.y;
+                const float dist_sq = dx * dx + dy * dy;
+                if (dist_sq < best_dist) {
+                    best_dist = dist_sq;
+                    near_office = id;
+                }
+            }
+            if (near_office != kNoPostOffice) {
+                const ImVec2 oc = WorldToScreen(view, offices[near_office].pos);
+                draw->AddCircle(oc, office_radius + 8.0f, kColorRoadPreview, 0, 3.0f);
+                draw->AddLine(io.MousePos, oc, kColorRoadPreview, 1.5f * view.scale);
+            }
         }
     }
 
@@ -392,12 +491,60 @@ void DrawWorld(const World& world) {
         draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruckOutline);
     }
 
-    // Click-to-select. io.WantCaptureMouse is true when the click landed on an
-    // ImGui window (HUD/inspector), so the map ignores those clicks; clicks on
-    // the transport bar are likewise not the map's business.
-    ImGuiIO& io = ImGui::GetIO();
+    // Click handling: road-building mode overrides normal click-to-select.
     const TransportLayout bar = ComputeTransportLayout(world);
-    if (io.MouseClicked[0] && !io.WantCaptureMouse && !PointInRect(io.MousePos, bar.bar_min, bar.bar_max)) {
+    const bool clicked_map = io.MouseClicked[0] && !io.WantCaptureMouse
+                          && !PointInRect(io.MousePos, bar.bar_min, bar.bar_max);
+
+    if (g_road_build_state != RoadBuildState::Idle) {
+        if (clicked_map) {
+            if (g_road_build_state == RoadBuildState::SelectSource) {
+                // Click on a source office to start.
+                for (PostOfficeId id = 0; id < offices.size(); ++id) {
+                    const ImVec2 c = WorldToScreen(view, offices[id].pos);
+                    const float hit_radius = office_radius + 6.0f;
+                    const float dx = io.MousePos.x - c.x;
+                    const float dy = io.MousePos.y - c.y;
+                    if (dx * dx + dy * dy <= hit_radius * hit_radius) {
+                        g_road_builder = RoadBuilder::RoadBuilder_from_source(offices[id].pos, id);
+                        g_road_build_state = RoadBuildState::PlacingVertices;
+                        break;
+                    }
+                }
+            } 
+            else if (g_road_build_state == RoadBuildState::PlacingVertices) {
+                // Check if the snapped point or mouse cursor is on a
+                // destination office to complete the road.
+                bool hit_office = false;
+                for (PostOfficeId id = 0; id < offices.size(); ++id) {
+                    if (id == g_road_builder.src) continue;
+                    const ImVec2 oc = WorldToScreen(view, offices[id].pos);
+                    const float hit_radius = office_radius * 2.5f;
+                    const float dx_mouse = io.MousePos.x - oc.x;
+                    const float dy_mouse = io.MousePos.y - oc.y;
+                    // Accept if the mouse cursor is close.
+                    if (dx_mouse * dx_mouse + dy_mouse * dy_mouse <= hit_radius * hit_radius) {
+                        // Complete the road to the destination post office.
+                        g_road_builder.commit_to_destination(offices[id].pos, id);
+
+                        PostOfficeId src = g_road_builder.src;
+                        PostOfficeId dst = g_road_builder.dst;
+                        world.add_road(src, dst, g_road_builder.into_road().vertices);
+                        g_road_build_state = RoadBuildState::Idle;
+                        g_road_builder = RoadBuilder{};
+                        g_selected_office = id;
+                        hit_office = true;
+                        break;
+                    }
+                }
+                if (!hit_office) {
+                    // Place a vertex at the snapped point.
+                    g_road_builder.commit_middle_and_head();
+                }
+            }
+        }
+    } else if (clicked_map) {
+        // Normal click-to-select.
         for (PostOfficeId id = 0; id < offices.size(); ++id) {
             const ImVec2 c = WorldToScreen(view, offices[id].pos);
             const float dx = io.MousePos.x - c.x;
@@ -644,7 +791,7 @@ void DrawInspector(World& world) {
 
         // Destination: a dropdown that narrows as you type, matching both
         // office names and postal codes.
-        const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size();
+        const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size() && world.has_road(g_selected_office, add_dst);
         const char* dst_preview = dst_ok ? offices[add_dst].name.c_str() : "Choose destination...";
         if (ImGui::BeginCombo("To", dst_preview)) {
             if (ImGui::IsWindowAppearing()) {
@@ -653,8 +800,12 @@ void DrawInspector(World& world) {
             }
             dst_filter.Draw("Search name or postal code##add_dst_filter");
             for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                if (id == g_selected_office)
+                if (id == g_selected_office) {
                     continue;
+                }
+                if (!world.has_road(g_selected_office, id)) {
+                    continue;
+                }
                 const PostOffice& other = offices[id];
                 if (!dst_filter.PassFilter(other.name.c_str()) &&
                     !dst_filter.PassFilter(other.postal_code.c_str()))
@@ -759,6 +910,39 @@ void DrawInspector(World& world) {
         if (dst_ok && duplicate)
             ImGui::TextColored(kColorErrorText,
                                "An identical schedule already exists.");
+    }
+
+    // ----- Build road -----
+    ImGui::SeparatorText("Build road");
+
+    if (g_road_build_state == RoadBuildState::Idle) {
+        if (ImGui::Button("Enter road-building mode")) {
+            g_road_build_state = RoadBuildState::SelectSource;
+            g_road_builder = RoadBuilder{};
+        }
+    } else {
+        ImGui::TextColored(kColorErrorText, "Road-building mode active");
+
+        if (g_road_builder.src != kNoPostOffice)
+            ImGui::Text("Source: %s", offices[g_road_builder.src].name.c_str());
+        else
+            ImGui::Text("Source: (click an office on the map)");
+
+        ImGui::Text("Vertices placed: %zu", g_road_builder.vertices.empty() ? 0
+                    : g_road_builder.vertices.size() - 1);  // exclude source office vertex
+
+        if (g_road_build_state == RoadBuildState::PlacingVertices) {
+            float built_len = 0.0f;
+            if (g_road_builder.vertices.size() >= 2)
+                built_len = polyline_length(g_road_builder.vertices);
+            ImGui::TextDisabled("Path length: %.0f units", static_cast<double>(built_len));
+        }
+
+        if (ImGui::Button("Cancel road")) {
+            g_road_build_state = RoadBuildState::Idle;
+            g_road_builder = RoadBuilder{};
+        }
+        ImGui::TextDisabled("Right-click or Esc on the map to cancel.");
     }
 
     ImGui::End();

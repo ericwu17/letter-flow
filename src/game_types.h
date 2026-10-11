@@ -61,6 +61,9 @@ constexpr int kScheduleCostPerDailyDeparture = 5;
 // Shortest allowed schedule period: one departure every 5 in-game minutes.
 constexpr Tick kMinSchedulePeriod = hours_minutes_to_ticks(0, 5);
 
+// Road construction: cost per world unit of road length (rounded up).
+constexpr float kRoadCostPerUnit = 5.0f;
+
 // Price of creating a schedule that departs every `period` ticks (rounded up).
 constexpr int schedule_cost(Tick period) {
     if (period == 0)
@@ -85,4 +88,18 @@ struct Position {
 
     // Member-wise equality; see the note in entities.h (save/load round-trip test).
     bool operator==(const Position&) const = default;
+
+    Position operator-(const Position& other) const {
+        return Position {
+            x - other.x, 
+            y - other.y
+        };
+    }
+
+    Position operator+(const Position& other) const {
+        return Position {
+            x + other.x, 
+            y + other.y
+        };
+    }
 };

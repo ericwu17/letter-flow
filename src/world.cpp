@@ -1,6 +1,9 @@
 // world.cpp — simulation rules. Pure logic, no rendering, no input.
 #include "world.h"
+#include "entities.h"
 
+#include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -38,6 +41,7 @@ bool World::operator==(const World& other) const {
         && letters_delivered_late == other.letters_delivered_late
         && post_offices == other.post_offices
         && trucks == other.trucks
+        && roads == other.roads
         && rng_state_dump(rng) == rng_state_dump(other.rng);
 }
 
@@ -128,8 +132,7 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     Truck truck(
         src_id,
         schedule.dst,
-        src.pos,
-        post_offices[schedule.dst].pos,
+        get_road_vertices_from_a_to_b(src_id, schedule.dst),
         current_tick,
         kTruckSpeed
     );
@@ -145,8 +148,19 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     }
     outbound.resize(keep);
 
-    if (truck.get_num_letters() > 0)  // no cargo, no truck
-        trucks.push_back(std::move(truck));
+    trucks.push_back(std::move(truck));
+}
+
+std::vector<Position> World::get_road_vertices_from_a_to_b(PostOfficeId src, PostOfficeId dst) const {
+    const Road* r = find_road(src, dst);
+    if (r == nullptr) {
+        return std::vector<Position>{};
+    }
+    std::vector<Position> result = r->vertices;
+    if (src > dst) {
+        std::reverse(result.begin(), result.end());
+    }
+    return result;
 }
 
 void World::deliver(Truck& truck) {
@@ -181,6 +195,11 @@ bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick s
         return false;
     if (rule.type == RoutingRuleType::PostalPrefix && rule.prefix.empty())
         return false;  // an empty prefix must be an explicit AllLetters rule
+
+    // Road constraint: a schedule requires a road connecting the two offices.
+    if (!has_road(src, dst))
+        return false;
+
     // Normalize: only PostalPrefix rules carry a prefix, so equality (and the
     // duplicate check below) compares like with like.
     RoutingRule normalized_rule = rule;
@@ -253,4 +272,86 @@ void World::seed_letters() {
     for (PostOfficeId id = 0; id < post_offices.size(); ++id)
         for (std::size_t i = 0; i < post_offices[id].letters_per_day; ++i)
             spawn_letter(id);
+}
+
+// ---------------------------------------------------------------------------
+// Road API
+// ---------------------------------------------------------------------------
+
+bool World::has_road(PostOfficeId a, PostOfficeId b) const {
+    return find_road(a, b) != nullptr;
+}
+
+const Road* World::find_road(PostOfficeId a, PostOfficeId b) const {
+    if (a == b || a >= post_offices.size() || b >= post_offices.size())
+        return nullptr;
+    if (a > b) {
+        std::swap(a, b);
+    }
+    for (const Road& road : roads) {
+        if (road.src == a && road.dst == b) {
+            return &road;
+        }
+    }
+    return nullptr;
+}
+
+bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> vertices) {
+    // Validate office indices.
+    if (src >= post_offices.size() || dst >= post_offices.size() || src == dst)
+        return false;
+    if (vertices.size() < 2)
+        return false;
+
+    // Normalize so src < dst (roads are undirected).
+    if (src > dst) {
+        std::swap(src, dst);
+        std::reverse(vertices.begin(), vertices.end());
+    }
+
+    // Reject duplicates roads between same src, dst
+    if (has_road(src, dst))
+        return false;
+
+    // Vertices must start and end at the office positions.
+    const Position src_pos = post_offices[src].pos;
+    const Position dst_pos = post_offices[dst].pos;
+    
+    if (vertices.front() != src_pos || vertices.back() != dst_pos) {
+        return false;
+    }
+
+    // Every segment must be horizontal, vertical, or 45° diagonal.
+    if (!all_segments_valid_direction(vertices))
+        return false;
+
+    // No self-intersection (non-consecutive segment crossings).
+    if (polyline_self_intersects(vertices))
+        return false;
+
+    // Must not cross any existing road.
+    for (const Road& existing : roads) {
+        if (polyline_crosses_road(existing, vertices))
+            return false;
+    }
+
+    // Build the road object and deduct the cost.
+    Road road;
+    road.src = src;
+    road.dst = dst;
+    road.vertices = std::move(vertices);
+    const int cost = road_cost(road);
+    if (money < cost)
+        return false;
+    money -= cost;
+    roads.push_back(std::move(road));
+    return true;
+}
+
+bool World::polyline_intersects_any(const std::vector<Position>& vertices) const {
+    for (const Road& existing : roads) {
+        if (polyline_crosses_road(existing, vertices))
+            return true;
+    }
+    return false;
 }
