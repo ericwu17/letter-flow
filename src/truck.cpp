@@ -20,8 +20,8 @@ Position Truck::get_position(Tick now) const {
     if (fraction > 1.0f)
         fraction = 1.0f;
     return {
-        state.from.x + (state.to.x - state.from.x) * fraction,
-        state.from.y + (state.to.y - state.from.y) * fraction,
+        (int64_t)(state.from.x + (state.to.x - state.from.x) * fraction),
+        (int64_t)(state.from.y + (state.to.y - state.from.y) * fraction),
     };
 }
 

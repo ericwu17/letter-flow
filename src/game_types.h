@@ -80,8 +80,8 @@ constexpr float kWorldHeight = 650.0f;
 constexpr float kTruckSpeed  = 2.0f;  // world units per tick
 
 struct Position {
-    float x = 0.0f;
-    float y = 0.0f;
+    int64_t x = 0;
+    int64_t y = 0;
 
     // Member-wise equality; see the note in entities.h (save/load round-trip test).
     bool operator==(const Position&) const = default;
