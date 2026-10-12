@@ -360,7 +360,7 @@ void DrawWorld(World& world) {
     const std::vector<PostOffice>& offices = world.get_post_offices();
 
     ImGuiIO& io = ImGui::GetIO();
-    const Position mouse_world = ScreenToWorld(view, io.MousePos);
+    Position mouse_world = ScreenToWorld(view, io.MousePos);
 
     // Roads (built, underneath schedule routes).
     for (const Road& road : world.get_roads()) {
@@ -378,6 +378,29 @@ void DrawWorld(World& world) {
 
     // Road-building preview.
     if (g_road_build_state == RoadBuildState::PlacingVertices) {
+        // Highlight destination office near the cursor.
+        {
+            const float near_radius = office_radius * 3.0f;
+            PostOfficeId near_office = kNoPostOffice;
+            float best_dist = near_radius * near_radius;
+            for (PostOfficeId id = 0; id < offices.size(); ++id) {
+                if (id == g_road_builder.src) continue;
+                const ImVec2 oc = WorldToScreen(view, offices[id].pos);
+                const float dx = io.MousePos.x - oc.x;
+                const float dy = io.MousePos.y - oc.y;
+                const float dist_sq = dx * dx + dy * dy;
+                if (dist_sq < best_dist) {
+                    best_dist = dist_sq;
+                    near_office = id;
+                }
+            }
+            if (near_office != kNoPostOffice) {
+                mouse_world = offices[near_office].pos;
+                const ImVec2 oc = WorldToScreen(view, offices[near_office].pos);
+                draw->AddCircle(oc, office_radius + 8.0f, kColorRoadPreview, 0, 3.0f);
+            }
+        }
+
         
         g_road_builder.build_to(mouse_world);
         g_road_builder.check_road(world);
@@ -424,29 +447,6 @@ void DrawWorld(World& world) {
         std::snprintf(cost_text, sizeof(cost_text), "$%d (%.0f units)", cost, static_cast<double>(total_len));
         const ImVec2 text_pos(io.MousePos.x + 8.0f, io.MousePos.y - ImGui::GetFontSize() * 0.5f);
         draw->AddText(text_pos, kColorText, cost_text);
-
-        // Highlight destination office near the cursor.
-        {
-            const float near_radius = office_radius * 3.0f;
-            PostOfficeId near_office = kNoPostOffice;
-            float best_dist = near_radius * near_radius;
-            for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                if (id == g_road_builder.src) continue;
-                const ImVec2 oc = WorldToScreen(view, offices[id].pos);
-                const float dx = io.MousePos.x - oc.x;
-                const float dy = io.MousePos.y - oc.y;
-                const float dist_sq = dx * dx + dy * dy;
-                if (dist_sq < best_dist) {
-                    best_dist = dist_sq;
-                    near_office = id;
-                }
-            }
-            if (near_office != kNoPostOffice) {
-                const ImVec2 oc = WorldToScreen(view, offices[near_office].pos);
-                draw->AddCircle(oc, office_radius + 8.0f, kColorRoadPreview, 0, 3.0f);
-                draw->AddLine(io.MousePos, oc, kColorRoadPreview, 1.5f * view.scale);
-            }
-        }
     }
 
     // Post offices.
@@ -526,7 +526,7 @@ void DrawWorld(World& world) {
                 for (PostOfficeId id = 0; id < offices.size(); ++id) {
                     if (id == g_road_builder.src) continue;
                     const ImVec2 oc = WorldToScreen(view, offices[id].pos);
-                    const float hit_radius = office_radius * 2.5f;
+                    const float hit_radius = office_radius * 3.0f;
                     const float dx_mouse = io.MousePos.x - oc.x;
                     const float dy_mouse = io.MousePos.y - oc.y;
                     // Accept if the mouse cursor is close.
