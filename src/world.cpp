@@ -109,20 +109,34 @@ void World::spawn_letter(PostOfficeId office_id) {
     if (office.outbound_letters.size() >= office.max_outbound_letters)
         return;  // buffer full: this letter is lost
 
-    std::uniform_int_distribution<PostOfficeId> pick_office(0, post_offices.size() - 1);
     std::uniform_int_distribution<Tick> pick_deadline(kTicksPerDay / 2, 2 * kTicksPerDay);
     std::uniform_int_distribution<int> pick_value(5, 15);
-    std::uniform_int_distribution<int> pick_fine(3, 10);
+    std::uniform_int_distribution<int> pick_bonus(3, 10);
 
-    PostOfficeId dst = office_id;
-    while (dst == office_id || !post_offices[dst].built)
-        dst = pick_office(rng);
+    // Destination odds: bigger offices (by letters_per_day) and closer ones
+    // attract more mail. weight = (size + 1) / (1 + distance / kDistanceScale).
+    constexpr double kDistanceScale = 150.0;
+    std::vector<PostOfficeId> candidates;
+    std::vector<double> weights;
+    for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
+        const PostOffice& other = post_offices[id];
+        if (id == office_id || !other.built)
+            continue;
+        const double dx = static_cast<double>(other.pos.x - office.pos.x);
+        const double dy = static_cast<double>(other.pos.y - office.pos.y);
+        candidates.push_back(id);
+        weights.push_back((static_cast<double>(other.letters_per_day) + 1.0) / (1.0 + std::hypot(dx, dy) / kDistanceScale));
+    }
+    const PostOfficeId dst = candidates[std::discrete_distribution<std::size_t>(
+        weights.begin(), weights.end())(rng)];
+
     Letter letter;
     letter.src = office_id;
     letter.dst = dst;
+    letter.created = current_tick;
     letter.deadline = current_tick + pick_deadline(rng);
     letter.value = pick_value(rng);
-    letter.fine = pick_fine(rng);
+    letter.max_bonus = pick_bonus(rng);
     office.outbound_letters.push_back(letter);
 }
 
@@ -171,16 +185,24 @@ void World::deliver(Truck& truck) {
     const PostOfficeId arrived_at = truck.get_dst();
     PostOffice& office = post_offices[arrived_at];
 
+    int earned = 0;
+    bool delivered_any = false;
     for (Letter& letter : truck.take_letters()) {
         if (letter.dst == arrived_at) {
-            // Final delivery: score against the deadline.
+            delivered_any = true;
+            const int before = money;
+            // Final delivery: the base value is always paid; arriving before
+            // the deadline adds a bonus proportional to the time left.
+            money += letter.value;
             if (current_tick <= letter.deadline) {
-                money += letter.value;
+                const Tick window = letter.deadline - letter.created;
+                if (window > 0)
+                    money += static_cast<int>(static_cast<Tick>(letter.max_bonus) * (letter.deadline - current_tick) / window);
                 letters_delivered_on_time += 1;
             } else {
-                money -= letter.fine;
                 letters_delivered_late += 1;
             }
+            earned += money - before;
         } else {
             // Multi-hop forwarding: the letter is addressed somewhere else, so
             // it joins this office's outbound buffer, where later schedules
@@ -191,6 +213,8 @@ void World::deliver(Truck& truck) {
             office.outbound_letters.push_back(std::move(letter));
         }
     }
+    if (delivered_any)
+        delivery_events.push_back({arrived_at, earned});
 }
 
 bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,

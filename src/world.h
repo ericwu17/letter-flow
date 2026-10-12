@@ -12,6 +12,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 class World {
@@ -29,6 +30,10 @@ private:
     int money = kStartingMoney;
     std::size_t letters_delivered_on_time = 0;
     std::size_t letters_delivered_late = 0;
+
+    // Payouts since the UI last called take_delivery_events(). Transient:
+    // neither serialized nor compared.
+    std::vector<DeliveryEvent> delivery_events;
 
     std::mt19937 rng{20260926u};  // fixed seed -> fully deterministic simulation
 
@@ -149,6 +154,8 @@ public:
     int get_money() const { return money; }
     std::size_t get_letters_delivered_on_time() const { return letters_delivered_on_time; }
     std::size_t get_letters_delivered_late() const { return letters_delivered_late; }
+    // Hands over (and clears) the payouts recorded since the last call.
+    std::vector<DeliveryEvent> take_delivery_events() { return std::exchange(delivery_events, {}); }
     const std::vector<PostOffice>& get_post_offices() const { return post_offices; }
     // The vector is const but the handles point at mutable Trucks; the
     // presentation layer only ever holds them as pointers-to-const.

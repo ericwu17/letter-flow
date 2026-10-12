@@ -543,6 +543,49 @@ static void DrawRoadMenu(World& world) {
 // The map
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// Floating "+$N" text that rises from an office and fades out after a truck
+// delivers there. Animated in real time (frame delta), so it looks the same
+// at any game speed; the list is purely presentational.
+struct PayoutPopup {
+    PostOfficeId office;
+    int amount;
+    float age;  // seconds
+};
+std::vector<PayoutPopup> g_payout_popups;
+constexpr float kPopupDuration = 1.6f;
+constexpr float kPopupRise = 55.0f;
+
+void DrawPayoutPopups(ImDrawList* draw, const ViewTransform& view, World& world) {
+    for (const DeliveryEvent& e : world.take_delivery_events())
+        g_payout_popups.push_back({e.office, e.amount, 0.0f});
+
+    const float dt = ImGui::GetIO().DeltaTime;
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.4f);
+    for (PayoutPopup& p : g_payout_popups) {
+        p.age += dt;
+        const float t = p.age / kPopupDuration;
+        if (t >= 1.0f || p.office >= offices.size())
+            continue;
+        const float rise = 1.0f - (1.0f - t) * (1.0f - t);          // ease-out
+        const float alpha = t < 0.6f ? 1.0f : (1.0f - t) / 0.4f;     // fade over the last 40%
+        char text[32];
+        std::snprintf(text, sizeof(text), "+$%d", p.amount);
+        const ImVec2 c = WorldToScreen(view, offices[p.office].pos);
+        const ImVec2 size = ImGui::CalcTextSize(text);
+        const ImVec2 pos(c.x - size.x * 0.5f, c.y - 62.0f - kPopupRise * rise);
+        const int a = static_cast<int>(255.0f * alpha);
+        draw->AddText({pos.x + 1.0f, pos.y + 1.0f}, IM_COL32(0, 0, 0, a), text);
+        draw->AddText(pos, IM_COL32(90, 235, 110, a), text);
+    }
+    ImGui::PopFont();
+    std::erase_if(g_payout_popups, [](const PayoutPopup& p) { return p.age >= kPopupDuration; });
+}
+
+}  // namespace
+
 void DrawWorld(World& world) {
     UpdateCamera();
     EnsureOfficeSelected(world);
@@ -687,6 +730,8 @@ void DrawWorld(World& world) {
             std::snprintf(buf, sizeof(buf), "Build: $%d", office.build_cost);
         DrawCenteredText(draw, {c.x, c.y + office_radius + 12.0f}, buf);
     }
+
+    DrawPayoutPopups(draw, view, world);
 
     // The mouse is "on the map" unless an ImGui window or the transport bar
     // is under it.
@@ -919,7 +964,7 @@ void DrawHUD(const World& world) {
 // so it keeps its dock slot.
 // ---------------------------------------------------------------------------
 
-// Letters as a To / Deadline / Value / Fine table; overdue deadlines in red.
+// Letters as a To / Deadline / Value / Max bonus table; overdue deadlines in red.
 static void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
                             const std::vector<PostOffice>& offices, Tick now) {
     const ImGuiTableFlags flags =
@@ -928,7 +973,7 @@ static void DrawLetterTable(const char* table_id, const std::vector<Letter>& let
         ImGui::TableSetupColumn("To");
         ImGui::TableSetupColumn("Deadline");
         ImGui::TableSetupColumn("Value");
-        ImGui::TableSetupColumn("Fine");
+        ImGui::TableSetupColumn("Max bonus");
         ImGui::TableHeadersRow();
         for (const Letter& letter : letters) {
             ImGui::TableNextRow();
@@ -944,7 +989,7 @@ static void DrawLetterTable(const char* table_id, const std::vector<Letter>& let
             ImGui::TableSetColumnIndex(2);
             ImGui::Text("%d", letter.value);
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%d", letter.fine);
+            ImGui::Text("%d", letter.max_bonus);
         }
         ImGui::EndTable();
     }

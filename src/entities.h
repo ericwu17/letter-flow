@@ -26,11 +26,21 @@ inline constexpr PostOfficeId kNoPostOffice = std::numeric_limits<PostOfficeId>:
 struct Letter {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;
-    Tick deadline = 0;  // delivered by this tick -> earn value; later -> pay fine
-    int value = 0;      // earned on on-time delivery
-    int fine = 0;       // paid on late delivery
+    Tick created = 0;   // tick the letter spawned; the early bonus shrinks linearly
+                        // from max_bonus at `created` to 0 at `deadline`
+    Tick deadline = 0;  // delivered by this tick -> earn an early bonus on top of value
+    int value = 0;      // always earned on delivery, on time or late
+    int max_bonus = 0;  // extra earned if delivered instantly; scaled by time left
 
     bool operator==(const Letter&) const = default;
+};
+
+// A truck arrival that paid out: `amount` is the total earned (values plus
+// early bonuses) across every letter finally delivered at `office`. A pure
+// presentation hint — not part of the saved or compared simulation state.
+struct DeliveryEvent {
+    PostOfficeId office = kNoPostOffice;
+    int amount = 0;
 };
 
 // Which letters a departing truck takes from its office's outbound buffer.

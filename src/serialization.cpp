@@ -75,17 +75,19 @@ void from_json(const nlohmann::json& j, Position& pos) {
 void to_json(nlohmann::json& j, const Letter& letter) {
     j = {{"src", letter.src},
          {"dst", letter.dst},
+         {"created", letter.created},
          {"deadline", letter.deadline},
          {"value", letter.value},
-         {"fine", letter.fine}};
+         {"max_bonus", letter.max_bonus}};
 }
 
 void from_json(const nlohmann::json& j, Letter& letter) {
     j.at("src").get_to(letter.src);
     j.at("dst").get_to(letter.dst);
+    j.at("created").get_to(letter.created);
     j.at("deadline").get_to(letter.deadline);
     j.at("value").get_to(letter.value);
-    j.at("fine").get_to(letter.fine);
+    j.at("max_bonus").get_to(letter.max_bonus);
 }
 
 void to_json(nlohmann::json& j, const RoutingRule& rule) {
