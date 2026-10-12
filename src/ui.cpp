@@ -60,6 +60,11 @@ constexpr ImU32 kColorTextShadow   = IM_COL32(0, 0, 0, 255);
 constexpr ImU32 kColorTextDim      = IM_COL32(235, 235, 240, 200);  // inactive icons
 constexpr ImU32 kColorAccent       = IM_COL32(70, 130, 220, 255);    // offices, day-progress fill
 constexpr ImU32 kColorOfficeUnbuilt = IM_COL32(85, 90, 105, 255);    // offices not yet built
+constexpr ImU32 kColorOfficeEmpty  = IM_COL32(35, 50, 75, 255);      // unfilled part of a built office
+constexpr ImU32 kColorOfficeWarn   = IM_COL32(235, 205, 60, 255);    // buffer nearly full
+constexpr ImU32 kColorOfficeFull   = IM_COL32(225, 60, 55, 255);     // buffer at/near capacity
+constexpr float kOfficeWarnFraction = 0.75f;  // fill fraction at which an office turns yellow
+constexpr float kOfficeFullFraction = 0.9f;   // ...and red
 constexpr ImU32 kColorHoverBg      = IM_COL32(70, 130, 220, 90);     // hovered transport buttons
 constexpr ImU32 kColorSelection    = IM_COL32(255, 200, 80, 255);    // selected-office ring
 constexpr ImU32 kColorTruck        = IM_COL32(240, 150, 60, 255);    // trucks, active fast-forward
@@ -694,7 +699,28 @@ void DrawWorld(World& world) {
         const ImVec2 c = WorldToScreen(view, office.pos);
         if (selected_truck == nullptr && id == g_selected_office)
             draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 2.5f);
-        draw->AddCircleFilled(c, office_radius, office.built ? kColorAccent : kColorOfficeUnbuilt);
+        if (!office.built) {
+            draw->AddCircleFilled(c, office_radius, kColorOfficeUnbuilt);
+        } else {
+            // Clock-style fill: a wedge sweeping clockwise from 12 o'clock
+            // shows how full the outbound buffer is, turning yellow then red
+            // as it nears max_outbound_letters.
+            const float fill = office.max_outbound_letters == 0 ? 0.0f
+                : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
+                                     / static_cast<float>(office.max_outbound_letters));
+            const ImU32 fill_color = fill >= kOfficeFullFraction ? kColorOfficeFull
+                                   : fill >= kOfficeWarnFraction ? kColorOfficeWarn
+                                   : kColorAccent;
+            draw->AddCircleFilled(c, office_radius, kColorOfficeEmpty);
+            if (fill >= 1.0f) {
+                draw->AddCircleFilled(c, office_radius, fill_color);
+            } else if (fill > 0.0f) {
+                const float start = -IM_PI * 0.5f;
+                draw->PathLineTo(c);
+                draw->PathArcTo(c, office_radius, start, start + 2.0f * IM_PI * fill);
+                draw->PathFillConcave(fill_color);
+            }
+        }
         draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 1.5f);
 
         const ImVec2 name_size = ImGui::CalcTextSize(office.name.c_str());
