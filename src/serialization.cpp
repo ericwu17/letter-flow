@@ -31,7 +31,9 @@ namespace {
 
 // Bump whenever the save layout changes incompatibly; files with any other
 // version are rejected on load rather than half-parsed.
-constexpr int kSaveFormatVersion = 1;
+// v2: roads added; TruckState stores a route polyline (vertices/distances)
+//     instead of straight-line from/to.
+constexpr int kSaveFormatVersion = 2;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
 // reordering or extending the enum can never silently misread old saves. An
@@ -129,6 +131,18 @@ void from_json(const nlohmann::json& j, PostOffice& office) {
     j.at("outbound_schedules").get_to(office.outbound_schedules);
 }
 
+void to_json(nlohmann::json& j, const Road& road) {
+    j = {{"src", road.src},
+         {"dst", road.dst},
+         {"vertices", road.vertices}};
+}
+
+void from_json(const nlohmann::json& j, Road& road) {
+    j.at("src").get_to(road.src);
+    j.at("dst").get_to(road.dst);
+    j.at("vertices").get_to(road.vertices);
+}
+
 // TruckState converts like any other entity; Truck itself goes through it
 // (get_state() / the state constructor) because it has no default
 // constructor, so it cannot use the vector-wide from_json path — trucks are
@@ -146,8 +160,8 @@ void to_json(nlohmann::json& j, const TruckState& truck) {
 void from_json(const nlohmann::json& j, TruckState& truck) {
     j.at("src").get_to(truck.src);
     j.at("dst").get_to(truck.dst);
-    j.at("vertices").get_to(truck.vertices),
-    j.at("distances").get_to(truck.distances),
+    j.at("vertices").get_to(truck.vertices);
+    j.at("distances").get_to(truck.distances);
     j.at("departure_tick").get_to(truck.departure_tick);
     j.at("speed").get_to(truck.speed);
     j.at("carried_letters").get_to(truck.carried_letters);
@@ -158,10 +172,13 @@ namespace {
 // Cross-reference and invariant check for a freshly loaded world. nlohmann
 // already guarantees the JSON shape; this catches structurally valid but
 // logically broken saves (hand-edited or truncated files): dangling office
-// references, and schedules violating the invariants add_schedule() enforces
-// (dst is another office, period > 0, non-empty postal prefix).
+// references, schedules violating the invariants add_schedule() enforces
+// (dst is another office, period > 0, non-empty postal prefix), and roads
+// violating the invariants add_road() enforces (normalized src < dst, no
+// duplicates, at least two vertices anchored at the endpoint offices).
 bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
-                           const std::vector<Truck>& trucks) {
+                           const std::vector<Truck>& trucks,
+                           const std::vector<Road>& roads) {
     const PostOfficeId num_offices = post_offices.size();
     for (PostOfficeId office_id = 0; office_id < num_offices; ++office_id) {
         const PostOffice& office = post_offices[office_id];
@@ -181,6 +198,19 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
     for (const Truck& truck : trucks)
         if (truck.get_src() >= num_offices || truck.get_dst() >= num_offices)
             return false;
+    for (std::size_t i = 0; i < roads.size(); ++i) {
+        const Road& road = roads[i];
+        if (road.src >= num_offices || road.dst >= num_offices || road.src >= road.dst)
+            return false;
+        if (road.vertices.size() < 2)
+            return false;
+        if (road.vertices.front() != post_offices[road.src].pos ||
+            road.vertices.back() != post_offices[road.dst].pos)
+            return false;
+        for (std::size_t j = i + 1; j < roads.size(); ++j)
+            if (roads[j].src == road.src && roads[j].dst == road.dst)
+                return false;  // duplicate road between the same offices
+    }
     return true;
 }
 
@@ -200,6 +230,7 @@ bool World::save_to_file(const std::string& path) const {
     j["letters_delivered_on_time"] = letters_delivered_on_time;
     j["letters_delivered_late"] = letters_delivered_late;
     j["post_offices"] = post_offices;
+    j["roads"] = roads;
 
     nlohmann::json trucks_json = nlohmann::json::array();
     for (const Truck& truck : trucks)
@@ -257,6 +288,7 @@ std::optional<World> World::load_from_file(const std::string& path) {
         j.at("letters_delivered_on_time").get_to(world.letters_delivered_on_time);
         j.at("letters_delivered_late").get_to(world.letters_delivered_late);
         j.at("post_offices").get_to(world.post_offices);
+        j.at("roads").get_to(world.roads);
 
         const nlohmann::json& trucks_json = j.at("trucks");
         if (!trucks_json.is_array())
@@ -271,7 +303,7 @@ std::optional<World> World::load_from_file(const std::string& path) {
         if (rng_state.fail())
             return std::nullopt;
 
-        if (!loaded_state_is_valid(world.post_offices, world.trucks))
+        if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads))
             return std::nullopt;
 
         return world;

@@ -149,17 +149,6 @@ struct RoadBuilder {
             middle = Position{start.x + diag_x, start.y + diag_y};
         }
         head = target_position;
-
-        // Reject hairpins: first segment must not turn more than 90 degrees
-        // from the previous one (2 steps of 45 degrees).
-        if (vertices.size() >= 2) {
-            const Position prev = vertices[vertices.size() - 2];
-            const int prev_dir = dir_index(start.x - prev.x, start.y - prev.y);
-            const int first_dir = dir_index(middle->x - start.x, middle->y - start.y);
-            if (turn_steps(prev_dir, first_dir) > 2) {
-                is_invalid = true;
-            }
-        }
     }
 
     void commit_middle_and_head() {

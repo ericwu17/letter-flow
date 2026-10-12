@@ -497,7 +497,14 @@ void DrawWorld(World& world) {
                           && !PointInRect(io.MousePos, bar.bar_min, bar.bar_max);
 
     if (g_road_build_state != RoadBuildState::Idle) {
-        if (clicked_map) {
+        // Right-click on the map or Esc anywhere cancels road-building.
+        const bool cancelled =
+            ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+            (io.MouseClicked[1] && !io.WantCaptureMouse);
+        if (cancelled) {
+            g_road_build_state = RoadBuildState::Idle;
+            g_road_builder = RoadBuilder{};
+        } else if (clicked_map) {
             if (g_road_build_state == RoadBuildState::SelectSource) {
                 // Click on a source office to start.
                 for (PostOfficeId id = 0; id < offices.size(); ++id) {
@@ -942,7 +949,7 @@ void DrawInspector(World& world) {
             g_road_build_state = RoadBuildState::Idle;
             g_road_builder = RoadBuilder{};
         }
-        ImGui::TextDisabled("Right-click or Esc on the map to cancel.");
+        ImGui::TextDisabled("Right-click on the map or press Esc to cancel.");
     }
 
     ImGui::End();

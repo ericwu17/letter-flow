@@ -33,48 +33,7 @@ int64_t dot(Position a, Position b) {
     return a.x * b.x + a.y * b.y;
 }
 
-// Unit vectors for the 8 cardinal/diagonal directions.
-// const Position kUnitDirs[8] = {
-//     { 1,  0},  //   0° (east)
-//     { 1,  1},  //  45° (southeast) — Y increases downward in screen coords
-//     { 0,  1},  //  90° (south)
-//     {-1,  1},  // 135° (southwest)
-//     {-1,  0},  // 180° (west)
-//     {-1, -1},  // 225° (northwest)
-//     { 0, -1},  // 270° (north)
-//     { 1, -1},  // 315° (northeast)
-// };
-
 }  // namespace
-
-// Position snap_to_8dir(Position from, Position cursor) {
-//     const Position disp = delta(from, cursor);
-//     const float disp_len = length(disp);
-//     if (disp_len < kEpsilon)
-//         return from;  // too close to snap meaningfully
-
-//     // Pick the direction that maximizes the dot product with the cursor vector.
-//     // This finds the closest of the 8 rays to the cursor direction by angle.
-//     int best = 0;
-//     float best_dot = -1e9f;
-//     float best_len_squared = 1.0f;
-//     for (int i = 0; i < 8; ++i) {
-//         // Normalize: divide dot by |dir| so all 8 directions compete fairly. (diagonal directions would be longer, otherwise).
-//         const float len_squared = kUnitDirs[i].x * kUnitDirs[i].x + kUnitDirs[i].y * kUnitDirs[i].y;
-//         const float inv_len = (1.0f / std::sqrt(len_squared));
-//         const float d = dot(kUnitDirs[i], disp) * inv_len;
-//         if (d > best_dot) {
-//             best_dot = d;
-//             best = i;
-//             best_len_squared = len_squared;
-//         }
-//     }
-
-//     const Position unit = kUnitDirs[best];
-//     // Project the cursor displacement onto the chosen direction.
-//     const int proj = dot(disp, unit) / best_len_squared;
-//     return {from.x + unit.x * proj, from.y + unit.y * proj};
-// }
 
 // tests whether line segment (a1, a2) intersects line segment (b1, b2)
 bool segments_intersect(Position a1, Position a2, Position b1, Position b2) {
@@ -134,12 +93,13 @@ bool segments_intersect(Position a1, Position a2, Position b1, Position b2) {
     if (s < -kEpsilon || s > 1.0f + kEpsilon) return false;
     if (t < -kEpsilon || t > 1.0f + kEpsilon) return false;
 
-    // Reject if the intersection is at a shared endpoint of both segments.
-    // This happens when s≈0 and t≈0 (a1==b1), s≈0 and t≈1 (a1==b2),
-    // s≈1 and t≈0 (a2==b1), or s≈1 and t≈1 (a2==b2).
-    // Also reject if the intersection is at the endpoint of one segment and
-    // the interior of the other — this counts as a crossing (a road vertex
-    // landing on another road's interior is a collision).
+    // Reject only a shared endpoint: BOTH parameters at their segment ends
+    // means the segments touch exactly where they end — s≈0 and t≈0
+    // (a1==b1), s≈0 and t≈1 (a1==b2), s≈1 and t≈0 (a2==b1), or s≈1 and
+    // t≈1 (a2==b2). Roads may meet end to end, so that is not a crossing.
+    // An endpoint of one segment landing in the interior of the other (a
+    // T-junction) fails this test and DOES count as a crossing: a road
+    // vertex may not land on another road's interior.
     if ((approx_eq(s, 0.0f) || approx_eq(s, 1.0f)) &&
         (approx_eq(t, 0.0f) || approx_eq(t, 1.0f)))
         return false;  // shared endpoint, not a crossing

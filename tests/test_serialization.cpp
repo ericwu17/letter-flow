@@ -23,12 +23,26 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace {
 
 namespace fs = std::filesystem;
 
 const fs::path kSaveDir = "build/test-saves";
+
+// Adds a road between offices a and b as an L-shaped path of two
+// axis-aligned segments: vertical-then-horizontal, or horizontal-then-
+// vertical per `vertical_first`. The explicit per-road choice (instead of an
+// automatic pick) is what keeps the fixture's seven roads from crossing —
+// see the calls in build_fixture_world().
+void add_l_road(World& w, PostOfficeId a, PostOfficeId b, bool vertical_first) {
+    const Position pa = w.get_post_offices()[a].pos;
+    const Position pb = w.get_post_offices()[b].pos;
+    const Position corner = vertical_first ? Position{pa.x, pb.y}
+                                           : Position{pb.x, pa.y};
+    assert(w.add_road(a, b, {pa, corner, pb}));
+}
 
 std::string slurp(const fs::path& path) {
     std::ifstream in(path);
@@ -54,6 +68,21 @@ World build_fixture_world() {
     w.set_paused(true);                 // default: false
     w.set_speed_multiplier(4.0f);       // default: 1.0
 
+    // Roads: every schedule below requires a road between its endpoints
+    // (add_schedule checks has_road). The seven L-shaped roads form a
+    // non-crossing chain Hopewell - Princeton - Lawrenceville - Trenton plus
+    // Princeton - Monroe - Edison - Newark - Brooklyn; the per-road
+    // vertical_first choices below are the ones that avoid crossings
+    // (e.g. Lawrenceville -> Princeton must arrive from the west, since its
+    // northern and southern approaches are taken).
+    add_l_road(w, 3, 1, /*vertical_first=*/false);  // Hopewell -> Princeton
+    add_l_road(w, 0, 1, /*vertical_first=*/true);   // Lawrenceville -> Princeton
+    add_l_road(w, 0, 2, /*vertical_first=*/false);  // Lawrenceville -> Trenton
+    add_l_road(w, 1, 4, /*vertical_first=*/true);   // Princeton -> Monroe
+    add_l_road(w, 4, 5, /*vertical_first=*/false);  // Monroe -> Edison
+    add_l_road(w, 5, 7, /*vertical_first=*/false);  // Edison -> Newark
+    add_l_road(w, 7, 11, /*vertical_first=*/false); // Newark -> Brooklyn
+
     // All three routing-rule types, distinct periods and start offsets;
     // office 0 ends up with three schedules, so schedule list order (the
     // pick-up priority) is exercised too.
@@ -61,18 +90,20 @@ World build_fixture_world() {
     const RoutingRule all_rule{RoutingRuleType::AllLetters, ""};
     assert(w.add_schedule(0, 1, kTicksPerHour, 0, {}));                // exact
     assert(w.add_schedule(0, 2, kTicksPerHour / 2, 13, prefix_rule));  // prefix
-    assert(w.add_schedule(3, 4, kMinSchedulePeriod, 7, all_rule));     // all
+    assert(w.add_schedule(3, 1, kMinSchedulePeriod, 7, all_rule));     // all
 
     // Force some late deliveries so letters_delivered_late is non-zero:
     // AllLetters schedules whose first departure is later than any waiting
     // letter's deadline can be (deadlines are at most two days after spawn).
     // Every src below except office 0 — which also has the hourly exact
     // route to office 1 added above — has no earlier departures, so its
-    // trucks arrive with guaranteed-late cargo.
+    // trucks arrive with guaranteed-late cargo. Each route follows one of
+    // the roads built above.
     const Tick late_start = 3 * kTicksPerDay;
-    constexpr PostOfficeId kLateSrcs[] = {0, 2, 5, 7, 11};
-    for (const PostOfficeId src : kLateSrcs)
-        assert(w.add_schedule(src, 1, kTicksPerDay, late_start, all_rule));
+    constexpr std::pair<PostOfficeId, PostOfficeId> kLateRoutes[] = {
+        {0, 1}, {2, 0}, {5, 4}, {7, 5}, {11, 7}};
+    for (const auto& [src, dst] : kLateRoutes)
+        assert(w.add_schedule(src, dst, kTicksPerDay, late_start, all_rule));
 
     // Run past the late batch's arrivals (the longest of these routes is
     // in flight for well under 500 ticks).
@@ -93,6 +124,7 @@ World build_fixture_world() {
     assert(w.get_letters_delivered_on_time() > 0);   // default: 0
     assert(w.get_letters_delivered_late() > 0);      // default: 0
     assert(!w.get_trucks().empty());                 // default: empty
+    assert(!w.get_roads().empty());                  // default: empty
     return w;
 }
 
