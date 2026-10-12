@@ -8,7 +8,7 @@
 #include <cmath>
 #include <vector>
 
-static double length(Position p) {
+inline double length(Position p) {
     return std::sqrt(p.x * p.x + p.y * p.y);
 }
 

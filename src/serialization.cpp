@@ -195,9 +195,12 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                 return false;
         }
     }
-    for (const Truck& truck : trucks)
+    for (const Truck& truck : trucks) {
         if (truck.get_src() >= num_offices || truck.get_dst() >= num_offices)
             return false;
+        if (truck.get_state().distances.size() != truck.get_state().vertices.size() - 1) 
+            return false;
+    }
     for (std::size_t i = 0; i < roads.size(); ++i) {
         const Road& road = roads[i];
         if (road.src >= num_offices || road.dst >= num_offices || road.src >= road.dst)

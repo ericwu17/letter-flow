@@ -348,6 +348,34 @@ bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> v
     return true;
 }
 
+bool World::remove_road(PostOfficeId a, PostOfficeId b) {
+    // Validate office indices.
+    if (a == b || a >= post_offices.size() || b >= post_offices.size())
+        return false;
+
+    // Normalize so a < b (roads are undirected).
+    if (a > b) {
+        std::swap(a, b);
+    }
+
+    const auto it = std::find_if(roads.begin(), roads.end(), [&](const Road& road) {
+        return road.src == a && road.dst == b;
+    });
+    if (it == roads.end())
+        return false;
+
+    roads.erase(it);
+
+    // Cascade: drop every schedule that depends on this road, on both endpoint
+    // offices — spawn_truck would otherwise build a truck from an empty vertex
+    // list on the next departure. No refund, for the road or the schedules.
+    std::erase_if(post_offices[a].outbound_schedules,
+                  [b](const TruckSchedule& s) { return s.dst == b; });
+    std::erase_if(post_offices[b].outbound_schedules,
+                  [a](const TruckSchedule& s) { return s.dst == a; });
+    return true;
+}
+
 bool World::polyline_intersects_any(const std::vector<Position>& vertices) const {
     for (const Road& existing : roads) {
         if (polyline_crosses_road(existing, vertices))

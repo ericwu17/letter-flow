@@ -86,6 +86,16 @@ public:
     // failure.
     bool add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> vertices);
 
+    // Destroy the road connecting a and b (undirected; argument order does not
+    // matter). There is NO refund. Truck schedules only ever use the direct
+    // road (add_schedule checks has_road), and spawn_truck would dereference
+    // an empty vertex list once the road is gone, so every schedule between
+    // the two endpoints is cascade-deleted on both offices (roads are
+    // undirected, schedules are per-source-office). In-flight trucks are
+    // unaffected: they snapshot the polyline at departure. Returns false and
+    // changes nothing if the ids are invalid or no such road exists.
+    bool remove_road(PostOfficeId a, PostOfficeId b);
+
     // True if any road connects a and b (undirected).
     bool has_road(PostOfficeId a, PostOfficeId b) const;
 

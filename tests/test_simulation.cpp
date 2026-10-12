@@ -239,6 +239,80 @@ void postal_code_edits_take_effect_at_departure() {
         assert(letter.dst == 2);
 }
 
+// remove_road: no refund, lookups fail in both argument orders, invalid calls
+// change nothing, dependent schedules cascade-delete on both endpoint
+// offices, the world stays stable afterwards (no phantom departures from the
+// removed road), in-flight trucks still deliver, and the road can be rebuilt.
+void road_removal() {
+    const RoutingRule exact{RoutingRuleType::ExactDestination, ""};
+    const Tick huge = 100 * kTicksPerDay;  // one departure, ever
+
+    // --- removal, validation and no refund --------------------------------
+    World w = make_line_world(3, 5);  // roads: 0-1, 1-2
+    add_underpass_road(w, 0, 2);
+    const int money0 = w.get_money();
+    assert(w.get_roads().size() == 3);
+
+    assert(!w.remove_road(0, 0));    // self
+    assert(!w.remove_road(0, 99));   // out-of-range dst
+    assert(!w.remove_road(99, 0));   // out-of-range src
+    assert(w.get_roads().size() == 3);
+
+    assert(w.remove_road(1, 0));  // argument order does not matter
+    assert(w.get_money() == money0);  // NO refund
+    assert(w.get_roads().size() == 2);
+    assert(!w.has_road(0, 1));
+    assert(!w.has_road(1, 0));
+    assert(w.find_road(0, 1) == nullptr);
+    assert(w.find_road(1, 0) == nullptr);
+    assert(!w.remove_road(0, 1));  // already gone
+    assert(w.get_money() == money0);
+
+    // --- schedule cascade on both endpoint offices -------------------------
+    assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
+    assert(w.add_schedule(2, 0, kTicksPerHour, 0, exact));
+    assert(w.add_schedule(1, 2, kTicksPerHour, 0, exact));  // unrelated: survives
+    assert(w.remove_road(0, 2));
+    assert(w.get_post_offices()[0].outbound_schedules.empty());
+    assert(w.get_post_offices()[2].outbound_schedules.empty());
+    assert(w.get_post_offices()[1].outbound_schedules.size() == 1);
+
+    // A schedule cannot exist without its road...
+    assert(!w.add_schedule(0, 2, kTicksPerHour, 0, exact));
+
+    // --- stability: no phantom departures from removed roads ---------------
+    // (Guards the crash where spawn_truck built a truck from an empty vertex
+    // list after its road was destroyed.) The surviving 1->2 schedule keeps
+    // running normally while the removed 0-1 road never spawns anything.
+    World w2 = make_line_world(2, 5);  // road 0-1 only
+    assert(w2.add_schedule(0, 1, kTicksPerHour, 0, exact));
+    assert(w2.remove_road(0, 1));
+    assert(w2.get_post_offices()[0].outbound_schedules.empty());  // cascaded
+    for (int i = 0; i < 200; ++i)
+        w2.advance_tick();
+    assert(w2.get_trucks().empty());  // nothing departs, nothing crashes
+
+    // --- in-flight trucks are safe: they snapshot the polyline -------------
+    World w3 = make_line_world(2, 5);
+    assert(w3.add_schedule(0, 1, huge, 1, {RoutingRuleType::AllLetters, ""}));
+    w3.advance_tick();  // tick 1: truck departs with the 5 seeded letters
+    assert(w3.get_trucks().size() == 1);
+    assert(w3.remove_road(0, 1));  // destroy the road mid-transit
+    while (w3.get_tick() < 51)     // one 100-unit hop takes exactly 50 ticks
+        w3.advance_tick();
+    assert(w3.get_trucks().empty());  // arrived and retired
+    assert(w3.get_letters_delivered_on_time() + w3.get_letters_delivered_late() == 5);
+
+    // --- rebuild: a removed road can be built again, at full price ---------
+    World w4 = make_line_world(2, 0);
+    const int money4 = w4.get_money();
+    assert(w4.remove_road(0, 1));
+    assert(w4.get_money() == money4);
+    add_straight_road(w4, 0, 1);
+    assert(w4.has_road(0, 1));
+    assert(w4.get_money() < money4);  // paid again — the removal refunded nothing
+}
+
 // Hub-and-spoke end to end: mail rides a leg it is not addressed to, is
 // forwarded into the hub's buffer (bypassing the spawn cap), and a second
 // schedule delivers it onward — every seeded letter ends up scored, on time.
@@ -284,6 +358,8 @@ int main() {
     printf("PASS postal_code_edits_take_effect_at_departure\n");
     multi_hop_forwarding_delivers_every_letter();
     printf("PASS multi_hop_forwarding_delivers_every_letter\n");
+    road_removal();
+    printf("PASS road_removal\n");
 
     printf("all simulation tests passed\n");
     return 0;

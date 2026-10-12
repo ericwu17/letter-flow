@@ -72,6 +72,17 @@ enum class RoadBuildState { Idle, SelectSource, PlacingVertices };
 RoadBuildState g_road_build_state = RoadBuildState::Idle;
 RoadBuilder g_road_builder;
 
+// Road-destroy menu state. The road is keyed by its endpoint-id pair — never
+// an index or pointer — because remove_road() erases from the roads vector.
+struct RoadKey {
+    PostOfficeId src;
+    PostOfficeId dst;
+};
+std::optional<RoadKey> g_road_menu_road;
+ImVec2 g_road_menu_pos = {0.0f, 0.0f};    // click point, screen space
+bool g_road_menu_open_requested = false;  // latch for OpenPopup in DrawRoadMenu
+bool g_road_menu_confirm = false;         // two-step confirm: first click arms
+
 
 // ---------------------------------------------------------------------------
 // World -> screen mapping: scale the fixed-size world to fit the display,
@@ -141,6 +152,42 @@ ImVec2 WorldToScreen(const ViewTransform& vt, Position p) {
 Position ScreenToWorld(const ViewTransform& vt, ImVec2 screen) {
     return {static_cast<int64_t>((screen.x - vt.offset.x) / vt.scale),
             static_cast<int64_t>((screen.y - vt.offset.y) / vt.scale)};
+}
+
+// Squared distance from point p to the segment a-b (all in screen space).
+float DistanceSqToSegment(ImVec2 p, ImVec2 a, ImVec2 b) {
+    const ImVec2 ab = {b.x - a.x, b.y - a.y};
+    const float len_sq = ab.x * ab.x + ab.y * ab.y;
+    // Degenerate segment (a == b): distance to the point itself.
+    float t = len_sq > 0.0f ? ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len_sq : 0.0f;
+    t = std::clamp(t, 0.0f, 1.0f);
+    const float dx = p.x - (a.x + t * ab.x);
+    const float dy = p.y - (a.y + t * ab.y);
+    return dx * dx + dy * dy;
+}
+
+// Index of the road whose polyline passes nearest to `screen_pos` within
+// `tolerance_px`, or nullopt if none does. Hit-testing lives here (not in
+// road.cpp) because it runs in screen space; the sim layer only knows int64
+// world coordinates.
+std::optional<std::size_t> HitTestRoad(const std::vector<Road>& roads,
+                                       const ViewTransform& view, ImVec2 screen_pos,
+                                       float tolerance_px) {
+    std::optional<std::size_t> best;
+    float best_dist_sq = tolerance_px * tolerance_px;
+    for (std::size_t r = 0; r < roads.size(); ++r) {
+        const std::vector<Position>& v = roads[r].vertices;
+        for (std::size_t i = 1; i < v.size(); ++i) {
+            const float dist_sq = DistanceSqToSegment(screen_pos,
+                                                      WorldToScreen(view, v[i - 1]),
+                                                      WorldToScreen(view, v[i]));
+            if (dist_sq < best_dist_sq) {
+                best_dist_sq = dist_sq;
+                best = r;
+            }
+        }
+    }
+    return best;
 }
 
 void DrawCenteredText(ImDrawList* draw, ImVec2 center, const char* text) {
@@ -348,6 +395,71 @@ void DrawDockspace() {
 }
 
 // ---------------------------------------------------------------------------
+// Road destroy menu: a small ImGui popup anchored at the point where the road
+// was clicked, armed by DrawWorld's click handling. Two-step confirm — the
+// first click on the entry turns it into "Confirm?", the second destroys the
+// road (no refund). Esc or a click elsewhere dismisses it; either way the
+// state resets so the highlight and the menu never outlive each other.
+// ---------------------------------------------------------------------------
+
+static void DrawRoadMenu(World& world) {
+    if (!g_road_menu_road.has_value())
+        return;
+
+    // OpenPopup dereferences the current window, and the map lives outside any
+    // Begin/End pair — so host the popup in an invisible, zero-size,
+    // input-transparent window placed exactly at the click point.
+    ImGui::SetNextWindowPos(g_road_menu_pos);
+    ImGui::Begin("##road_menu_host", nullptr,
+                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground |
+                 ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoInputs);
+
+    if (g_road_menu_open_requested) {
+        ImGui::OpenPopup("road_destroy_menu");
+        g_road_menu_open_requested = false;
+    }
+
+    if (ImGui::BeginPopup("road_destroy_menu")) {
+        if (ImGui::IsWindowAppearing())
+            g_road_menu_confirm = false;
+
+        const RoadKey key = g_road_menu_road.value();
+        const std::vector<PostOffice>& offices = world.get_post_offices();
+        char title[128];
+        std::snprintf(title, sizeof(title), "%s <-> %s",
+                      offices[key.src].name.c_str(), offices[key.dst].name.c_str());
+        ImGui::TextDisabled("%s", title);
+        ImGui::Separator();
+
+        // NoAutoClosePopups keeps the first click from closing the popup, so
+        // the same entry can serve as the two-step confirm.
+        if (ImGui::Selectable(g_road_menu_confirm ? "Confirm? (no refund)" : "Destroy road",
+                              false, ImGuiSelectableFlags_NoAutoClosePopups)) {
+            if (!g_road_menu_confirm) {
+                g_road_menu_confirm = true;
+            } else {
+                world.remove_road(key.src, key.dst);
+                ImGui::CloseCurrentPopup();
+                g_road_menu_road.reset();
+                g_road_menu_confirm = false;
+            }
+        }
+        ImGui::EndPopup();
+    } else if (!g_road_menu_open_requested) {
+        // The popup was closed externally (Esc or a click outside it). ImGui
+        // consumes the closing click, so it cannot leak through to the map
+        // below; just reset the menu state.
+        g_road_menu_road.reset();
+        g_road_menu_confirm = false;
+    }
+
+    ImGui::End();
+}
+
+// ---------------------------------------------------------------------------
 // The map
 // ---------------------------------------------------------------------------
 
@@ -362,17 +474,23 @@ void DrawWorld(World& world) {
     ImGuiIO& io = ImGui::GetIO();
     Position mouse_world = ScreenToWorld(view, io.MousePos);
 
-    // Roads (built, underneath schedule routes).
+    // Roads (built, underneath schedule routes). The road whose destroy menu
+    // is open is tinted with the selection color so it is unambiguous which
+    // road the menu refers to.
     for (const Road& road : world.get_roads()) {
+        const bool has_menu = g_road_menu_road.has_value()
+                           && road.src == g_road_menu_road->src
+                           && road.dst == g_road_menu_road->dst;
+        const ImU32 color = has_menu ? kColorSelection : kColorRoadLine;
         for (std::size_t i = 1; i < road.vertices.size(); ++i) {
             const ImVec2 a = WorldToScreen(view, road.vertices[i - 1]);
             const ImVec2 b = WorldToScreen(view, road.vertices[i]);
-            draw->AddLine(a, b, kColorRoadLine, 2.5f * view.scale);
+            draw->AddLine(a, b, color, 2.5f * view.scale);
         }
         // Small circles at intermediate vertices.
         for (std::size_t i = 1; i + 1 < road.vertices.size(); ++i) {
             const ImVec2 v = WorldToScreen(view, road.vertices[i]);
-            draw->AddCircleFilled(v, 3.0f * view.scale, kColorRoadLine);
+            draw->AddCircleFilled(v, 3.0f * view.scale, color);
         }
     }
 
@@ -551,7 +669,9 @@ void DrawWorld(World& world) {
             }
         }
     } else if (clicked_map) {
-        // Normal click-to-select.
+        // Normal click-to-select. Offices win over roads: they draw on top,
+        // and every road ends at an office position.
+        bool hit_office = false;
         for (PostOfficeId id = 0; id < offices.size(); ++id) {
             const ImVec2 c = WorldToScreen(view, offices[id].pos);
             const float dx = io.MousePos.x - c.x;
@@ -559,10 +679,28 @@ void DrawWorld(World& world) {
             const float hit_radius = office_radius + 6.0f;
             if (dx * dx + dy * dy <= hit_radius * hit_radius) {
                 g_selected_office = id;
+                hit_office = true;
                 break;
             }
         }
+        if (!hit_office) {
+            // Click on a road: arm its destroy menu at the click point. The
+            // tolerance follows the road line width, with a pixel floor so
+            // roads stay clickable when zoomed out. While the popup is open
+            // io.WantCaptureMouse is true, so clicked_map is false and this
+            // cannot re-fire until the menu is dismissed.
+            const float tolerance = std::max(8.0f, 2.5f * view.scale);
+            if (const auto hit = HitTestRoad(world.get_roads(), view, io.MousePos, tolerance)) {
+                const Road& road = world.get_roads()[*hit];
+                g_road_menu_road = RoadKey{road.src, road.dst};
+                g_road_menu_pos = io.MousePos;
+                g_road_menu_open_requested = true;
+                g_road_menu_confirm = false;
+            }
+        }
     }
+
+    DrawRoadMenu(world);
 }
 
 // ---------------------------------------------------------------------------
