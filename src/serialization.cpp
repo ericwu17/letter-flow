@@ -26,6 +26,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <iostream>
 
 namespace {
 
@@ -273,15 +274,22 @@ bool World::save_to_file(const std::string& path) const {
 }
 
 std::optional<World> World::load_from_file(const std::string& path) {
+    using std::cerr;
+    using std::endl;
+
     std::ifstream in(path);
-    if (!in)
-        return std::nullopt;  // no save file yet: caller starts a fresh world
+    if (!in) {
+        cerr << "No save file found at " << path << "." << endl;
+        return std::nullopt;
+    }
 
     try {
         const nlohmann::json j = nlohmann::json::parse(in);
 
-        if (j.at("format_version").get<int>() != kSaveFormatVersion)
-            return std::nullopt;  // incompatible save version
+        if (j.at("format_version").get<int>() != kSaveFormatVersion) {
+            cerr << "Incompatible save version." << endl;
+            return std::nullopt;
+        }
 
         World world;
         j.at("current_tick").get_to(world.current_tick);
@@ -294,27 +302,34 @@ std::optional<World> World::load_from_file(const std::string& path) {
         j.at("roads").get_to(world.roads);
 
         const nlohmann::json& trucks_json = j.at("trucks");
-        if (!trucks_json.is_array())
+        if (!trucks_json.is_array()) {
+            cerr << "trucks is not an array." << endl;
             return std::nullopt;
-        for (const nlohmann::json& truck_json : trucks_json)
+        }
+        for (const nlohmann::json& truck_json : trucks_json) {
             world.trucks.push_back(Truck(truck_json.get<TruckState>()));
+        }
 
         // Restore the RNG's full internal state (see save_to_file). operator>>
         // validates the dump and sets failbit on malformed input.
         std::istringstream rng_state(j.at("rng").get<std::string>());
         rng_state >> world.rng;
-        if (rng_state.fail())
-            return std::nullopt;
+        if (rng_state.fail()) {
+            cerr << "rng failed. Using a new RNG." << endl;
+        }
 
-        if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads))
+        if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads)) {
+            cerr << "loaded state not valid" << endl;
             return std::nullopt;
+        }
 
         return world;
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
         // Any problem — malformed JSON, missing or mis-typed keys, unknown
         // enum strings, out-of-range numbers — means "no usable save": the
         // caller falls back to a fresh world instead of crashing or loading
         // a half-built one.
+        cerr << "caught exception" << e.what() << endl;
         return std::nullopt;
     }
 }
