@@ -1090,7 +1090,7 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
         return;
     }
 
-    ImGui::Text("Outbound: %zu / %zu   (%zu per day)",
+    ImGui::Text("Outbound: %zu / %zu   (%zu per day expected)",
                 office.outbound_letters.size(), office.max_outbound_letters, office.letters_per_day);
 
     if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
