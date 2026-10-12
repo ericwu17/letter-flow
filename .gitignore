@@ -1,8 +1,11 @@
 .DS_Store
 
-# build artifacts
+# build artifacts (one build dir per platform makefile)
 build/
+build-linux/
+build-windows/
 /letter-flow
+/letter-flow.exe
 *.o
 *.d
 

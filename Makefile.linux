@@ -1,0 +1,106 @@
+# Letter Flow — SDL2 + OpenGL3 + Dear ImGui (Linux)
+#
+# Requires SDL2 dev files and a GL implementation:
+#   Debian/Ubuntu:  sudo apt install build-essential libsdl2-dev libgl-dev
+#   Fedora:         sudo dnf install gcc-c++ make SDL2-devel mesa-libGL-devel
+#   Arch:           sudo pacman -S base-devel sdl2 mesa
+#
+# Build & run:    make -f Makefile.linux && ./letter-flow
+#
+# Same layout as the macOS Makefile: our sources under src/, all object
+# files under build/ (keeping the imgui submodule pristine). main.cpp is
+# shared by all platforms; the macOS-only platform_macos.mm is NOT built here.
+
+EXE       = letter-flow
+IMGUI_DIR = imgui
+# Separate build dir per platform so artifacts never collide across makefiles.
+BUILD_DIR = build-linux
+# Vendored single-header libraries: nlohmann/json (save files)
+THIRD_PARTY_DIR = third_party
+
+# Hard-set, not `?=`: make predefines CXX=c++, and we want g++ explicitly
+# (override on the command line with `make CXX=clang++ ...` if preferred).
+CXX = g++
+
+CXXFLAGS = -std=c++20 -g
+CXXFLAGS += -Isrc
+# Vendored headers are treated as system headers so they can't trip the
+# warnings-as-errors build of our own sources.
+CXXFLAGS += -isystem $(IMGUI_DIR) -isystem $(IMGUI_DIR)/backends -isystem $(THIRD_PARTY_DIR)
+CXXFLAGS += $(shell sdl2-config --cflags)
+CXXFLAGS += -MMD -MP   # header dependency tracking
+
+# Comprehensive but non-opinionated warning set for our own code (src/, tests/),
+# with warnings treated as errors. Third-party code (imgui) is built with
+# neither these flags nor -Werror.
+WARNINGS  = -Wall -Wextra -Wpedantic -Werror
+WARNINGS += -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
+WARNINGS += -Wcast-align -Wnull-dereference -Wimplicit-fallthrough
+WARNINGS += -Wformat=2
+WARNINGS += -Wno-error=double-promotion
+
+# -lGL for the direct glViewport/glClear calls in main.cpp, -ldl because the
+# imgui OpenGL3 loader dlopen()s the system GL library at runtime (only needed
+# on glibc < 2.34, harmless elsewhere).
+LIBS  = -lGL -ldl
+LIBS += $(shell sdl2-config --libs)
+
+# Simulation layer: pure logic, no SDL/imgui/OpenGL — the headless tests link
+# against exactly these objects. Keep presentation code out of this list.
+SIM_SOURCES  = src/road.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
+APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/main.cpp
+# One headless test binary per tests/test_*.cpp file (see the test rules below).
+TEST_SOURCES := $(wildcard tests/*.cpp)
+TEST_EXES    := $(patsubst tests/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))
+
+IMGUI_SOURCES  = $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_demo.cpp $(IMGUI_DIR)/imgui_draw.cpp
+IMGUI_SOURCES += $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp
+IMGUI_SOURCES += $(IMGUI_DIR)/backends/imgui_impl_sdl2.cpp $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp
+
+VENDOR_SOURCES = $(IMGUI_SOURCES)
+
+# src/world.cpp -> build/src/world.o, imgui/imgui.cpp -> build/imgui/imgui.o, etc.
+APP_OBJS    := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(APP_SOURCES))
+VENDOR_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(VENDOR_SOURCES))
+TEST_OBJS   := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(TEST_SOURCES))
+SIM_OBJS    := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SIM_SOURCES))
+# OBJS links into $(EXE); test objects stay out (they contain their own main).
+OBJS := $(APP_OBJS) $(VENDOR_OBJS)
+DEPS := $(OBJS:.o=.d) $(TEST_OBJS:.o=.d)
+# Objects built with the full warning set (everything we wrote, tests included).
+OUR_CPP_OBJS := $(APP_OBJS) $(TEST_OBJS)
+
+all: $(EXE)
+
+$(EXE): $(OBJS)
+	$(CXX) -o $@ $^ $(LIBS)
+
+# Our own code: full warning set, warnings as errors.
+$(OUR_CPP_OBJS): $(BUILD_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(WARNINGS) -c -o $@ $<
+
+# Vendored code (imgui): no extra warnings, no -Werror.
+$(VENDOR_OBJS): $(BUILD_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+# Headless tests (no window, no SDL): make -f Makefile.linux test builds and
+# runs one binary per tests/test_*.cpp, each linked against exactly the
+# simulation objects.
+test: $(TEST_EXES)
+	@for exe in $(TEST_EXES); do ./$$exe || exit 1; done
+
+$(BUILD_DIR)/test_%: $(BUILD_DIR)/tests/test_%.o $(SIM_OBJS)
+	$(CXX) -o $@ $^
+
+# The tests are assert-based: force asserts on for test objects so a stray
+# -DNDEBUG in CXXFLAGS can never turn them into silent no-ops.
+$(TEST_OBJS): CXXFLAGS += -UNDEBUG
+
+clean:
+	rm -rf $(BUILD_DIR) $(EXE)
+
+-include $(DEPS)
+
+.PHONY: all clean test

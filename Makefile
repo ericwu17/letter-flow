@@ -1,11 +1,13 @@
-# Letter Flow — SDL2 + Metal + Dear ImGui
+# Letter Flow — SDL2 + OpenGL3 + Dear ImGui (macOS)
 #
 # Requires SDL2:  brew install sdl2
 # Build & run:    make && ./letter-flow
 #
-# Layout mirrors imgui/examples/example_sdl2_metal/Makefile, with our own
+# Layout mirrors imgui/examples/example_sdl2_opengl3/Makefile, with our own
 # sources under src/ and all object files under build/ (keeping the imgui
-# submodule pristine).
+# submodule pristine). Linux and Windows builds use Makefile.linux and
+# Makefile.windows; this one keeps the macOS-only bits (platform_macos.mm,
+# the OpenGL framework, GL deprecation silencing).
 
 EXE       = letter-flow
 IMGUI_DIR = imgui
@@ -21,6 +23,9 @@ CXXFLAGS += -Isrc
 # warnings-as-errors build of our own sources.
 CXXFLAGS += -isystem $(IMGUI_DIR) -isystem $(IMGUI_DIR)/backends -isystem $(THIRD_PARTY_DIR)
 CXXFLAGS += $(shell sdl2-config --cflags)
+# OpenGL is deprecated on macOS (but fully functional) — silence the warnings
+# so our -Werror build of main.cpp stays clean.
+CXXFLAGS += -DGL_SILENCE_DEPRECATION
 CXXFLAGS += -MMD -MP   # header dependency tracking
 
 # Comprehensive but non-opinionated warning set for our own code (src/, tests/),
@@ -32,20 +37,22 @@ WARNINGS += -Wcast-align -Wnull-dereference -Wimplicit-fallthrough
 WARNINGS += -Wformat=2 
 WARNINGS += -Wno-error=double-promotion
 
-LIBS  = -framework Metal -framework MetalKit -framework Cocoa -framework IOKit -framework CoreVideo -framework QuartzCore
+LIBS  = -framework OpenGL
 LIBS += $(shell sdl2-config --libs)
 
 # Simulation layer: pure logic, no SDL/imgui/Metal — the headless tests link
 # against exactly these objects. Keep presentation code out of this list.
 SIM_SOURCES  = src/road.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
-APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/main.mm
+# main.cpp is shared by all platforms; platform_macos.mm holds the macOS-only
+# startup tweaks (see src/platform_macos.h).
+APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/main.cpp src/platform_macos.mm
 # One headless test binary per tests/test_*.cpp file (see the test rules below).
 TEST_SOURCES := $(wildcard tests/*.cpp)
 TEST_EXES    := $(patsubst tests/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))
 
 IMGUI_SOURCES  = $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_demo.cpp $(IMGUI_DIR)/imgui_draw.cpp
 IMGUI_SOURCES += $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp
-IMGUI_SOURCES += $(IMGUI_DIR)/backends/imgui_impl_sdl2.cpp $(IMGUI_DIR)/backends/imgui_impl_metal.mm
+IMGUI_SOURCES += $(IMGUI_DIR)/backends/imgui_impl_sdl2.cpp $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp
 
 VENDOR_SOURCES = $(IMGUI_SOURCES)
 
@@ -54,9 +61,8 @@ APP_CPP_OBJS    := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(filter %.cpp,$(APP_SOURCE
 APP_MM_OBJS     := $(patsubst %.mm,$(BUILD_DIR)/%.o,$(filter %.mm,$(APP_SOURCES)))
 TEST_OBJS       := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(TEST_SOURCES))
 VENDOR_CPP_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(filter %.cpp,$(VENDOR_SOURCES)))
-VENDOR_MM_OBJS  := $(patsubst %.mm,$(BUILD_DIR)/%.o,$(filter %.mm,$(VENDOR_SOURCES)))
 # OBJS links into $(EXE); test objects stay out (they contain their own main).
-OBJS := $(APP_CPP_OBJS) $(APP_MM_OBJS) $(VENDOR_CPP_OBJS) $(VENDOR_MM_OBJS)
+OBJS := $(APP_CPP_OBJS) $(APP_MM_OBJS) $(VENDOR_CPP_OBJS)
 SIM_OBJS  := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SIM_SOURCES))
 DEPS := $(OBJS:.o=.d) $(TEST_OBJS:.o=.d)
 # Objects built with the full warning set (everything we wrote, tests included).
@@ -76,7 +82,7 @@ $(OUR_CPP_OBJS): $(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(WARNINGS) -c -o $@ $<
 
-# Objective-C++ files (main.mm) need the ObjC++ flags.
+# Objective-C++ files (platform_macos.mm) need the ObjC++ flags.
 $(OUR_MM_OBJS): $(BUILD_DIR)/%.o: %.mm
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(WARNINGS) -ObjC++ -fobjc-weak -fobjc-arc -c -o $@ $<
@@ -85,10 +91,6 @@ $(OUR_MM_OBJS): $(BUILD_DIR)/%.o: %.mm
 $(VENDOR_CPP_OBJS): $(BUILD_DIR)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-$(VENDOR_MM_OBJS): $(BUILD_DIR)/%.o: %.mm
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -ObjC++ -fobjc-weak -fobjc-arc -c -o $@ $<
 
 # Headless tests (no window, no SDL): make test builds and runs one binary
 # per tests/test_*.cpp, each linked against exactly the simulation objects.
