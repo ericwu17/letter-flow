@@ -57,8 +57,10 @@ static void step_world(World& world, float delta_time, float& tick_accumulator)
     }
 }
 
-int main(int, char**)
+int main(int argc, char** argv)
 {
+    std::vector<std::string> arguments(argv + 1, argv + argc);
+
     // Setup SDL
 #ifdef _WIN32
     ::SetProcessDPIAware();
@@ -153,9 +155,20 @@ int main(int, char**)
     // and the frame loop below steps it forward at a fixed tick rate.
     // Startup continues the previous session if a save exists; the autosave
     // after the main loop writes it back on quit.
+    // `letter-flow new` deletes the existing save and starts a fresh game.
+    
+    const bool start_new = arguments.size() >= 1 && arguments[0] == "new";
+    if (start_new) {
+        if (std::remove(save_path.c_str()) == 0)
+            printf("Deleted save file %s\n", save_path.c_str());
+        else
+            printf("No save file to delete at %s\n", save_path.c_str());
+    }
     World world = create_default_world();
-    if (auto saved = World::load_from_file(save_path))
-    {
+    if (start_new) {
+        printf("Starting a new game\n");
+    }
+    else if (auto saved = World::load_from_file(save_path)) {
         world = std::move(*saved);
         printf("Loaded saved game from %s\n", save_path.c_str());
     }
