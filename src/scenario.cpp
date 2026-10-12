@@ -6,6 +6,11 @@
 #include "game_types.h"
 
 #include <cstddef>
+#include <cstdint>
+
+// Spreads the office coordinates below apart; kWorldWidth/kWorldHeight in
+// game_types.h are sized to match.
+constexpr std::int64_t kMapScale = 2;
 
 World create_default_world() {
     World world;
@@ -72,7 +77,8 @@ World create_default_world() {
         {"Easton",        "PA/LehighValley/Easton",       {266, 219}, 1},
     };
     for (const OfficeDef& def : defs)
-        world.add_office(def.name, def.postal_code, def.pos,
+        world.add_office(def.name, def.postal_code,
+                         {def.pos.x * kMapScale, def.pos.y * kMapScale},
                          class_letters_per_day[def.office_class],
                          class_max_outbound[def.office_class],
                          class_build_cost[def.office_class]);

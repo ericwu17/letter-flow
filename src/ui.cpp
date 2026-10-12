@@ -552,7 +552,8 @@ void DrawWorld(World& world) {
 
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const ViewTransform view = ComputeViewTransform();
-    const float office_radius = 14.0f * view.scale;
+    // Fixed on-screen size: offices do not grow with zoom.
+    const float office_radius = 14.0f;
     const std::vector<PostOffice>& offices = world.get_post_offices();
 
     ImGuiIO& io = ImGui::GetIO();
@@ -569,12 +570,12 @@ void DrawWorld(World& world) {
         for (std::size_t i = 1; i < road.vertices.size(); ++i) {
             const ImVec2 a = WorldToScreen(view, road.vertices[i - 1]);
             const ImVec2 b = WorldToScreen(view, road.vertices[i]);
-            draw->AddLine(a, b, color, 2.5f * view.scale);
+            draw->AddLine(a, b, color, 2.5f);
         }
         // Small circles at intermediate vertices.
         for (std::size_t i = 1; i + 1 < road.vertices.size(); ++i) {
             const ImVec2 v = WorldToScreen(view, road.vertices[i]);
-            draw->AddCircleFilled(v, 3.0f * view.scale, color);
+            draw->AddCircleFilled(v, 3.0f, color);
         }
     }
 
@@ -613,22 +614,22 @@ void DrawWorld(World& world) {
         for (std::size_t i = 1; i < g_road_builder.vertices.size(); ++i) {
             const ImVec2 a = WorldToScreen(view, g_road_builder.vertices[i - 1]);
             const ImVec2 b = WorldToScreen(view, g_road_builder.vertices[i]);
-            draw->AddLine(a, b, road_color, 2.5f * view.scale);
-            draw->AddCircleFilled(b, 3.0f * view.scale, kColorRoadVertex);
+            draw->AddLine(a, b, road_color, 2.5f);
+            draw->AddCircleFilled(b, 3.0f, kColorRoadVertex);
         }
         Position last_vertex = g_road_builder.vertices.back();
         if (g_road_builder.middle.has_value()) {
             const ImVec2 a = WorldToScreen(view, last_vertex);
             const ImVec2 b = WorldToScreen(view, g_road_builder.middle.value());
-            draw->AddLine(a, b, road_color, 2.5f * view.scale);
-            draw->AddCircleFilled(b, 3.0f * view.scale, kColorRoadVertex);
+            draw->AddLine(a, b, road_color, 2.5f);
+            draw->AddCircleFilled(b, 3.0f, kColorRoadVertex);
             last_vertex = g_road_builder.middle.value();
         }
         if (g_road_builder.head.has_value()) {
             const ImVec2 a = WorldToScreen(view, last_vertex);
             const ImVec2 b = WorldToScreen(view, g_road_builder.head.value());
-            draw->AddLine(a, b, road_color, 2.5f * view.scale);
-            draw->AddCircleFilled(b, 3.0f * view.scale, kColorRoadVertex);
+            draw->AddLine(a, b, road_color, 2.5f);
+            draw->AddCircleFilled(b, 3.0f, kColorRoadVertex);
             last_vertex = g_road_builder.head.value();
         }
 
@@ -699,7 +700,7 @@ void DrawWorld(World& world) {
     // office position). At most one thing is hovered; a click acts on exactly
     // that (see the click handling below), and the hand cursor says so. Hit
     // areas have pixel floors so everything stays clickable when zoomed out.
-    const float truck_half = 5.5f * view.scale;
+    const float truck_half = 5.5f;
     const float office_hit_radius = office_radius + 6.0f;
     std::shared_ptr<Truck> hovered_truck;
     std::optional<PostOfficeId> hovered_office;
@@ -710,7 +711,7 @@ void DrawWorld(World& world) {
             hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
         if (hovered_truck == nullptr && !hovered_office.has_value())
             hovered_road = HitTestRoad(world.get_roads(), view, io.MousePos,
-                                       std::max(8.0f, 2.5f * view.scale));
+                                       std::max(8.0f, 2.5f));
     } else if (mouse_on_map && g_road_build_state == RoadBuildState::SelectSource) {
         // Picking a road's source office: only built offices are clickable.
         hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);

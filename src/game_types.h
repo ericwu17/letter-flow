@@ -78,8 +78,8 @@ constexpr int schedule_cost(Tick period) {
 
 // The game plays out in a virtual coordinate space; the UI scales it to fit
 // whatever window size the player has.
-constexpr float kWorldWidth  = 1000.0f;
-constexpr float kWorldHeight = 650.0f;
+constexpr float kWorldWidth  = 2000.0f;
+constexpr float kWorldHeight = 1300.0f;
 constexpr float kTruckSpeed  = 2.0f;  // world units per tick
 
 // Largest |x| or |y| a road vertex may have. Keeps the exact integer geometry
