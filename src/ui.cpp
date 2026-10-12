@@ -893,7 +893,7 @@ void DrawInspector(World& world) {
             ImGui::PushID(static_cast<int>(i));
             // The row itself is the drag handle; dropping it on another row
             // reorders the schedule to that position.
-            ImGui::Selectable(label);
+            ImGui::Selectable(label, false, ImGuiSelectableFlags_AllowOverlap);  // ImGuiSelectableFlags_AllowOverlap is needed so that the Remove button can receive clicks.
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("SCHEDULE_REORDER", &i, sizeof(i));
                 ImGui::TextUnformatted(label);  // drag preview

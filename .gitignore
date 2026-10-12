@@ -16,3 +16,4 @@ imgui.ini
 
 # machine-specific IDE index (regenerate if Makefile flags change)
 compile_commands.json
+.vscode
