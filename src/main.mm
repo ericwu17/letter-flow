@@ -69,6 +69,9 @@ int main(int, char**)
         return 1;
     }
 
+    // Disable the press and hold popup on apple (that shows the different accent characters for the held down key)
+    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"ApplePressAndHoldEnabled"];
+
     // Create Metal device _before_ creating the view/layer
     id<MTLDevice> metalDevice = MTLCreateSystemDefaultDevice();
     if (!metalDevice)
