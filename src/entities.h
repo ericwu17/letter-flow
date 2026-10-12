@@ -20,8 +20,9 @@ inline constexpr PostOfficeId kNoPostOffice = std::numeric_limits<PostOfficeId>:
 // test (tests/test_serialization.cpp): its fixture gives every serialized
 // field a non-default value, so a field forgotten in serialization.cpp comes
 // back from a save as its default and the test fails loudly instead of the
-// data being quietly lost. Truck and World default theirs the same way, so
-// adding a field only means extending serialization.cpp and the fixture.
+// data being quietly lost. Truck defaults its own the same way. World's is
+// hand-written (it owns trucks through pointers and must compare the trucks,
+// not the pointers), so a new World field must also be added there.
 struct Letter {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;

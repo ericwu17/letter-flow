@@ -59,6 +59,9 @@ public:
     bool has_arrived(Tick now) const;
     PostOfficeId get_src() const { return state.src; }
     PostOfficeId get_dst() const { return state.dst; }
+    Tick get_departure_tick() const { return state.departure_tick; }
+    // First tick at which has_arrived() is true.
+    Tick get_arrival_tick() const;
     void push_back_letter(Letter);
     std::size_t get_num_letters() const;
     const std::vector<Letter>& get_letters() const;

@@ -6,9 +6,10 @@
 // deliberately holds a NON-DEFAULT value in EVERY serialized field, so a
 // field forgotten in serialization.cpp comes back from a save as its default
 // and the equality assert fails loudly instead of the data being quietly
-// lost. Every operator== (World's and Truck's included) is defaulted and
-// picks up new fields automatically; when adding any new state, make the
-// fixture give the new field a distinct value (see the note in entities.h).
+// lost. Every entity's operator== (Truck's included) is defaulted and picks
+// up new fields automatically; World's is hand-written (world.cpp) and must
+// be extended by hand. When adding any new state, make the fixture give the
+// new field a distinct value (see the note in entities.h).
 //
 // Test artifacts are written under build/test-saves/ (gitignored); the test
 // must run with the repo root as working directory (`make test` does).

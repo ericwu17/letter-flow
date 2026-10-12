@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -21,6 +22,22 @@ Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
 }
 
 }  // namespace
+
+bool World::operator==(const World& other) const {
+    return post_offices == other.post_offices
+        && std::equal(trucks.begin(), trucks.end(), other.trucks.begin(), other.trucks.end(),
+                      [](const std::shared_ptr<Truck>& a, const std::shared_ptr<Truck>& b) {
+                          return *a == *b;  // the trucks themselves, not their addresses
+                      })
+        && roads == other.roads
+        && current_tick == other.current_tick
+        && paused == other.paused
+        && speed_multiplier == other.speed_multiplier
+        && money == other.money
+        && letters_delivered_on_time == other.letters_delivered_on_time
+        && letters_delivered_late == other.letters_delivered_late
+        && rng == other.rng;
+}
 
 void World::advance_tick() {
     current_tick += 1;
@@ -51,8 +68,8 @@ void World::advance_tick() {
 
     // 3. Arrivals: deliver cargo and retire the truck (swap-and-pop removal).
     for (std::size_t i = 0; i < trucks.size();) {
-        if (trucks[i].has_arrived(current_tick)) {
-            deliver(trucks[i]);
+        if (trucks[i]->has_arrived(current_tick)) {
+            deliver(*trucks[i]);
             trucks[i] = std::move(trucks.back());
             trucks.pop_back();
         } else {
@@ -105,7 +122,7 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     // the truck: the exact destination, every letter addressed to a postal
     // code prefix, or the whole buffer. This is the extension point for even
     // fancier RoutingRules (capacity limits, priority by deadline, ...).
-    Truck truck(
+    std::shared_ptr<Truck> truck = std::make_shared<Truck>(
         src_id,
         schedule.dst,
         get_road_vertices_from_a_to_b(src_id, schedule.dst),
@@ -118,7 +135,7 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     for (std::size_t i = 0; i < outbound.size(); ++i) {
         const PostOffice& letter_dst = post_offices[outbound[i].dst];
         if (schedule.rule.matches(outbound[i].dst, letter_dst.postal_code, schedule.dst))
-            truck.push_back_letter(std::move(outbound[i]));
+            truck->push_back_letter(std::move(outbound[i]));
         else
             outbound[keep++] = std::move(outbound[i]);
     }

@@ -14,6 +14,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 
 namespace {
@@ -146,7 +147,7 @@ void departures_follow_the_offset_grid() {
     assert(w.get_trucks().empty());
     w.advance_tick();  // tick 1000
     assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0].get_dst() == 1);
+    assert(w.get_trucks()[0]->get_dst() == 1);
 
     World w2 = make_line_world(2, 5);
     while (w2.get_tick() < 500)
@@ -177,10 +178,10 @@ void first_matching_schedule_wins_contested_letters() {
     assert(w.add_schedule(0, 2, huge, 1, all));
     w.advance_tick();  // tick 1: both come due
     assert(w.get_trucks().size() == 2);
-    assert(w.get_trucks()[0].get_dst() == 1);
-    assert(w.get_trucks()[0].get_num_letters() > 0);   // the winner is loaded
-    assert(w.get_trucks()[1].get_dst() == 2);
-    assert(w.get_trucks()[1].get_num_letters() == 0);  // the loser departs empty
+    assert(w.get_trucks()[0]->get_dst() == 1);
+    assert(w.get_trucks()[0]->get_num_letters() > 0);   // the winner is loaded
+    assert(w.get_trucks()[1]->get_dst() == 2);
+    assert(w.get_trucks()[1]->get_num_letters() == 0);  // the loser departs empty
     assert(w.get_post_offices()[0].outbound_letters.empty());
 
     World w2 = make_line_world(3, 40);
@@ -190,10 +191,10 @@ void first_matching_schedule_wins_contested_letters() {
     w2.move_schedule(0, 0, 1);  // drag the route-to-1 below the route-to-2
     w2.advance_tick();
     assert(w2.get_trucks().size() == 2);
-    assert(w2.get_trucks()[0].get_dst() == 2);
-    assert(w2.get_trucks()[0].get_num_letters() > 0);
-    assert(w2.get_trucks()[1].get_dst() == 1);
-    assert(w2.get_trucks()[1].get_num_letters() == 0);
+    assert(w2.get_trucks()[0]->get_dst() == 2);
+    assert(w2.get_trucks()[0]->get_num_letters() > 0);
+    assert(w2.get_trucks()[1]->get_dst() == 1);
+    assert(w2.get_trucks()[1]->get_num_letters() == 0);
 }
 
 // Trucks depart on schedule even with an empty buffer — they just carry
@@ -203,7 +204,7 @@ void empty_buffer_still_spawns_a_truck() {
     assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, ""}));
     w.advance_tick();  // tick 1: first departure
     assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0].get_num_letters() == 0);  // departs empty
+    assert(w.get_trucks()[0]->get_num_letters() == 0);  // departs empty
     for (Tick t = 1; t < 2000; ++t)  // several departures come and go
         w.advance_tick();
     assert(w.get_trucks().empty());  // every empty truck arrived and retired
@@ -220,7 +221,7 @@ void postal_code_edits_take_effect_at_departure() {
         w.advance_tick();
     // No code starts with "ZZZ": the truck still departs, but empty.
     assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0].get_num_letters() == 0);
+    assert(w.get_trucks()[0]->get_num_letters() == 0);
 
     w.set_postal_code(1, "ZZZ/rebranded");
     // Same prefix idea, different string (an identical (dst, rule) pair would
@@ -231,12 +232,45 @@ void postal_code_edits_take_effect_at_departure() {
     while (w.get_tick() < 55)
         w.advance_tick();
     assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0].get_num_letters() > 0);
+    assert(w.get_trucks()[0]->get_num_letters() > 0);
     // Only office-1 mail (now "ZZZ/...") boarded; office-2 mail waited.
-    for (const Letter& letter : w.get_trucks()[0].get_letters())
+    for (const Letter& letter : w.get_trucks()[0]->get_letters())
         assert(letter.dst == 1);
     for (const Letter& letter : w.get_post_offices()[0].outbound_letters)
         assert(letter.dst == 2);
+}
+
+// The UI observes its selected truck through a weak_ptr, with the World as
+// the sole owner: the observer stays valid while the truck is in flight and
+// expires exactly when the World retires the truck on arrival.
+// get_arrival_tick() is exactly the tick has_arrived() first turns true.
+void observed_truck_expires_on_arrival() {
+    World w = make_line_world(2, 10);  // 10 seeded letters, all for office 1
+    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::ExactDestination, ""}));
+    w.advance_tick();  // tick 1: the truck departs with every seeded letter
+    assert(w.get_trucks().size() == 1);
+    const std::weak_ptr<const Truck> observed = w.get_trucks()[0];
+
+    std::size_t cargo = 0;
+    Tick arrival = 0;
+    {
+        const std::shared_ptr<const Truck> truck = observed.lock();
+        assert(truck != nullptr);
+        cargo = truck->get_num_letters();
+        assert(cargo >= 10);
+        arrival = truck->get_arrival_tick();
+        assert(arrival == 1 + 50);  // one 100-unit hop at kTruckSpeed
+        assert(!truck->has_arrived(arrival - 1));
+        assert(truck->has_arrived(arrival));
+    }  // drop the temporary owner: the World is the sole owner again
+
+    while (w.get_tick() < arrival - 1)
+        w.advance_tick();
+    assert(!observed.expired());  // still in flight one tick before arrival
+    w.advance_tick();  // the arrival tick: delivered and retired
+    assert(w.get_trucks().empty());
+    assert(observed.expired());
+    assert(w.get_letters_delivered_on_time() + w.get_letters_delivered_late() == cargo);
 }
 
 // remove_road: no refund, lookups fail in both argument orders, invalid calls
@@ -360,6 +394,8 @@ int main() {
     printf("PASS multi_hop_forwarding_delivers_every_letter\n");
     road_removal();
     printf("PASS road_removal\n");
+    observed_truck_expires_on_arrival();
+    printf("PASS observed_truck_expires_on_arrival\n");
 
     printf("all simulation tests passed\n");
     return 0;

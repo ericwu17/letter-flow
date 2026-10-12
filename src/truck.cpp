@@ -43,6 +43,22 @@ bool Truck::has_arrived(Tick now) const {
     return distance_travelled(now) >= route_length();
 }
 
+Tick Truck::get_arrival_tick() const {
+    // Smallest elapsed tick count with elapsed * speed >= route_length — the
+    // exact has_arrived() threshold. ceil() gives the estimate; the loops
+    // correct for floating-point rounding in either direction.
+    const double length = route_length();
+    const double speed = static_cast<double>(state.speed);
+    if (speed <= 0.0)
+        return state.departure_tick;
+    Tick travel = static_cast<Tick>(std::ceil(length / speed));
+    while (travel > 0 && static_cast<double>(travel - 1) * speed >= length)
+        --travel;
+    while (static_cast<double>(travel) * speed < length)
+        ++travel;
+    return state.departure_tick + travel;
+}
+
 void Truck::push_back_letter(Letter letter) {
     state.carried_letters.push_back(std::move(letter));
 }

@@ -8,6 +8,7 @@
 #include "truck.h"
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <random>
 #include <string>
@@ -16,7 +17,10 @@
 class World {
 private:
     std::vector<PostOffice> post_offices;  // stable storage; PostOfficeId indexes into this
-    std::vector<Truck> trucks;
+    // Trucks live on the heap, so a truck's address never changes while this
+    // vector grows or swap-and-pops, and are shared, so the UI can keep its
+    // selected truck alive (and readable) after it is retired on arrival.
+    std::vector<std::shared_ptr<Truck>> trucks;
     std::vector<Road> roads;               // the road network
     Tick current_tick = 0;
     bool paused = false;
@@ -123,9 +127,11 @@ public:
     static std::optional<World> load_from_file(const std::string& path);
 
     // Full simulation-state equality, RNG included (standard engines are
-    // equality-comparable). Defaulted like every entity's, so new fields are
-    // compared automatically (see the note in entities.h).
-    bool operator==(const World&) const = default;
+    // equality-comparable). Hand-written, unlike every entity's: a defaulted
+    // one would compare the truck pointers rather than the trucks. When adding
+    // a World field, extend this operator (world.cpp) as well as
+    // serialization.cpp and the test fixture (see the note in entities.h).
+    bool operator==(const World& other) const;
 
     // Read-only access for the presentation layer. Named with the same get_*
     // convention as Truck's accessors.
@@ -136,5 +142,7 @@ public:
     std::size_t get_letters_delivered_on_time() const { return letters_delivered_on_time; }
     std::size_t get_letters_delivered_late() const { return letters_delivered_late; }
     const std::vector<PostOffice>& get_post_offices() const { return post_offices; }
-    const std::vector<Truck>& get_trucks() const { return trucks; }
+    // The vector is const but the handles point at mutable Trucks; the
+    // presentation layer only ever holds them as pointers-to-const.
+    const std::vector<std::shared_ptr<Truck>>& get_trucks() const { return trucks; }
 };

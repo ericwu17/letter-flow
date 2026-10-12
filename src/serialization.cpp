@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 #include <iostream>
+#include <memory>
 
 namespace {
 
@@ -179,7 +180,7 @@ namespace {
 // duplicates, at least two in-range vertices anchored at the endpoint
 // offices).
 bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
-                           const std::vector<Truck>& trucks,
+                           const std::vector<std::shared_ptr<Truck>>& trucks,
                            const std::vector<Road>& roads) {
     const PostOfficeId num_offices = post_offices.size();
     for (PostOfficeId office_id = 0; office_id < num_offices; ++office_id) {
@@ -197,10 +198,10 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                 return false;
         }
     }
-    for (const Truck& truck : trucks) {
-        if (truck.get_src() >= num_offices || truck.get_dst() >= num_offices)
+    for (const std::shared_ptr<Truck>& truck : trucks) {
+        if (truck->get_src() >= num_offices || truck->get_dst() >= num_offices)
             return false;
-        if (truck.get_state().distances.size() != truck.get_state().vertices.size() - 1) 
+        if (truck->get_state().distances.size() != truck->get_state().vertices.size() - 1) 
             return false;
     }
     for (std::size_t i = 0; i < roads.size(); ++i) {
@@ -238,8 +239,8 @@ bool World::save_to_file(const std::string& path) const {
     j["roads"] = roads;
 
     nlohmann::json trucks_json = nlohmann::json::array();
-    for (const Truck& truck : trucks)
-        trucks_json.push_back(truck.get_state());
+    for (const std::shared_ptr<Truck>& truck : trucks)
+        trucks_json.push_back(truck->get_state());
     j["trucks"] = std::move(trucks_json);
 
     // The RNG's complete internal state, dumped with the standard-library
@@ -308,7 +309,7 @@ std::optional<World> World::load_from_file(const std::string& path) {
             return std::nullopt;
         }
         for (const nlohmann::json& truck_json : trucks_json) {
-            world.trucks.push_back(Truck(truck_json.get<TruckState>()));
+            world.trucks.push_back(std::make_shared<Truck>(truck_json.get<TruckState>()));
         }
 
         // Restore the RNG's full internal state (see save_to_file). operator>>

@@ -12,8 +12,10 @@
 #include "imgui_internal.h"  // DockBuilder* (imgui 'docking' branch)
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -31,8 +33,15 @@ struct CameraState {
     ImVec2 pan = {0.0f, 0.0f};
 };
 
-// Currently selected office (clicked on the map or picked in the inspector).
-PostOfficeId g_selected_office = 0;
+// Current selection (clicked on the map or picked in the inspector). A
+// selected truck is only observed: the World stays its sole owner, and the
+// weak_ptr expires the moment the World retires the truck on arrival. While
+// no live truck is selected the inspector shows g_selected_office, which
+// doubles as the backup: SelectTruck points it at the truck's destination,
+// so an arrival falls through to that office with no extra bookkeeping.
+// g_selected_office is kNoPostOffice until the first EnsureOfficeSelected.
+std::weak_ptr<const Truck> g_selected_truck;
+PostOfficeId g_selected_office = kNoPostOffice;
 CameraState g_camera;
 constexpr float kZoomStep = 1.2f;
 constexpr float kPanStep = 5.0f;
@@ -197,6 +206,58 @@ std::optional<std::size_t> HitTestRoad(const std::vector<Road>& roads,
     return best;
 }
 
+// The first office within `hit_radius` pixels of `screen_pos`, or nullopt.
+std::optional<PostOfficeId> HitTestOffice(const std::vector<PostOffice>& offices,
+                                          const ViewTransform& view, ImVec2 screen_pos,
+                                          float hit_radius) {
+    for (PostOfficeId id = 0; id < offices.size(); ++id) {
+        const ImVec2 c = WorldToScreen(view, offices[id].pos);
+        const float dx = screen_pos.x - c.x;
+        const float dy = screen_pos.y - c.y;
+        if (dx * dx + dy * dy <= hit_radius * hit_radius)
+            return id;
+    }
+    return std::nullopt;
+}
+
+// The truck whose drawn square (half-size `half_px`, screen space) contains
+// `screen_pos`, or null. Trucks draw in vector order, so the last hit is the
+// one on top.
+std::shared_ptr<Truck> HitTestTruck(const World& world, const ViewTransform& view,
+                                    ImVec2 screen_pos, float half_px) {
+    std::shared_ptr<Truck> hit;
+    for (const std::shared_ptr<Truck>& truck : world.get_trucks()) {
+        const ImVec2 c = WorldToScreen(view, truck->get_position(world.get_tick()));
+        if (std::abs(screen_pos.x - c.x) <= half_px && std::abs(screen_pos.y - c.y) <= half_px)
+            hit = truck;
+    }
+    return hit;
+}
+
+// ---------------------------------------------------------------------------
+// Selection helpers
+// ---------------------------------------------------------------------------
+
+// Selects an office (and drops any truck selection).
+void SelectOffice(PostOfficeId id) {
+    g_selected_truck.reset();
+    g_selected_office = id;
+}
+
+// Selects a truck, with its destination office as the backup shown once the
+// truck arrives.
+void SelectTruck(const std::shared_ptr<const Truck>& truck) {
+    SelectOffice(truck->get_dst());
+    g_selected_truck = truck;
+}
+
+// Defaults the selection to the first office until the player picks one
+// (and guards against an id from a different world).
+void EnsureOfficeSelected(const World& world) {
+    if (g_selected_office >= world.get_post_offices().size())
+        g_selected_office = 0;
+}
+
 void DrawCenteredText(ImDrawList* draw, ImVec2 center, const char* text) {
     const ImVec2 size = ImGui::CalcTextSize(text);
     const ImVec2 pos(center.x - size.x * 0.5f, center.y - size.y * 0.5f);
@@ -262,7 +323,7 @@ std::vector<std::string> CollectPostalPrefixes(const std::vector<PostOffice>& of
 // ---------------------------------------------------------------------------
 // Transport bar layout: play/pause + fast-forward buttons and the day/time
 // readout, anchored top-center of the map area — the dockspace's central
-// node, i.e. the display minus the docked "Post office" panel. Every rect is
+// node, i.e. the display minus the docked inspector panel. Every rect is
 // recomputed from that area and font metrics each frame, so the bar stays
 // centered and correctly sized across window resizes, dock-layout changes and
 // DPI scaling; on very narrow areas the day progress bar shrinks first.
@@ -296,7 +357,7 @@ TransportLayout ComputeTransportLayout(const World& world) {
     TransportLayout l;
 
     // Anchor the bar to the dockspace's central node — the visible map area,
-    // which excludes the docked "Post office" panel
+    // which excludes the docked inspector panel
     ImVec2 area_min = {0.0f, 0.0f};
     ImVec2 area_size = io.DisplaySize;
     if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(MainDockSpaceId())) {
@@ -371,8 +432,8 @@ TransportLayout ComputeTransportLayout(const World& world) {
 // The central node is passthrough (ImGuiDockNodeFlags_PassthruCentralNode), so
 // the map — drawn into the background draw list — stays visible and clickable
 // through it. On first run (when imgui.ini holds no docking data for the
-// dockspace yet) the default layout is built programmatically: "Post office"
-// is docked into a left split. From then on the layout lives in imgui.ini
+// dockspace yet) the default layout is built programmatically: the inspector
+// ("###Inspector") is docked into a left split. From then on the layout lives in imgui.ini
 // and the user can rearrange/undock windows freely without the code fighting
 // it every frame.
 // ---------------------------------------------------------------------------
@@ -395,7 +456,7 @@ void DrawDockspace() {
 
         // Queued by name: applied when the window is submitted this frame and
         // persisted into imgui.ini, so it only happens on the first run.
-        ImGui::DockBuilderDockWindow("Post office", dock_id);
+        ImGui::DockBuilderDockWindow("###Inspector", dock_id);
     }
 
     ImGui::DockSpaceOverViewport(dockspace_id, nullptr, ImGuiDockNodeFlags_PassthruCentralNode);
@@ -472,6 +533,10 @@ static void DrawRoadMenu(World& world) {
 
 void DrawWorld(World& world) {
     UpdateCamera();
+    EnsureOfficeSelected(world);
+    // Null once the selected truck has arrived (or if none is selected); the
+    // backup office then wears the selection ring instead.
+    const std::shared_ptr<const Truck> selected_truck = g_selected_truck.lock();
 
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const ViewTransform view = ComputeViewTransform();
@@ -578,7 +643,7 @@ void DrawWorld(World& world) {
     for (PostOfficeId id = 0; id < offices.size(); ++id) {
         const PostOffice& office = offices[id];
         const ImVec2 c = WorldToScreen(view, office.pos);
-        if (id == g_selected_office)
+        if (selected_truck == nullptr && id == g_selected_office)
             draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 2.5f);
         draw->AddCircleFilled(c, office_radius, kColorAccent);
         draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 1.5f);
@@ -607,19 +672,59 @@ void DrawWorld(World& world) {
         DrawCenteredText(draw, {c.x, c.y + office_radius + 12.0f}, buf);
     }
 
+    // The mouse is "on the map" unless an ImGui window or the transport bar
+    // is under it.
+    const TransportLayout bar = ComputeTransportLayout(world);
+    const bool mouse_on_map = !io.WantCaptureMouse
+                           && !PointInRect(io.MousePos, bar.bar_min, bar.bar_max);
+    const bool clicked_map = io.MouseClicked[0] && mouse_on_map;
+
+    // Hover (outside road-building), topmost first: trucks draw over offices,
+    // and offices win over roads (they draw on top, and every road ends at an
+    // office position). At most one thing is hovered; a click acts on exactly
+    // that (see the click handling below), and the hand cursor says so. Hit
+    // areas have pixel floors so everything stays clickable when zoomed out.
+    const float truck_half = 5.5f * view.scale;
+    const float office_hit_radius = office_radius + 6.0f;
+    std::shared_ptr<Truck> hovered_truck;
+    std::optional<PostOfficeId> hovered_office;
+    std::optional<std::size_t> hovered_road;
+    if (mouse_on_map && g_road_build_state == RoadBuildState::Idle) {
+        hovered_truck = HitTestTruck(world, view, io.MousePos, std::max(truck_half, 6.0f));
+        if (hovered_truck == nullptr)
+            hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
+        if (hovered_truck == nullptr && !hovered_office.has_value())
+            hovered_road = HitTestRoad(world.get_roads(), view, io.MousePos,
+                                       std::max(8.0f, 2.5f * view.scale));
+    } else if (mouse_on_map && g_road_build_state == RoadBuildState::SelectSource) {
+        // Picking a road's source office: only offices are clickable.
+        hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
+    }
+    if (hovered_truck != nullptr || hovered_office.has_value() || hovered_road.has_value())
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
     // Trucks in transit (position is derived from the tick, so they animate
-    // smoothly as the simulation advances and freeze when it is paused).
-    for (const Truck& truck : world.get_trucks()) {
-        const ImVec2 c = WorldToScreen(view, truck.get_position(world.get_tick()));
-        const float r = 5.5f * view.scale;
+    // smoothly as the simulation advances and freeze when it is paused). The
+    // hovered truck gets a highlighted outline, the selected one a ring.
+    for (const std::shared_ptr<Truck>& truck : world.get_trucks()) {
+        const ImVec2 c = WorldToScreen(view, truck->get_position(world.get_tick()));
+        const float r = truck_half;
+        const bool hovered = hovered_truck != nullptr && hovered_truck == truck;
         draw->AddRectFilled({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruck);
-        draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruckOutline);
+        draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r},
+                      hovered ? kColorSelection : kColorTruckOutline, 0.0f, 0, hovered ? 2.0f : 1.0f);
+        if (truck == selected_truck) {
+            const float ring = r + 4.0f;
+            draw->AddRect({c.x - ring, c.y - ring}, {c.x + ring, c.y + ring}, kColorSelection, 0.0f, 0, 2.5f);
+        }
+    }
+    if (hovered_truck != nullptr) {
+        const Truck& truck = *hovered_truck;
+        ImGui::SetTooltip("%s -> %s  (%zu letters)", offices[truck.get_src()].name.c_str(),
+                          offices[truck.get_dst()].name.c_str(), truck.get_num_letters());
     }
 
     // Click handling: road-building mode overrides normal click-to-select.
-    const TransportLayout bar = ComputeTransportLayout(world);
-    const bool clicked_map = io.MouseClicked[0] && !io.WantCaptureMouse
-                          && !PointInRect(io.MousePos, bar.bar_min, bar.bar_max);
 
     if (g_road_build_state != RoadBuildState::Idle) {
         // Right-click on the map or Esc anywhere cancels road-building.
@@ -632,16 +737,10 @@ void DrawWorld(World& world) {
         } else if (clicked_map) {
             if (g_road_build_state == RoadBuildState::SelectSource) {
                 // Click on a source office to start.
-                for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                    const ImVec2 c = WorldToScreen(view, offices[id].pos);
-                    const float hit_radius = office_radius + 6.0f;
-                    const float dx = io.MousePos.x - c.x;
-                    const float dy = io.MousePos.y - c.y;
-                    if (dx * dx + dy * dy <= hit_radius * hit_radius) {
-                        g_road_builder = RoadBuilder::RoadBuilder_from_source(offices[id].pos, id);
-                        g_road_build_state = RoadBuildState::PlacingVertices;
-                        break;
-                    }
+                if (hovered_office.has_value()) {
+                    const PostOfficeId id = *hovered_office;
+                    g_road_builder = RoadBuilder::RoadBuilder_from_source(offices[id].pos, id);
+                    g_road_build_state = RoadBuildState::PlacingVertices;
                 }
             } 
             else if (g_road_build_state == RoadBuildState::PlacingVertices) {
@@ -664,7 +763,7 @@ void DrawWorld(World& world) {
                         world.add_road(src, dst, g_road_builder.into_road().vertices);
                         g_road_build_state = RoadBuildState::Idle;
                         g_road_builder = RoadBuilder{};
-                        g_selected_office = id;
+                        SelectOffice(id);
                         hit_office = true;
                         break;
                     }
@@ -676,34 +775,20 @@ void DrawWorld(World& world) {
             }
         }
     } else if (clicked_map) {
-        // Normal click-to-select. Offices win over roads: they draw on top,
-        // and every road ends at an office position.
-        bool hit_office = false;
-        for (PostOfficeId id = 0; id < offices.size(); ++id) {
-            const ImVec2 c = WorldToScreen(view, offices[id].pos);
-            const float dx = io.MousePos.x - c.x;
-            const float dy = io.MousePos.y - c.y;
-            const float hit_radius = office_radius + 6.0f;
-            if (dx * dx + dy * dy <= hit_radius * hit_radius) {
-                g_selected_office = id;
-                hit_office = true;
-                break;
-            }
-        }
-        if (!hit_office) {
-            // Click on a road: arm its destroy menu at the click point. The
-            // tolerance follows the road line width, with a pixel floor so
-            // roads stay clickable when zoomed out. While the popup is open
-            // io.WantCaptureMouse is true, so clicked_map is false and this
-            // cannot re-fire until the menu is dismissed.
-            const float tolerance = std::max(8.0f, 2.5f * view.scale);
-            if (const auto hit = HitTestRoad(world.get_roads(), view, io.MousePos, tolerance)) {
-                const Road& road = world.get_roads()[*hit];
-                g_road_menu_road = RoadKey{road.src, road.dst};
-                g_road_menu_pos = io.MousePos;
-                g_road_menu_open_requested = true;
-                g_road_menu_confirm = false;
-            }
+        // Normal click: act on whatever is hovered (see the hover pass above).
+        if (hovered_truck != nullptr) {
+            SelectTruck(hovered_truck);
+        } else if (hovered_office.has_value()) {
+            SelectOffice(*hovered_office);
+        } else if (hovered_road.has_value()) {
+            // Arm the road's destroy menu at the click point. While the popup
+            // is open io.WantCaptureMouse is true, so clicked_map is false and
+            // this cannot re-fire until the menu is dismissed.
+            const Road& road = world.get_roads()[*hovered_road];
+            g_road_menu_road = RoadKey{road.src, road.dst};
+            g_road_menu_pos = io.MousePos;
+            g_road_menu_open_requested = true;
+            g_road_menu_confirm = false;
         }
     }
 
@@ -802,7 +887,7 @@ void DrawHUD(const World& world) {
     ImGui::Text("Trucks en route: %zu", world.get_trucks().size());
     ImGui::Separator();
     ImGui::Checkbox("ImGui demo", &show_imgui_demo);
-    ImGui::TextDisabled("Click an office to inspect it.");
+    ImGui::TextDisabled("Click an office or truck to inspect it.");
     ImGui::End();
 
     // Widget reference window — keep handy while developing.
@@ -811,24 +896,90 @@ void DrawHUD(const World& world) {
 }
 
 // ---------------------------------------------------------------------------
-// Inspector for the selected office
+// Inspector: one docked window showing whichever entity is selected. Its
+// title changes with the selection, but its ID ("###Inspector") stays fixed,
+// so it keeps its dock slot.
 // ---------------------------------------------------------------------------
 
-void DrawInspector(World& world) {
-    const std::vector<PostOffice>& offices = world.get_post_offices();
-    if (offices.empty())
-        return;
-    if (g_selected_office >= offices.size())
-        g_selected_office = 0;
-    const PostOffice& office = offices[g_selected_office];
+// Letters as a To / Deadline / Value / Fine table; overdue deadlines in red.
+static void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
+                            const std::vector<PostOffice>& offices, Tick now) {
+    const ImGuiTableFlags flags =
+        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+    if (ImGui::BeginTable(table_id, 4, flags, ImVec2(0.0f, 200.0f))) {
+        ImGui::TableSetupColumn("To");
+        ImGui::TableSetupColumn("Deadline");
+        ImGui::TableSetupColumn("Value");
+        ImGui::TableSetupColumn("Fine");
+        ImGui::TableHeadersRow();
+        for (const Letter& letter : letters) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(offices[letter.dst].name.c_str());
+            ImGui::TableSetColumnIndex(1);
+            char due[32];
+            FormatDayTime(letter.deadline, due, sizeof(due));
+            if (letter.deadline >= now)
+                ImGui::TextUnformatted(due);
+            else
+                ImGui::TextColored(kColorErrorText, "LATE (was due %s)", due);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%d", letter.value);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%d", letter.fine);
+        }
+        ImGui::EndTable();
+    }
+}
 
-    ImGui::Begin("Post office");
+// A truck in flight: route, timing and cargo. The World still owns the
+// truck, so it outlives a "Go to" click that drops the selection.
+static void DrawTruckPanel(const World& world, const Truck& truck) {
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    const PostOfficeId src = truck.get_src();
+    const PostOfficeId dst = truck.get_dst();
+    ImGui::Text("%s  ->  %s", offices[src].name.c_str(), offices[dst].name.c_str());
+
+    char go_label[160];
+    std::snprintf(go_label, sizeof(go_label), "Go to %s##go_src", offices[src].name.c_str());
+    if (ImGui::SmallButton(go_label))
+        SelectOffice(src);
+    ImGui::SameLine();
+    std::snprintf(go_label, sizeof(go_label), "Go to %s##go_dst", offices[dst].name.c_str());
+    if (ImGui::SmallButton(go_label))
+        SelectOffice(dst);
+
+    const Tick now = world.get_tick();
+    const Tick departure = truck.get_departure_tick();
+    const Tick arrival = truck.get_arrival_tick();
+    char departed[32], eta[32], left[16], overlay[32];
+    FormatDayTime(departure, departed, sizeof(departed));
+    FormatDayTime(arrival, eta, sizeof(eta));
+    FormatDuration(arrival > now ? arrival - now : 0, left, sizeof(left));
+    std::snprintf(overlay, sizeof(overlay), "%s left", left);
+    ImGui::Text("Departed: %s", departed);
+    ImGui::Text("Arrives:  %s", eta);
+    const Tick elapsed = now > departure ? now - departure : 0;
+    const float progress = arrival > departure
+        ? std::clamp(static_cast<float>(elapsed) / static_cast<float>(arrival - departure), 0.0f, 1.0f)
+        : 1.0f;
+    ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0.0f), overlay);
+
+    ImGui::Text("Cargo: %zu letters", truck.get_num_letters());
+    if (ImGui::CollapsingHeader("Cargo", ImGuiTreeNodeFlags_DefaultOpen))
+        DrawLetterTable("truck_cargo", truck.get_letters(), offices, now);
+}
+
+// A post office: postal code, outbound letters and schedule editing.
+static void DrawOfficePanel(World& world, PostOfficeId selected) {
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    const PostOffice& office = offices[selected];
 
     // Office picker (map clicking is the other way to change selection).
     if (ImGui::BeginCombo("Office", office.name.c_str())) {
         for (PostOfficeId id = 0; id < offices.size(); ++id) {
-            if (ImGui::Selectable(offices[id].name.c_str(), id == g_selected_office))
-                g_selected_office = id;
+            if (ImGui::Selectable(offices[id].name.c_str(), id == selected))
+                SelectOffice(id);
         }
         ImGui::EndCombo();
     }
@@ -838,44 +989,18 @@ void DrawInspector(World& world) {
     // commit every keystroke to the World — the map label updates live.
     static char postal_buf[128];
     static PostOfficeId postal_buf_owner = kNoPostOffice;
-    if (postal_buf_owner != g_selected_office) {
+    if (postal_buf_owner != selected) {
         std::snprintf(postal_buf, sizeof(postal_buf), "%s", office.postal_code.c_str());
-        postal_buf_owner = g_selected_office;
+        postal_buf_owner = selected;
     }
     if (ImGui::InputText("Postal code", postal_buf, sizeof(postal_buf)))
-        world.set_postal_code(g_selected_office, postal_buf);
+        world.set_postal_code(selected, postal_buf);
 
     ImGui::Text("Outbound: %zu / %zu   (%zu per day)",
                 office.outbound_letters.size(), office.max_outbound_letters, office.letters_per_day);
 
-    if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen)) {
-        const ImGuiTableFlags flags =
-            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-        if (ImGui::BeginTable("outbound_letters", 4, flags, ImVec2(0.0f, 200.0f))) {
-            ImGui::TableSetupColumn("To");
-            ImGui::TableSetupColumn("Deadline");
-            ImGui::TableSetupColumn("Value");
-            ImGui::TableSetupColumn("Fine");
-            ImGui::TableHeadersRow();
-            for (const Letter& letter : office.outbound_letters) {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextUnformatted(offices[letter.dst].name.c_str());
-                ImGui::TableSetColumnIndex(1);
-                char due[32];
-                FormatDayTime(letter.deadline, due, sizeof(due));
-                if (letter.deadline >= world.get_tick())
-                    ImGui::TextUnformatted(due);
-                else
-                    ImGui::TextColored(kColorErrorText, "LATE (was due %s)", due);
-                ImGui::TableSetColumnIndex(2);
-                ImGui::Text("%d", letter.value);
-                ImGui::TableSetColumnIndex(3);
-                ImGui::Text("%d", letter.fine);
-            }
-            ImGui::EndTable();
-        }
-    }
+    if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
+        DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
 
     if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextDisabled("Departures run top to bottom: on simultaneous departures the");
@@ -920,9 +1045,9 @@ void DrawInspector(World& world) {
             ImGui::PopID();
         }
         if (schedule_to_remove.has_value())
-            world.remove_schedule(g_selected_office, *schedule_to_remove);
+            world.remove_schedule(selected, *schedule_to_remove);
         else if (schedule_to_move.has_value())
-            world.move_schedule(g_selected_office, schedule_to_move->first, schedule_to_move->second);
+            world.move_schedule(selected, schedule_to_move->first, schedule_to_move->second);
 
         ImGui::SeparatorText("Add route");
 
@@ -933,8 +1058,8 @@ void DrawInspector(World& world) {
         static int add_rule_type = 0;  // 0 = exact dst, 1 = postal prefix, 2 = all letters
         static char add_prefix[128] = "";
         static ImGuiTextFilter dst_filter;
-        if (add_owner != g_selected_office) {
-            add_owner = g_selected_office;
+        if (add_owner != selected) {
+            add_owner = selected;
             add_dst = kNoPostOffice;
             add_rule_type = 0;
             add_prefix[0] = '\0';
@@ -943,7 +1068,7 @@ void DrawInspector(World& world) {
 
         // Destination: a dropdown that narrows as you type, matching both
         // office names and postal codes.
-        const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size() && world.has_road(g_selected_office, add_dst);
+        const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size() && world.has_road(selected, add_dst);
         const char* dst_preview = dst_ok ? offices[add_dst].name.c_str() : "Choose destination...";
         if (ImGui::BeginCombo("To", dst_preview)) {
             if (ImGui::IsWindowAppearing()) {
@@ -952,10 +1077,10 @@ void DrawInspector(World& world) {
             }
             dst_filter.Draw("Search name or postal code##add_dst_filter");
             for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                if (id == g_selected_office) {
+                if (id == selected) {
                     continue;
                 }
-                if (!world.has_road(g_selected_office, id)) {
+                if (!world.has_road(selected, id)) {
                     continue;
                 }
                 const PostOffice& other = offices[id];
@@ -1057,12 +1182,18 @@ void DrawInspector(World& world) {
         char add_label[64];
         std::snprintf(add_label, sizeof(add_label), "Add schedule ($%d)", cost);
         if (ImGui::Button(add_label))
-            world.add_schedule(g_selected_office, add_dst, period, start_offset, rule);
+            world.add_schedule(selected, add_dst, period, start_offset, rule);
         ImGui::EndDisabled();
         if (dst_ok && duplicate)
             ImGui::TextColored(kColorErrorText,
                                "An identical schedule already exists.");
     }
+
+}
+
+// Road-building controls, shown under either panel.
+static void DrawRoadBuildSection(const World& world) {
+    const std::vector<PostOffice>& offices = world.get_post_offices();
 
     // ----- Build road -----
     ImGui::SeparatorText("Build road");
@@ -1094,6 +1225,23 @@ void DrawInspector(World& world) {
         }
         ImGui::TextDisabled("Right-click on the map or press Esc to cancel.");
     }
+}
 
+void DrawInspector(World& world) {
+    if (world.get_post_offices().empty())
+        return;
+    EnsureOfficeSelected(world);
+
+    // A live truck selection wins; once it has expired (the truck arrived)
+    // the backup office shows instead. Local copies keep the panel drawing
+    // what it started with even if a click inside it changes the selection.
+    const std::shared_ptr<const Truck> truck = g_selected_truck.lock();
+    const PostOfficeId office = g_selected_office;
+    ImGui::Begin(truck != nullptr ? "Truck###Inspector" : "Post office###Inspector");
+    if (truck != nullptr)
+        DrawTruckPanel(world, *truck);
+    else
+        DrawOfficePanel(world, office);
+    DrawRoadBuildSection(world);
     ImGui::End();
 }
