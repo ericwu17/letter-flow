@@ -1,5 +1,5 @@
 // entities.h — pure simulation layer: passive data entities (letters, truck
-// schedules, post offices). No imgui/SDL/Metal headers (see game_types.h).
+// schedules, post offices). No imgui/SDL/OpenGL headers (see game_types.h).
 #pragma once
 
 #include "game_types.h"
@@ -20,9 +20,8 @@ inline constexpr PostOfficeId kNoPostOffice = std::numeric_limits<PostOfficeId>:
 // test (tests/test_serialization.cpp): its fixture gives every serialized
 // field a non-default value, so a field forgotten in serialization.cpp comes
 // back from a save as its default and the test fails loudly instead of the
-// data being quietly lost. Truck's fields live in a plain-data TruckState
-// with defaulted comparison, so its operator== is defaulted too; only World
-// maintains its operator== by hand — see the notes there.
+// data being quietly lost. Truck and World default theirs the same way, so
+// adding a field only means extending serialization.cpp and the fixture.
 struct Letter {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;

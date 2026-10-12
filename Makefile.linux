@@ -39,7 +39,7 @@ WARNINGS  = -Wall -Wextra -Wpedantic -Werror
 WARNINGS += -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
 WARNINGS += -Wcast-align -Wnull-dereference -Wimplicit-fallthrough
 WARNINGS += -Wformat=2
-WARNINGS += -Wno-error=double-promotion
+WARNINGS += -Wconversion   # implicit narrowing (double->float, int64->int, ...) needs a cast
 
 # -lGL for the direct glViewport/glClear calls in main.cpp, -ldl because the
 # imgui OpenGL3 loader dlopen()s the system GL library at runtime (only needed

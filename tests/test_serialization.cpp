@@ -1,16 +1,14 @@
 // test_serialization.cpp — headless round-trip tests for the JSON save system
 // (World::save_to_file / World::load_from_file). Run with `make test`.
-// Pure simulation layer: no SDL/imgui/Metal — no window is needed.
+// Pure simulation layer: no SDL/imgui/OpenGL — no window is needed.
 //
 // The core test is round_trip_preserves_every_field(): its fixture world
 // deliberately holds a NON-DEFAULT value in EVERY serialized field, so a
 // field forgotten in serialization.cpp comes back from a save as its default
 // and the equality assert fails loudly instead of the data being quietly
-// lost. The entity operator== are defaulted and pick up new struct fields
-// automatically (Truck's included, via its plain-data TruckState); when
-// adding a field to World (hand-maintained operator==) or any new state at
-// all, also extend its operator and make the fixture give the new field a
-// distinct value (see the note in entities.h).
+// lost. Every operator== (World's and Truck's included) is defaulted and
+// picks up new fields automatically; when adding any new state, make the
+// fixture give the new field a distinct value (see the note in entities.h).
 //
 // Test artifacts are written under build/test-saves/ (gitignored); the test
 // must run with the repo root as working directory (`make test` does).
@@ -215,16 +213,38 @@ void unusable_files_load_as_nullopt() {
         write_file(kSaveDir / "bad_ref.json", s);
         assert(!World::load_from_file((kSaveDir / "bad_ref.json").string()));
     }
+}
 
-    // Corrupted RNG state dump.
-    {
-        std::string s = good_json;
-        const auto at = s.find("\"rng\": \"");
-        assert(at != std::string::npos);
-        s[at + 8] = 'x';  // first character of the state dump: no longer a number
-        write_file(kSaveDir / "bad_rng.json", s);
-        assert(!World::load_from_file((kSaveDir / "bad_rng.json").string()));
-    }
+// The save file minus its "rng" line (dump(2) puts each key on its own line).
+std::string without_rng_line(const std::string& json) {
+    const auto start = json.find("\"rng\": \"");
+    assert(start != std::string::npos);
+    const auto end = json.find('\n', start);
+    assert(end != std::string::npos);
+    return json.substr(0, start) + json.substr(end + 1);
+}
+
+// A corrupted RNG dump is not fatal: the game loads with a freshly seeded
+// RNG and everything else intact (only the random sequence changes).
+void corrupt_rng_falls_back_to_fresh_rng() {
+    const World original = build_fixture_world();
+    const fs::path good = kSaveDir / "good_rng.json";
+    assert(original.save_to_file(good.string()));
+    std::string s = slurp(good);
+
+    const auto at = s.find("\"rng\": \"");
+    assert(at != std::string::npos);
+    s[at + 8] = 'x';  // first character of the state dump: no longer a number
+    write_file(kSaveDir / "bad_rng.json", s);
+
+    const auto loaded = World::load_from_file((kSaveDir / "bad_rng.json").string());
+    assert(loaded.has_value());
+    assert(*loaded != original);  // the RNG differs...
+
+    // ...and nothing else does.
+    const fs::path resaved = kSaveDir / "bad_rng_resaved.json";
+    assert(loaded->save_to_file(resaved.string()));
+    assert(without_rng_line(slurp(resaved)) == without_rng_line(slurp(good)));
 }
 
 }  // namespace
@@ -238,6 +258,8 @@ int main() {
     printf("PASS determinism_survives_round_trip\n");
     unusable_files_load_as_nullopt();
     printf("PASS unusable_files_load_as_nullopt\n");
+    corrupt_rng_falls_back_to_fresh_rng();
+    printf("PASS corrupt_rng_falls_back_to_fresh_rng\n");
 
     printf("all serialization tests passed\n");
     return 0;

@@ -1,5 +1,5 @@
 // scenario.h — starter scenarios built entirely on the World public API.
-// Pure simulation layer: no imgui/SDL/Metal headers (see game_types.h).
+// Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
 #pragma once
 
 #include "world.h"

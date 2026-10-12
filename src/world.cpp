@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <sstream>
 #include <string>
 #include <utility>
 
@@ -21,29 +20,7 @@ Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
     return start_offset + ((now - start_offset) / period + 1) * period;
 }
 
-// std::mt19937 has no operator==; its standard-library text dump (the same
-// one save files store) fully captures the engine state, so comparing the
-// dumps compares the generators.
-std::string rng_state_dump(const std::mt19937& rng) {
-    std::ostringstream out;
-    out << rng;
-    return out.str();
-}
-
 }  // namespace
-
-bool World::operator==(const World& other) const {
-    return current_tick == other.current_tick
-        && paused == other.paused
-        && speed_multiplier == other.speed_multiplier
-        && money == other.money
-        && letters_delivered_on_time == other.letters_delivered_on_time
-        && letters_delivered_late == other.letters_delivered_late
-        && post_offices == other.post_offices
-        && trucks == other.trucks
-        && roads == other.roads
-        && rng_state_dump(rng) == rng_state_dump(other.rng);
-}
 
 void World::advance_tick() {
     current_tick += 1;
@@ -90,8 +67,7 @@ void World::maybe_spawn_letter(PostOfficeId office_id) {
     // Exact integer roll: a uniform value in [0, kTicksPerDay) lands below
     // letters_per_day with probability letters_per_day / kTicksPerDay.
     // Over a full day that is kTicksPerDay rolls, so the expected number of
-    // letters is kTicksPerDay * (letters_per_day / kTicksPerDay) = letters_per_day,
-    // matching the old day-boundary batch exactly.
+    // letters is kTicksPerDay * (letters_per_day / kTicksPerDay) = letters_per_day.
     std::uniform_int_distribution<Tick> roll(0, kTicksPerDay - 1);
     if (roll(rng) < office.letters_per_day)
         spawn_letter(office_id);
@@ -303,6 +279,10 @@ bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> v
     if (vertices.size() < 2)
         return false;
 
+    // The geometry checks below are exact only within the coordinate bound.
+    if (!all_vertices_in_range(vertices))
+        return false;
+
     // Normalize so src < dst (roads are undirected).
     if (src > dst) {
         std::swap(src, dst);
@@ -321,7 +301,7 @@ bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> v
         return false;
     }
 
-    // Every segment must be horizontal, vertical, or 45° diagonal.
+    // Every segment must be non-empty and horizontal, vertical, or 45° diagonal.
     if (!all_segments_valid_direction(vertices))
         return false;
 

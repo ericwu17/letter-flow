@@ -42,7 +42,7 @@ WARNINGS  = -Wall -Wextra -Wpedantic -Werror
 WARNINGS += -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
 WARNINGS += -Wcast-align -Wnull-dereference -Wimplicit-fallthrough
 WARNINGS += -Wformat=2
-WARNINGS += -Wno-error=double-promotion
+WARNINGS += -Wconversion   # implicit narrowing (double->float, int64->int, ...) needs a cast
 
 # -lmingw32 must precede -lSDL2main -lSDL2 (from sdl2-config) for the
 # SDL main() entry-point shims to link; -lopengl32 for the direct

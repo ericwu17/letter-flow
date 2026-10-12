@@ -1,7 +1,7 @@
 // game_types.h — pure simulation layer: shared primitive types and constants
 // (time, world geometry, economy).
 //
-// Simulation headers must NOT include imgui/SDL/Metal headers: the game rules
+// Simulation headers must NOT include imgui/SDL/OpenGL headers: the game rules
 // are completely independent of rendering, so the simulation can be tested or
 // run headless without a window.
 #pragma once
@@ -81,6 +81,12 @@ constexpr int schedule_cost(Tick period) {
 constexpr float kWorldWidth  = 1000.0f;
 constexpr float kWorldHeight = 650.0f;
 constexpr float kTruckSpeed  = 2.0f;  // world units per tick
+
+// Largest |x| or |y| a road vertex may have. Keeps the exact integer geometry
+// in road.cpp overflow-free: coordinate differences stay within 2e9, so every
+// cross/dot product (a sum of two products of differences) is within 8e18,
+// below INT64_MAX (~9.22e18).
+constexpr int64_t kMaxCoordinate = 1'000'000'000;
 
 struct Position {
     int64_t x = 0;

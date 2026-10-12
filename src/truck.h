@@ -1,6 +1,6 @@
 // truck.h — truck entity: deterministic point-to-point motion between two
 // post offices, plus its carried cargo.
-// Pure simulation layer: no imgui/SDL/Metal headers (see game_types.h).
+// Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
 #pragma once
 
 #include "entities.h"
@@ -34,6 +34,9 @@ class Truck {
 private:
     TruckState state;
 
+    // Distance along the route covered by tick `now` (0 before departure).
+    double distance_travelled(Tick now) const;
+
 public:
     Truck(
         PostOfficeId src,
@@ -48,9 +51,9 @@ public:
     }
     explicit Truck(TruckState initial_state): state(std::move(initial_state)) {}
 
-    // Truck position is computed from (departure point + direction * elapsed time)
-    // rather than accumulated frame by frame, so it never drifts and is exactly
-    // reproducible (deterministic replay).
+    // Truck position is computed from the distance travelled since departure
+    // (elapsed ticks * speed) along the route, rather than accumulated frame by
+    // frame, so it never drifts and is exactly reproducible (deterministic replay).
     double route_length() const;
     Position get_position(Tick now) const;
     bool has_arrived(Tick now) const;

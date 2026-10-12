@@ -34,10 +34,10 @@ struct CameraState {
 // Currently selected office (clicked on the map or picked in the inspector).
 PostOfficeId g_selected_office = 0;
 CameraState g_camera;
-constexpr float kZoomStep = 1.2;
-constexpr float kPanStep = 5.0;
-constexpr float kZoomMin = 0.5;
-constexpr float kZoomMax = 8.0;
+constexpr float kZoomStep = 1.2f;
+constexpr float kPanStep = 5.0f;
+constexpr float kZoomMin = 0.5f;
+constexpr float kZoomMax = 8.0f;
 
 // Map label for an office's postal code: smaller and muted-green so it reads
 // as a subtitle under the (full-size, near-white) office name.
@@ -146,12 +146,19 @@ void UpdateCamera() {
 }
 
 ImVec2 WorldToScreen(const ViewTransform& vt, Position p) {
-    return {vt.offset.x + p.x * vt.scale, vt.offset.y + p.y * vt.scale};
+    return {vt.offset.x + static_cast<float>(p.x) * vt.scale,
+            vt.offset.y + static_cast<float>(p.y) * vt.scale};
 }
 
+// Rounded to the nearest world unit and clamped to ±kMaxCoordinate, the
+// range the exact road geometry is defined on.
 Position ScreenToWorld(const ViewTransform& vt, ImVec2 screen) {
-    return {static_cast<int64_t>((screen.x - vt.offset.x) / vt.scale),
-            static_cast<int64_t>((screen.y - vt.offset.y) / vt.scale)};
+    constexpr double kMax = static_cast<double>(kMaxCoordinate);
+    auto to_world = [&](float screen_coord, float offset) {
+        const double world = static_cast<double>((screen_coord - offset) / vt.scale);
+        return static_cast<int64_t>(std::llround(std::clamp(world, -kMax, kMax)));
+    };
+    return {to_world(screen.x, vt.offset.x), to_world(screen.y, vt.offset.y)};
 }
 
 // Squared distance from point p to the segment a-b (all in screen space).
@@ -559,10 +566,10 @@ void DrawWorld(World& world) {
             }
             return path;
         }();
-        const float total_len = polyline_length(full_path);
+        const double total_len = polyline_length(full_path);
         const int cost = road_cost(full_path);
         char cost_text[64];
-        std::snprintf(cost_text, sizeof(cost_text), "$%d (%.0f units)", cost, static_cast<double>(total_len));
+        std::snprintf(cost_text, sizeof(cost_text), "$%d (%.0f units)", cost, total_len);
         const ImVec2 text_pos(io.MousePos.x + 8.0f, io.MousePos.y - ImGui::GetFontSize() * 0.5f);
         draw->AddText(text_pos, kColorText, cost_text);
     }
@@ -1077,10 +1084,8 @@ void DrawInspector(World& world) {
                     : g_road_builder.vertices.size() - 1);  // exclude source office vertex
 
         if (g_road_build_state == RoadBuildState::PlacingVertices) {
-            float built_len = 0.0f;
-            if (g_road_builder.vertices.size() >= 2)
-                built_len = polyline_length(g_road_builder.vertices);
-            ImGui::TextDisabled("Path length: %.0f units", static_cast<double>(built_len));
+            const double built_len = polyline_length(g_road_builder.vertices);
+            ImGui::TextDisabled("Path length: %.0f units", built_len);
         }
 
         if (ImGui::Button("Cancel road")) {

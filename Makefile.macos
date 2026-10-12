@@ -35,8 +35,8 @@ CXXFLAGS += -MMD -MP   # header dependency tracking
 WARNINGS  = -Wall -Wextra -Wpedantic -Werror
 WARNINGS += -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
 WARNINGS += -Wcast-align -Wnull-dereference -Wimplicit-fallthrough
-WARNINGS += -Wformat=2 
-WARNINGS += -Wno-error=double-promotion
+WARNINGS += -Wformat=2
+WARNINGS += -Wconversion   # implicit narrowing (double->float, int64->int, ...) needs a cast
 
 LIBS  = -framework OpenGL
 LIBS += $(shell sdl2-config --libs)

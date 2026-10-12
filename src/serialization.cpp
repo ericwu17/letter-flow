@@ -1,5 +1,5 @@
 // serialization.cpp — save/load the complete simulation state as a JSON file.
-// Pure simulation layer: no imgui/SDL/Metal headers (see game_types.h).
+// Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
 //
 // Implements World::save_to_file / World::load_from_file (declared in
 // world.h). This is the only translation unit that knows nlohmann/json exists
@@ -176,7 +176,8 @@ namespace {
 // references, schedules violating the invariants add_schedule() enforces
 // (dst is another office, period > 0, non-empty postal prefix), and roads
 // violating the invariants add_road() enforces (normalized src < dst, no
-// duplicates, at least two vertices anchored at the endpoint offices).
+// duplicates, at least two in-range vertices anchored at the endpoint
+// offices).
 bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                            const std::vector<Truck>& trucks,
                            const std::vector<Road>& roads) {
@@ -206,7 +207,7 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
         const Road& road = roads[i];
         if (road.src >= num_offices || road.dst >= num_offices || road.src >= road.dst)
             return false;
-        if (road.vertices.size() < 2)
+        if (road.vertices.size() < 2 || !all_vertices_in_range(road.vertices))
             return false;
         if (road.vertices.front() != post_offices[road.src].pos ||
             road.vertices.back() != post_offices[road.dst].pos)
@@ -249,9 +250,9 @@ bool World::save_to_file(const std::string& path) const {
     rng_state << rng;
     j["rng"] = rng_state.str();
 
-    // Write to a temp file, then rename over the target. rename() is atomic
-    // on macOS, so a crash or power loss mid-write leaves the previous save
-    // intact instead of a half-written one.
+    // Write to a temp file, then rename over the target, so a crash mid-write
+    // leaves the previous save intact instead of a half-written one. (Not
+    // proof against power loss: nothing fsyncs the file before the rename.)
     const std::string tmp_path = path + ".tmp";
     std::error_code ec;
     {

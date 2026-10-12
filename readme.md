@@ -57,7 +57,8 @@ mingw32-make && ./letter-flow.exe
   `~/.local/share/LetterFlow/LetterFlow/save.json` on Linux,
   `%APPDATA%\LetterFlow\LetterFlow\save.json` on Windows.
   The save includes the RNG's internal state, so a loaded game continues the
-  exact same deterministic simulation.
+  exact same deterministic simulation (if that state is corrupt, the game
+  still loads, with a freshly seeded RNG).
 
 ## Source layout (will probably be out of date soon)
 
@@ -72,6 +73,7 @@ src/ui.*              Dear ImGui presentation layer (the only place ImGui exists
 src/main.cpp          SDL2 + OpenGL3 bootstrap and frame loop (all platforms)
 src/platform_macos.*  macOS-only startup tweaks (the sole Objective-C++ file)
 
+tests/test_geometry.cpp       headless exact road-geometry tests (make test)
 tests/test_serialization.cpp  headless save/load round-trip tests (make test)
 tests/test_simulation.cpp     headless simulation-rule tests (make test)
 third_party/nlohmann/json.hpp vendored single-header JSON library (only
@@ -88,10 +90,9 @@ The save/load round-trip test builds a fixture world in which **every
 serialized field holds a non-default value**, saves it, loads it back and
 asserts full-state equality. If you add a field to the simulation and forget
 `serialization.cpp`, the loaded copy comes back with the default and the test
-fails loudly. Entity `operator==` are `= default` (new fields are covered
-automatically — `Truck`'s included, via its plain-data `TruckState`); only
-`World`'s is hand-maintained — extend it and the fixture when you add World
-fields.
+fails loudly. Every `operator==` is `= default` (`World`'s and `Truck`'s
+included), so new fields are compared automatically — just give them a
+distinct value in the fixture.
 
 Everything except `ui.*`, `main.cpp` and `platform_macos.*` handles simulation,
 and is fully deterministic (fixed RNG seed, fixed timestep — the RNG state is

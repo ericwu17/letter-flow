@@ -1,5 +1,8 @@
 // road.h — road entity and routing geometry helpers.
-// Pure simulation layer: no imgui/SDL/Metal headers (see game_types.h).
+// Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
+//
+// All geometry is exact integer arithmetic on Position (no floating point, no
+// epsilons), valid as long as every coordinate is within ±kMaxCoordinate.
 #pragma once
 
 #include "entities.h"
@@ -9,7 +12,9 @@
 #include <vector>
 
 inline double length(Position p) {
-    return std::sqrt(p.x * p.x + p.y * p.y);
+    const auto x = static_cast<double>(p.x);
+    const auto y = static_cast<double>(p.y);
+    return std::sqrt(x * x + y * y);
 }
 
 // A road connecting two post offices.
@@ -28,29 +33,27 @@ struct Road {
 // Geometry helpers
 // ---------------------------------------------------------------------------
 
-// Snap a cursor position onto the nearest of the 8 cardinal/diagonal rays
-// emanating from `from`. The result is a point such that the segment from
-// `from` to the result is horizontal, vertical, or exactly 45° diagonal.
-// Position snap_to_8dir(Position from, Position cursor);
+// True if |x| and |y| of every vertex are at most kMaxCoordinate — the
+// precondition of every other helper below.
+bool all_vertices_in_range(const std::vector<Position>& vertices);
 
-// True if the two line segments (a1-a2) and (b1-b2) intersect at a point
-// that is not a shared endpoint. Uses a standard cross-product parametric
-// test with an epsilon threshold for floating-point robustness.
+// True if the closed segments a1-a2 and b1-b2 share at least one point,
+// including touching at an endpoint and collinear overlap.
 bool segments_intersect(Position a1, Position a2, Position b1, Position b2);
 
-// True if any non-consecutive pair of segments in the polyline `vertices`
-// crosses. Consecutive segments share a vertex and are never counted as
-// self-intersecting.
+// True if the polyline touches itself anywhere other than the joint vertex of
+// two consecutive segments: crossings, revisited vertices, and consecutive
+// segments that double back over each other all count.
 bool polyline_self_intersects(const std::vector<Position>& vertices);
 
-// True if any segment of `new_vertices` crosses any segment of `existing`.
-// Segments that share only an endpoint (touching at a vertex) are NOT counted
-// as crossing — roads can meet at vertices.
+// True if `new_vertices` shares any point with `existing` other than a post
+// office both roads end at. Roads may only meet at their end offices: a
+// crossing, an overlap, a T-junction or a shared intermediate vertex all count.
 bool polyline_crosses_road(const Road& existing,
                            const std::vector<Position>& new_vertices);
 
-// True if every segment in the polyline is horizontal, vertical, or exactly
-// 45° diagonal, within floating-point epsilon.
+// True if every segment in the polyline has non-zero length and is
+// horizontal, vertical, or exactly 45° diagonal.
 bool all_segments_valid_direction(const std::vector<Position>& vertices);
 
 // Total Euclidean length of all segments in the polyline.

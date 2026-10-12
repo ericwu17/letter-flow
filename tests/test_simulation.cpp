@@ -1,7 +1,7 @@
 // test_simulation.cpp — headless tests for the simulation rules (World's
 // public API): routing-rule matching, schedule validation and pricing, the
 // departure grid, pick-up priority, and delivery/forwarding. Run with
-// `make test`. Pure simulation layer: no SDL/imgui/Metal — no window needed.
+// `make test`. Pure simulation layer: no SDL/imgui/OpenGL — no window needed.
 //
 // Everything here is deterministic (fixed RNG seed, fixed tick counts) and
 // worlds are built to order through add_office()/seed_letters(), so the

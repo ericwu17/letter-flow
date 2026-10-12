@@ -21,19 +21,16 @@ struct RoadBuilder {
     bool is_invalid = false;
     bool prefer_first_direction_ortho = true;
     std::optional<bool> trail_first_ortho = {};
-    static constexpr double kTrailThreshold = 20.0;  // How far (in position units) the cursor must be from the source before we trust its direction
-
-    // Call this when the user commits a vertex or cancels, so the next
-    // segment starts with a fresh trail.
-    void reset_trail() { trail_first_ortho.reset(); }
+    static constexpr int64_t kTrailThreshold = 20;  // How far (in position units) the cursor must be from the source before we trust its direction
 
     // ---- helpers ----
-    static int sign(double v) { return (v > 0) - (v < 0); }
+    static int sign(int64_t v) { return (v > 0) - (v < 0); }
 
     // 8-way direction index: 0=+x, 1=+x+y, 2=+y, ... 7=+x-y. Even = orthogonal.
-    static int dir_index(double dx, double dy) {
+    static int dir_index(int64_t dx, int64_t dy) {
         constexpr double kPi = 3.14159265358979323846;
-        int idx = static_cast<int>(std::lround(std::atan2(dy, dx) / (kPi / 4.0)));
+        const double angle = std::atan2(static_cast<double>(dy), static_cast<double>(dx));
+        int idx = static_cast<int>(std::lround(angle / (kPi / 4.0)));
         return ((idx % 8) + 8) % 8;
     }
 
@@ -85,7 +82,7 @@ struct RoadBuilder {
         // --- mouse tracking: which way did the cursor leave the source? ---
         // Only relevant for the first segment (nothing committed yet beyond the source).
         if (vertices.size() == 1) {
-            if (std::hypot(dx, dy) < kTrailThreshold) {
+            if (dx * dx + dy * dy < kTrailThreshold * kTrailThreshold) {
                 // Cursor is back on top of the source: forget the old direction
                 // so the user can leave again in a different way.
                 trail_first_ortho.reset();

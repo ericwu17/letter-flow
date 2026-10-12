@@ -1,5 +1,5 @@
 // world.h — World: owns all simulation state and drives it tick by tick.
-// Pure simulation layer: no imgui/SDL/Metal headers (see game_types.h).
+// Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
 #pragma once
 
 #include "entities.h"
@@ -79,9 +79,11 @@ public:
 
     // Build a road from `src` to `dst`. `vertices` is the complete polyline:
     // vertices[0] must equal post_offices[src].pos and vertices.back() must
-    // equal post_offices[dst].pos. All segments must be horizontal, vertical,
-    // or exactly 45° diagonal; the road must not self-intersect or cross any
-    // existing road. The player pays road_cost(road) up front. Internally the
+    // equal post_offices[dst].pos, and every coordinate must be within
+    // ±kMaxCoordinate. All segments must be non-empty and horizontal,
+    // vertical, or exactly 45° diagonal; the road must not touch itself, and
+    // may touch existing roads only at post offices they share as endpoints.
+    // The player pays road_cost(road) up front. Internally the
     // road is normalized so src < dst. Returns false and changes nothing on
     // failure.
     bool add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> vertices);
@@ -112,18 +114,18 @@ public:
     // dependency-free. save_to_file() writes the ENTIRE state (offices,
     // letters, schedules, in-flight trucks, clock, money, and the RNG's
     // internal state, so a loaded game continues the identical random
-    // sequence) as JSON, atomically via temp-file + rename.
+    // sequence) as JSON, via temp-file + rename (see save_to_file).
     // load_from_file() returns nullopt if the file is missing or unusable in
     // any way (corrupt JSON, incompatible version, dangling references), so
-    // callers simply fall back to a fresh world.
+    // callers simply fall back to a fresh world. The one non-fatal problem is
+    // a corrupt RNG dump: the game loads with a freshly seeded RNG instead.
     bool save_to_file(const std::string& path) const;
     static std::optional<World> load_from_file(const std::string& path);
 
-    // Full simulation-state equality, including the RNG (compared via its
-    // text dump — std::mt19937 has no operator==). Hand-maintained like
-    // Truck's: when adding a World field, extend this operator (world.cpp),
-    // serialization.cpp, and the test fixture (see the note in entities.h).
-    bool operator==(const World& other) const;
+    // Full simulation-state equality, RNG included (standard engines are
+    // equality-comparable). Defaulted like every entity's, so new fields are
+    // compared automatically (see the note in entities.h).
+    bool operator==(const World&) const = default;
 
     // Read-only access for the presentation layer. Named with the same get_*
     // convention as Truck's accessors.
