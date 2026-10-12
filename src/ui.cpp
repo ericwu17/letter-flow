@@ -259,13 +259,6 @@ void EnsureOfficeSelected(const World& world) {
         g_selected_office = 0;
 }
 
-void DrawCenteredText(ImDrawList* draw, ImVec2 center, const char* text) {
-    const ImVec2 size = ImGui::CalcTextSize(text);
-    const ImVec2 pos(center.x - size.x * 0.5f, center.y - size.y * 0.5f);
-    draw->AddText({pos.x + 1.0f, pos.y + 1.0f}, kColorTextShadow, text);
-    draw->AddText(pos, kColorText, text);
-}
-
 // ---------------------------------------------------------------------------
 // Tick -> 24-hour clock formatting. Every time shown to the player goes
 // through these helpers; internally the simulation only ever uses ticks.
@@ -709,7 +702,7 @@ void DrawWorld(World& world) {
         draw->AddText({name_pos.x + 1.0f, name_pos.y + 1.0f}, kColorTextShadow, office.name.c_str());
         draw->AddText(name_pos, kColorText, office.name.c_str());
 
-        // Postal code, centered directly below the name in a smaller, muted
+        // Postal code, centered below the circle in a smaller, muted
         // green font. PushFont(nullptr, size) rescales the current font (both
         // CalcTextSize and AddText honor it); FontSizeBase rather than
         // GetFontSize() so the DPI/global scale is applied exactly once.
@@ -717,18 +710,12 @@ void DrawWorld(World& world) {
             const float code_font_size = ImGui::GetStyle().FontSizeBase * kPostalCodeFontScale;
             ImGui::PushFont(nullptr, code_font_size);
             const ImVec2 code_extent = ImGui::CalcTextSize(office.postal_code.c_str());
-            const ImVec2 code_pos(c.x - code_extent.x * 0.5f, name_pos.y + name_size.y + 1.0f);
+            const ImVec2 code_pos(c.x - code_extent.x * 0.5f,
+                                  c.y + office_radius + 12.0f - code_extent.y * 0.5f);
             draw->AddText({code_pos.x + 1.0f, code_pos.y + 1.0f}, kColorTextShadow, office.postal_code.c_str());
             draw->AddText(code_pos, kPostalCodeColor, office.postal_code.c_str());
             ImGui::PopFont();
         }
-
-        char buf[64];
-        if (office.built)
-            std::snprintf(buf, sizeof(buf), "%zu letters", office.outbound_letters.size());
-        else
-            std::snprintf(buf, sizeof(buf), "Build: $%d", office.build_cost);
-        DrawCenteredText(draw, {c.x, c.y + office_radius + 12.0f}, buf);
     }
 
     DrawPayoutPopups(draw, view, world);
