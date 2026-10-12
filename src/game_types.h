@@ -1,5 +1,5 @@
 // game_types.h — pure simulation layer: shared primitive types and constants
-// (time, world geometry, economy).
+// (time, world geometry). Gameplay tuning numbers live in balance.h.
 //
 // Simulation headers must NOT include imgui/SDL/OpenGL headers: the game rules
 // are completely independent of rendering, so the simulation can be tested or
@@ -49,27 +49,6 @@ constexpr Tick hours_minutes_to_ticks(int hour, int minute) {
 }
 
 // ---------------------------------------------------------------------------
-// Economy
-// ---------------------------------------------------------------------------
-
-constexpr int kStartingMoney = 25000;
-
-// Creating a schedule is free; instead every departing truck costs this much,
-// charged at the source office when it leaves. A departure the player cannot
-// afford is skipped (no truck leaves, no letters move).
-constexpr int kTruckDepartureCost = 15;
-
-// Most letters one truck carries. Matching letters beyond this stay in the
-// buffer for a later departure.
-constexpr std::size_t kTruckCapacity = 5;
-
-// Shortest allowed schedule period: one departure every 5 in-game minutes.
-constexpr Tick kMinSchedulePeriod = hours_minutes_to_ticks(0, 5);
-
-// Road construction: cost per world unit of road length (rounded up).
-constexpr float kRoadCostPerUnit = 5.0f;
-
-// ---------------------------------------------------------------------------
 // World geometry
 // ---------------------------------------------------------------------------
 
@@ -77,7 +56,6 @@ constexpr float kRoadCostPerUnit = 5.0f;
 // whatever window size the player has.
 constexpr float kWorldWidth  = 2000.0f;
 constexpr float kWorldHeight = 1300.0f;
-constexpr float kTruckSpeed  = 2.0f;  // world units per tick
 
 // Largest |x| or |y| a road vertex may have. Keeps the exact integer geometry
 // in road.cpp overflow-free: coordinate differences stay within 2e9, so every

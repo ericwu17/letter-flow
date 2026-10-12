@@ -4,6 +4,7 @@
 #pragma once
 
 #include "entities.h"
+#include "balance.h"
 #include "game_types.h"
 #include "road.h"
 

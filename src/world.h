@@ -3,6 +3,7 @@
 #pragma once
 
 #include "entities.h"
+#include "balance.h"
 #include "game_types.h"
 #include "road.h"
 #include "truck.h"
@@ -88,6 +89,8 @@ public:
     void set_postal_code(PostOfficeId office, std::string postal_code);
     void set_paused(bool p) { paused = p; }
     void set_speed_multiplier(float m) { speed_multiplier = m; }
+    // Overrides the balance (tests and debugging; normal play only earns and spends).
+    void set_money(int m) { money = m; }
 
     // --- Road API ---
 

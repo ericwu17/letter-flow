@@ -8,6 +8,7 @@
 // worlds are built to order through add_office()/seed_letters(), so the
 // asserts hold on every run.
 #include "entities.h"
+#include "balance.h"
 #include "game_types.h"
 #include "truck.h"
 #include "world.h"

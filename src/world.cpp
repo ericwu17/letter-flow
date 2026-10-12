@@ -1,5 +1,6 @@
 // world.cpp — simulation rules. Pure logic, no rendering, no input.
 #include "world.h"
+#include "balance.h"
 #include "entities.h"
 
 #include <algorithm>
@@ -109,13 +110,11 @@ void World::spawn_letter(PostOfficeId office_id) {
     if (office.outbound_letters.size() >= office.max_outbound_letters)
         return;  // buffer full: this letter is lost
 
-    std::uniform_int_distribution<Tick> pick_deadline(kTicksPerDay / 2, 2 * kTicksPerDay);
-    std::uniform_int_distribution<int> pick_value(5, 15);
-    std::uniform_int_distribution<int> pick_bonus(3, 10);
+    std::uniform_int_distribution<Tick> pick_deadline(kLetterDeadlineMin, kLetterDeadlineMax);
+    std::uniform_int_distribution<int> pick_value(kLetterValueMin, kLetterValueMax);
+    std::uniform_int_distribution<int> pick_bonus(kLetterBonusMin, kLetterBonusMax);
 
-    // Destination odds: bigger offices (by letters_per_day) and closer ones
-    // attract more mail. weight = (size + 1) / (1 + distance / kDistanceScale).
-    constexpr double kDistanceScale = 150.0;
+    // Destination odds: see kDestinationDistanceScale in balance.h.
     std::vector<PostOfficeId> candidates;
     std::vector<double> weights;
     for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
@@ -125,7 +124,7 @@ void World::spawn_letter(PostOfficeId office_id) {
         const double dx = static_cast<double>(other.pos.x - office.pos.x);
         const double dy = static_cast<double>(other.pos.y - office.pos.y);
         candidates.push_back(id);
-        weights.push_back((static_cast<double>(other.letters_per_day) + 1.0) / (1.0 + std::hypot(dx, dy) / kDistanceScale));
+        weights.push_back((static_cast<double>(other.letters_per_day) + 1.0) / (1.0 + std::hypot(dx, dy) / kDestinationDistanceScale));
     }
     const PostOfficeId dst = candidates[std::discrete_distribution<std::size_t>(
         weights.begin(), weights.end())(rng)];

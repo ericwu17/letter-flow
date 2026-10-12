@@ -13,6 +13,7 @@
 //
 // Test artifacts are written under build/test-saves/ (gitignored); the test
 // must run with the repo root as working directory (`make test` does).
+#include "balance.h"
 #include "scenario.h"
 #include "world.h"
 
@@ -61,6 +62,10 @@ void write_file(const fs::path& path, const std::string& contents) {
 World build_fixture_world() {
     World w = create_default_world();  // offices: names, postal codes, positions,
                                        // spawn rates and build costs all non-default
+
+    // The fixture builds far more than a real opening could afford, so
+    // fund it directly instead of depending on kStartingMoney.
+    w.set_money(100'000);
 
     // Build only the offices the roads below join (paying their build costs),
     // so the save holds both built and unbuilt offices, then seed their mail.

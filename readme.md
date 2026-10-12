@@ -67,6 +67,7 @@ mingw32-make && ./letter-flow.exe
 
 ```
 src/game_types.h      shared primitives: Tick, Position, world constants
+src/balance.h         gameplay tuning: costs, starting money, truck and letter numbers
 src/entities.h        data entities: Letter, RoutingRule, TruckSchedule, PostOffice
 src/truck.*           Truck: deterministic point-to-point motion
 src/world.*           World: owns all state, advances the sim in fixed 60 Hz ticks

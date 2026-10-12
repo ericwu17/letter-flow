@@ -3,6 +3,7 @@
 #include "ui.h"
 
 #include "entities.h"
+#include "balance.h"
 #include "game_types.h"
 #include "road.h"
 #include "road_builder.h"
