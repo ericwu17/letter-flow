@@ -22,7 +22,7 @@ World create_default_world() {
         std::size_t office_class;  // 1 = small town, 2 = city, 3 = major city
     };
     // Defaults per class, indexed by office_class.
-    const std::size_t class_letters_per_day[] = {0, 4, 8, 14};
+    const std::size_t class_letters_per_day[] = {0, 20, 30, 50};
     const std::size_t class_max_outbound[]    = {0, 40, 60, 100};
     const int class_build_cost[]              = {0, 1000, 2500, 5000};
     const OfficeDef defs[] = {

@@ -90,17 +90,19 @@ World build_fixture_world() {
 
     // All three routing-rule types, distinct periods and start offsets;
     // office 0 ends up with three schedules, so schedule list order (the
-    // pick-up priority) is exercised too.
+    // pick-up priority) is exercised too. Periods stay modest: every
+    // departure costs kTruckDepartureCost, and the late routes below must
+    // still be affordable three days in.
     const RoutingRule prefix_rule{RoutingRuleType::PostalPrefix, "NJ/Mercer"};
     const RoutingRule all_rule{RoutingRuleType::AllLetters, ""};
-    assert(w.add_schedule(0, 1, kTicksPerHour, 0, {}));                // exact
-    assert(w.add_schedule(0, 2, kTicksPerHour / 2, 13, prefix_rule));  // prefix
-    assert(w.add_schedule(3, 1, kMinSchedulePeriod, 7, all_rule));     // all
+    assert(w.add_schedule(0, 1, 6 * kTicksPerHour, 0, {}));            // exact
+    assert(w.add_schedule(0, 2, 4 * kTicksPerHour, 13, prefix_rule));  // prefix
+    assert(w.add_schedule(3, 1, 8 * kTicksPerHour, 7, all_rule));      // all
 
     // Force some late deliveries so letters_delivered_late is non-zero:
     // AllLetters schedules whose first departure is later than any waiting
     // letter's deadline can be (deadlines are at most two days after spawn).
-    // Every src below except office 0 — which also has the hourly exact
+    // Every src below except office 0 — which also has the six-hourly exact
     // route to office 1 added above — has no earlier departures, so its
     // trucks arrive with guaranteed-late cargo. Each route follows one of
     // the roads built above.

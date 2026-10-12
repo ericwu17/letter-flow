@@ -1,6 +1,7 @@
 // test_simulation.cpp — headless tests for the simulation rules (World's
-// public API): routing-rule matching, schedule validation and pricing, the
-// departure grid, pick-up priority, and delivery/forwarding. Run with
+// public API): routing-rule matching, schedule validation, departure pricing
+// and truck capacity, the departure grid, pick-up priority, and
+// delivery/forwarding. Run with
 // `make test`. Pure simulation layer: no SDL/imgui/OpenGL — no window needed.
 //
 // Everything here is deterministic (fixed RNG seed, fixed tick counts) and
@@ -45,7 +46,7 @@ void add_underpass_road(World& w, PostOfficeId a, PostOfficeId b) {
 // (`letters_at_source` seeded letters, all addressed to one of the other
 // offices at random, plus that same rate trickling in per tick); every other
 // office has letters_per_day = 0 and stays inert. Every office is built, for
-// free (build_cost 0), so money only moves for roads and schedules.
+// free (build_cost 0), so money only moves for roads and truck departures.
 World make_line_world(std::size_t count, std::size_t letters_at_source) {
     World w;
     for (std::size_t i = 0; i < count; ++i) {
@@ -86,8 +87,8 @@ void routing_rule_matches() {
     assert(!empty_prefix.matches(5, "NJ/Mercer", 9));
 }
 
-// add_schedule's rejection matrix, the frequency-based pricing, duplicate
-// detection (including prefix normalization), and the affordability gate.
+// add_schedule's rejection matrix, free schedule creation, and duplicate
+// detection (including prefix normalization).
 void schedule_validation_and_pricing() {
     World w = make_line_world(3, 0);
     add_underpass_road(w, 0, 2);  // for the distinct-dst schedule below
@@ -104,14 +105,9 @@ void schedule_validation_and_pricing() {
     assert(!w.add_schedule(0, 1, kTicksPerHour, 0, empty_prefix));  // empty prefix
     assert(w.get_money() == money0);
 
-    // Pricing: charged per departure per in-game day.
-    assert(schedule_cost(3 * kTicksPerHour) == 8 * kScheduleCostPerDailyDeparture);
-    assert(schedule_cost(kTicksPerDay) == kScheduleCostPerDailyDeparture);
-    assert(schedule_cost(0) == 0);  // invalid period; callers reject it
-
-    const int three_hourly = schedule_cost(3 * kTicksPerHour);
+    // Creating a schedule is free: money only moves when trucks depart.
     assert(w.add_schedule(0, 1, 3 * kTicksPerHour, 0, exact));
-    assert(w.get_money() == money0 - three_hourly);
+    assert(w.get_money() == money0);
 
     // Duplicates compare (dst, rule) only — period and offset may differ —
     // and a stale prefix on a non-prefix rule is normalized away first.
@@ -122,18 +118,56 @@ void schedule_validation_and_pricing() {
     const RoutingRule all{RoutingRuleType::AllLetters, ""};
     assert(w.add_schedule(0, 1, kTicksPerHour, 0, all));
     assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
+    assert(w.get_money() == money0);
+}
 
-    // Affordability: buy the fastest (priciest) schedules until rejected.
-    World broke = make_line_world(2, 0);
-    const int broke_money0 = broke.get_money();  // after the chain road's cost
-    const int unit_cost = schedule_cost(kMinSchedulePeriod);
-    int bought = 0;
-    while (broke.add_schedule(0, 1, kMinSchedulePeriod, 0,
-                              {RoutingRuleType::PostalPrefix, "p" + std::to_string(bought)}))
-        ++bought;
-    assert(bought == broke_money0 / unit_cost);  // bought until one no longer fit
-    assert(broke.get_money() == broke_money0 - bought * unit_cost);
-    assert(broke.get_money() < unit_cost);       // hence the rejection
+// Each departing truck costs kTruckDepartureCost, charged as it leaves, and
+// reported as a negative MoneyEvent at the source office. A departure the
+// player cannot afford is skipped: no truck, no letters moved, no charge.
+void departures_are_charged() {
+    const RoutingRule all{RoutingRuleType::AllLetters, ""};
+    World w = make_line_world(2, 3);
+    const int money0 = w.get_money();
+    assert(w.add_schedule(0, 1, kTicksPerHour, 1, all));
+    w.take_money_events();
+    w.advance_tick();  // tick 1: first departure
+    assert(w.get_trucks().size() == 1);
+    assert(w.get_money() == money0 - kTruckDepartureCost);
+    const std::vector<MoneyEvent> events = w.take_money_events();
+    assert(events.size() == 1);
+    assert(events[0].office == 0 && events[0].amount == -kTruckDepartureCost);
+
+    // Spend down to just under one departure's price by building a pricey
+    // (inert) office: the departure is skipped and nothing changes.
+    World broke = make_line_world(2, 3);
+    const PostOfficeId sink = broke.add_office("Sink", "S", {0, 1000}, 0, 0,
+                                               broke.get_money() - (kTruckDepartureCost - 1));
+    assert(broke.build_office(sink));
+    assert(broke.get_money() == kTruckDepartureCost - 1);
+    assert(broke.add_schedule(0, 1, kTicksPerHour, 1, all));
+    const std::size_t waiting = broke.get_post_offices()[0].outbound_letters.size();
+    broke.take_money_events();
+    broke.advance_tick();  // tick 1: due, but unaffordable
+    assert(broke.get_trucks().empty());
+    assert(broke.get_money() == kTruckDepartureCost - 1);
+    assert(broke.take_money_events().empty());
+    assert(broke.get_post_offices()[0].outbound_letters.size() >= waiting);  // nothing boarded
+}
+
+// A truck carries at most kTruckCapacity letters, oldest first; the rest of
+// the matching letters stay in the buffer for the next departure.
+void trucks_carry_at_most_capacity() {
+    World w = make_line_world(2, 12);  // 12 seeded letters, all for office 1
+    const std::vector<Letter> seeded = w.get_post_offices()[0].outbound_letters;
+    assert(seeded.size() == 12);
+    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, ""}));
+    w.advance_tick();  // tick 1
+    assert(w.get_trucks().size() == 1);
+    const std::vector<Letter>& cargo = w.get_trucks()[0]->get_letters();
+    assert(cargo.size() == kTruckCapacity);
+    for (std::size_t i = 0; i < kTruckCapacity; ++i)
+        assert(cargo[i] == seeded[i]);  // the oldest letters boarded
+    assert(w.get_post_offices()[0].outbound_letters.size() >= seeded.size() - kTruckCapacity);
 }
 
 // Departures land exactly on the start_offset + k * period grid, and a
@@ -173,9 +207,10 @@ void first_matching_schedule_wins_contested_letters() {
     const RoutingRule all{RoutingRuleType::AllLetters, ""};
     const Tick huge = 100 * kTicksPerDay;
 
-    // The first AllLetters departure takes the whole buffer; the second finds
-    // nothing and departs empty. Trucks spawn in schedule (list) order.
-    World w = make_line_world(3, 40);
+    // The buffer holds exactly one truckload: the first AllLetters departure
+    // takes all of it; the second finds nothing and departs empty. Trucks
+    // spawn in schedule (list) order.
+    World w = make_line_world(3, kTruckCapacity);
     add_underpass_road(w, 0, 2);
     assert(w.add_schedule(0, 1, huge, 1, all));
     assert(w.add_schedule(0, 2, huge, 1, all));
@@ -187,7 +222,7 @@ void first_matching_schedule_wins_contested_letters() {
     assert(w.get_trucks()[1]->get_num_letters() == 0);  // the loser departs empty
     assert(w.get_post_offices()[0].outbound_letters.empty());
 
-    World w2 = make_line_world(3, 40);
+    World w2 = make_line_world(3, kTruckCapacity);
     add_underpass_road(w2, 0, 2);
     assert(w2.add_schedule(0, 1, huge, 1, all));
     assert(w2.add_schedule(0, 2, huge, 1, all));
@@ -235,12 +270,16 @@ void postal_code_edits_take_effect_at_departure() {
     while (w.get_tick() < 55)
         w.advance_tick();
     assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0]->get_num_letters() > 0);
-    // Only office-1 mail (now "ZZZ/...") boarded; office-2 mail waited.
+    // Only office-1 mail (now "ZZZ/...") boarded — a full truckload, since
+    // 30 seeded letters leave more office-1 mail than fits — while every
+    // office-2 letter waited.
+    assert(w.get_trucks()[0]->get_num_letters() == kTruckCapacity);
     for (const Letter& letter : w.get_trucks()[0]->get_letters())
         assert(letter.dst == 1);
+    std::size_t waiting_for_2 = 0;
     for (const Letter& letter : w.get_post_offices()[0].outbound_letters)
-        assert(letter.dst == 2);
+        waiting_for_2 += letter.dst == 2 ? 1 : 0;
+    assert(waiting_for_2 > 0);
 }
 
 // The UI observes its selected truck through a weak_ptr, with the World as
@@ -260,7 +299,7 @@ void observed_truck_expires_on_arrival() {
         const std::shared_ptr<const Truck> truck = observed.lock();
         assert(truck != nullptr);
         cargo = truck->get_num_letters();
-        assert(cargo >= 10);
+        assert(cargo == kTruckCapacity);  // 10 waiting, but a truck holds only 5
         arrival = truck->get_arrival_tick();
         assert(arrival == 1 + 50);  // one 100-unit hop at kTruckSpeed
         assert(!truck->has_arrived(arrival - 1));
@@ -355,12 +394,12 @@ void road_removal() {
 // schedule delivers it onward — every seeded letter ends up scored, on time.
 void multi_hop_forwarding_delivers_every_letter() {
     World w;
-    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 12, 100, 0);
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTruckCapacity, 100, 0);
     const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100, 0);
     const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100, 0);
     for (const PostOfficeId id : {a, b, c})
         assert(w.build_office(id));
-    w.seed_letters();  // 12 letters at A, addressed to B or C at random
+    w.seed_letters();  // one truckload of letters at A, addressed to B or C at random
     add_straight_road(w, a, b);
     add_straight_road(w, b, c);
 
@@ -375,7 +414,7 @@ void multi_hop_forwarding_delivers_every_letter() {
 
     assert(w.get_trucks().empty());
     assert(w.get_letters_delivered_late() == 0);      // deadlines are >= half a day out
-    assert(w.get_letters_delivered_on_time() == 12);  // every seeded letter, nothing lost
+    assert(w.get_letters_delivered_on_time() == kTruckCapacity);  // every seeded letter, nothing lost
     for (const PostOffice& office : w.get_post_offices())
         assert(office.outbound_letters.empty());
 }
@@ -436,6 +475,10 @@ int main() {
     printf("PASS routing_rule_matches\n");
     schedule_validation_and_pricing();
     printf("PASS schedule_validation_and_pricing\n");
+    departures_are_charged();
+    printf("PASS departures_are_charged\n");
+    trucks_carry_at_most_capacity();
+    printf("PASS trucks_carry_at_most_capacity\n");
     departures_follow_the_offset_grid();
     printf("PASS departures_follow_the_offset_grid\n");
     first_matching_schedule_wins_contested_letters();

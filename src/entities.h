@@ -35,10 +35,11 @@ struct Letter {
     bool operator==(const Letter&) const = default;
 };
 
-// A truck arrival that paid out: `amount` is the total earned (values plus
-// early bonuses) across every letter finally delivered at `office`. A pure
-// presentation hint — not part of the saved or compared simulation state.
-struct DeliveryEvent {
+// A change in money at an office: a truck arrival that paid out (`amount` > 0,
+// the total earned — values plus early bonuses — across every letter finally
+// delivered at `office`) or a truck departure that was paid for (`amount` < 0).
+// A pure presentation hint — not part of the saved or compared simulation state.
+struct MoneyEvent {
     PostOfficeId office = kNoPostOffice;
     int amount = 0;
 };

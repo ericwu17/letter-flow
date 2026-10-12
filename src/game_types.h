@@ -6,6 +6,7 @@
 // run headless without a window.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // ---------------------------------------------------------------------------
@@ -53,24 +54,20 @@ constexpr Tick hours_minutes_to_ticks(int hour, int minute) {
 
 constexpr int kStartingMoney = 25000;
 
-// Up-front price of a truck schedule, charged per departure per in-game day:
-// a 3-hourly route departs 8 times a day and costs 8 * 5 = 40. Higher
-// frequency -> higher price.
-constexpr int kScheduleCostPerDailyDeparture = 5;
+// Creating a schedule is free; instead every departing truck costs this much,
+// charged at the source office when it leaves. A departure the player cannot
+// afford is skipped (no truck leaves, no letters move).
+constexpr int kTruckDepartureCost = 15;
+
+// Most letters one truck carries. Matching letters beyond this stay in the
+// buffer for a later departure.
+constexpr std::size_t kTruckCapacity = 5;
 
 // Shortest allowed schedule period: one departure every 5 in-game minutes.
 constexpr Tick kMinSchedulePeriod = hours_minutes_to_ticks(0, 5);
 
 // Road construction: cost per world unit of road length (rounded up).
 constexpr float kRoadCostPerUnit = 5.0f;
-
-// Price of creating a schedule that departs every `period` ticks (rounded up).
-constexpr int schedule_cost(Tick period) {
-    if (period == 0)
-        return 0;  // invalid period; callers must reject it
-    const Tick cost_per_day = static_cast<Tick>(kScheduleCostPerDailyDeparture) * kTicksPerDay;
-    return static_cast<int>((cost_per_day + period - 1) / period);  // ceil division
-}
 
 // ---------------------------------------------------------------------------
 // World geometry

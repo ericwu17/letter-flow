@@ -15,6 +15,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
@@ -543,26 +544,27 @@ static void DrawRoadMenu(World& world) {
 
 namespace {
 
-// Floating "+$N" text that rises from an office and fades out after a truck
-// delivers there. Animated in real time (frame delta), so it looks the same
-// at any game speed; the list is purely presentational.
-struct PayoutPopup {
+// Floating money text that rises from an office and fades out: a green "+$N"
+// when a truck delivers there, a red "-$N" when a truck departs from there.
+// Animated in real time (frame delta), so it looks the same at any game
+// speed; the list is purely presentational.
+struct MoneyPopup {
     PostOfficeId office;
     int amount;
     float age;  // seconds
 };
-std::vector<PayoutPopup> g_payout_popups;
+std::vector<MoneyPopup> g_money_popups;
 constexpr float kPopupDuration = 1.6f;
 constexpr float kPopupRise = 55.0f;
 
-void DrawPayoutPopups(ImDrawList* draw, const ViewTransform& view, World& world) {
-    for (const DeliveryEvent& e : world.take_delivery_events())
-        g_payout_popups.push_back({e.office, e.amount, 0.0f});
+void DrawMoneyPopups(ImDrawList* draw, const ViewTransform& view, World& world) {
+    for (const MoneyEvent& e : world.take_money_events())
+        g_money_popups.push_back({e.office, e.amount, 0.0f});
 
     const float dt = ImGui::GetIO().DeltaTime;
     const std::vector<PostOffice>& offices = world.get_post_offices();
     ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.4f);
-    for (PayoutPopup& p : g_payout_popups) {
+    for (MoneyPopup& p : g_money_popups) {
         p.age += dt;
         const float t = p.age / kPopupDuration;
         if (t >= 1.0f || p.office >= offices.size())
@@ -570,16 +572,16 @@ void DrawPayoutPopups(ImDrawList* draw, const ViewTransform& view, World& world)
         const float rise = 1.0f - (1.0f - t) * (1.0f - t);          // ease-out
         const float alpha = t < 0.6f ? 1.0f : (1.0f - t) / 0.4f;     // fade over the last 40%
         char text[32];
-        std::snprintf(text, sizeof(text), "+$%d", p.amount);
+        std::snprintf(text, sizeof(text), "%s$%d", p.amount < 0 ? "-" : "+", std::abs(p.amount));
         const ImVec2 c = WorldToScreen(view, offices[p.office].pos);
         const ImVec2 size = ImGui::CalcTextSize(text);
         const ImVec2 pos(c.x - size.x * 0.5f, c.y - 62.0f - kPopupRise * rise);
         const int a = static_cast<int>(255.0f * alpha);
         draw->AddText({pos.x + 1.0f, pos.y + 1.0f}, IM_COL32(0, 0, 0, a), text);
-        draw->AddText(pos, IM_COL32(90, 235, 110, a), text);
+        draw->AddText(pos, p.amount < 0 ? IM_COL32(240, 90, 80, a) : IM_COL32(90, 235, 110, a), text);
     }
     ImGui::PopFont();
-    std::erase_if(g_payout_popups, [](const PayoutPopup& p) { return p.age >= kPopupDuration; });
+    std::erase_if(g_money_popups, [](const MoneyPopup& p) { return p.age >= kPopupDuration; });
 }
 
 }  // namespace
@@ -744,7 +746,7 @@ void DrawWorld(World& world) {
         }
     }
 
-    DrawPayoutPopups(draw, view, world);
+    DrawMoneyPopups(draw, view, world);
 
     // The mouse is "on the map" unless an ImGui window or the transport bar
     // is under it.
@@ -1237,14 +1239,9 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
                                        kMinSchedulePeriod, kTicksPerDay);
         const Tick start_offset = hours_minutes_to_ticks(start_hhmm[0], start_hhmm[1]);
 
-        // Creating a schedule costs money up front, priced by frequency.
-        const int cost = schedule_cost(period);
-        const bool affordable = world.get_money() >= cost;
-        if (affordable)
-            ImGui::Text("Up-front cost: $%d", cost);
-        else
-            ImGui::TextColored(kColorErrorText,
-                               "Up-front cost: $%d (you only have $%d)", cost, world.get_money());
+        // Creating a schedule is free; each truck is paid for as it departs.
+        ImGui::TextDisabled("Each truck costs $%d when it departs and carries up to %zu letters.",
+                            kTruckDepartureCost, kTruckCapacity);
 
         // The fully configured rule, used for the live match count, the
         // duplicate check and the World call.
@@ -1270,10 +1267,8 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
             office.outbound_schedules.begin(), office.outbound_schedules.end(),
             [&](const TruckSchedule& s) { return s.dst == add_dst && s.rule == rule; });
 
-        ImGui::BeginDisabled(!dst_ok || !prefix_ok || duplicate || !affordable);
-        char add_label[64];
-        std::snprintf(add_label, sizeof(add_label), "Add schedule ($%d)", cost);
-        if (ImGui::Button(add_label))
+        ImGui::BeginDisabled(!dst_ok || !prefix_ok || duplicate);
+        if (ImGui::Button("Add schedule"))
             world.add_schedule(selected, add_dst, period, start_offset, rule);
         ImGui::EndDisabled();
         if (dst_ok && duplicate)

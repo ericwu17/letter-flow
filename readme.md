@@ -48,7 +48,9 @@ mingw32-make && ./letter-flow.exe
   Letters that arrive at an office they are not addressed to are forwarded
   from there (hub and spoke). Drag the schedule list to reorder it: when
   several schedules depart at the same time, the topmost matching one picks
-  up a letter first.
+  up a letter first. Schedules are free to create; each truck costs $15 when
+  it departs (skipped if you can't afford it) and carries at most 5 letters,
+  oldest first; the rest wait for the next truck.
 - **Mouse wheel / WASD**: zoom and pan the map
 - **Transport bar**: play/pause, x4 fast-forward, day/time readout
 - **Saving**: the game autosaves to a JSON file when you quit and reloads it

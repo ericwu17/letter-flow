@@ -143,10 +143,17 @@ void World::spawn_letter(PostOfficeId office_id) {
 void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     PostOffice& src = post_offices[src_id];
 
+    // Every departure is paid for when the truck leaves; one the player
+    // cannot afford simply does not happen.
+    if (money < kTruckDepartureCost)
+        return;
+    money -= kTruckDepartureCost;
+    money_events.push_back({src_id, -kTruckDepartureCost});
+
     // The schedule's routing rule decides which of the office's letters board
     // the truck: the exact destination, every letter addressed to a postal
-    // code prefix, or the whole buffer. This is the extension point for even
-    // fancier RoutingRules (capacity limits, priority by deadline, ...).
+    // code prefix, or the whole buffer. Letters board oldest first, up to
+    // kTruckCapacity; matching letters past that wait for a later departure.
     std::shared_ptr<Truck> truck = std::make_shared<Truck>(
         src_id,
         schedule.dst,
@@ -159,7 +166,8 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
     std::size_t keep = 0;
     for (std::size_t i = 0; i < outbound.size(); ++i) {
         const PostOffice& letter_dst = post_offices[outbound[i].dst];
-        if (schedule.rule.matches(outbound[i].dst, letter_dst.postal_code, schedule.dst))
+        if (truck->get_num_letters() < kTruckCapacity
+            && schedule.rule.matches(outbound[i].dst, letter_dst.postal_code, schedule.dst))
             truck->push_back_letter(std::move(outbound[i]));
         else
             outbound[keep++] = std::move(outbound[i]);
@@ -214,7 +222,7 @@ void World::deliver(Truck& truck) {
         }
     }
     if (delivered_any)
-        delivery_events.push_back({arrived_at, earned});
+        money_events.push_back({arrived_at, earned});
 }
 
 bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
@@ -238,13 +246,6 @@ bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick s
         if (existing.dst == dst && existing.rule == normalized_rule)
             return false;  // identical schedule already exists
     }
-
-    // Higher-frequency schedules cost more; creating one is only allowed if
-    // the player can pay the up-front price.
-    const int cost = schedule_cost(period);
-    if (money < cost)
-        return false;
-    money -= cost;
 
     TruckSchedule schedule;
     schedule.dst = dst;

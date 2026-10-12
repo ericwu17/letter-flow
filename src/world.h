@@ -31,9 +31,9 @@ private:
     std::size_t letters_delivered_on_time = 0;
     std::size_t letters_delivered_late = 0;
 
-    // Payouts since the UI last called take_delivery_events(). Transient:
-    // neither serialized nor compared.
-    std::vector<DeliveryEvent> delivery_events;
+    // Payouts and departure charges since the UI last called
+    // take_money_events(). Transient: neither serialized nor compared.
+    std::vector<MoneyEvent> money_events;
 
     std::mt19937 rng{20260926u};  // fixed seed -> fully deterministic simulation
 
@@ -69,12 +69,11 @@ public:
     // Creates a truck schedule on the src -> dst route: departures fall on the
     // grid start_offset + k * period (both in ticks; start_offset is a time of
     // day, i.e. ticks since midnight of day one). The routing rule decides
-    // which outbound letters each departure picks up. Creating a schedule
-    // costs schedule_cost(period) money up front — the higher the frequency,
-    // the higher the price. Returns false and changes nothing if the route is
-    // invalid (bad ids, zero period, empty postal prefix), an identical
-    // (dst, rule) schedule already exists, the player cannot afford it, or
-    // no road connects src and dst.
+    // which outbound letters each departure picks up (at most kTruckCapacity).
+    // Creating a schedule is free; each departure costs kTruckDepartureCost.
+    // Returns false and changes nothing if the route is invalid (bad ids,
+    // zero period, empty postal prefix), an identical (dst, rule) schedule
+    // already exists, or no road connects src and dst.
     // Schedules to the same dst with different rules are allowed; on a tick
     // where both depart, the earlier one in the list takes contested letters.
     bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
@@ -154,8 +153,8 @@ public:
     int get_money() const { return money; }
     std::size_t get_letters_delivered_on_time() const { return letters_delivered_on_time; }
     std::size_t get_letters_delivered_late() const { return letters_delivered_late; }
-    // Hands over (and clears) the payouts recorded since the last call.
-    std::vector<DeliveryEvent> take_delivery_events() { return std::exchange(delivery_events, {}); }
+    // Hands over (and clears) the payouts and charges recorded since the last call.
+    std::vector<MoneyEvent> take_money_events() { return std::exchange(money_events, {}); }
     const std::vector<PostOffice>& get_post_offices() const { return post_offices; }
     // The vector is const but the handles point at mutable Trucks; the
     // presentation layer only ever holds them as pointers-to-const.
