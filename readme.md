@@ -28,6 +28,7 @@ Linux:
 ```sh
 sudo apt install build-essential libsdl2-dev libgl-dev   # (or your distro's equivalent)
 git submodule update --init   # Dear ImGui
+nix-shell
 make && ./letter-flow
 ```
 
