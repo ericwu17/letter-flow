@@ -10,6 +10,11 @@ C++20, SDL2, Dear ImGui (OpenGL3). Runs on macOS, Linux and Windows.
 
 ## Build & run
 
+The top-level `Makefile` detects the host OS and includes the matching
+per-platform makefile (`Makefile.macos` / `Makefile.linux` /
+`Makefile.windows`), so a bare `make` works everywhere. Each platform keeps
+its objects in its own build dir, so they never collide.
+
 macOS:
 
 ```sh
@@ -23,15 +28,15 @@ Linux:
 ```sh
 sudo apt install build-essential libsdl2-dev libgl-dev   # (or your distro's equivalent)
 git submodule update --init   # Dear ImGui
-make -f Makefile.linux && ./letter-flow
+make && ./letter-flow
 ```
 
-Windows (MSYS2, from the "MSYS2 MinGW 64-bit" shell):
+Windows (MSYS2, from the "MSYS2 MinGW 64-bit" shell — not plain cmd):
 
 ```sh
 pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-SDL2 mingw-w64-x86_64-make
 git submodule update --init   # Dear ImGui
-mingw32-make -f Makefile.windows && ./letter-flow.exe
+mingw32-make && ./letter-flow.exe
 ```
 
 ## Controls

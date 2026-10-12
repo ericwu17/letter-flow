@@ -5,7 +5,9 @@
 #   Fedora:         sudo dnf install gcc-c++ make SDL2-devel mesa-libGL-devel
 #   Arch:           sudo pacman -S base-devel sdl2 mesa
 #
-# Build & run:    make -f Makefile.linux && ./letter-flow
+# Included by the top-level Makefile on Linux, so bare `make` just works
+# (equivalent: make -f Makefile.linux).
+# Build & run:    make && ./letter-flow
 #
 # Same layout as the macOS Makefile: our sources under src/, all object
 # files under build/ (keeping the imgui submodule pristine). main.cpp is

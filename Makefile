@@ -1,113 +1,19 @@
-# Letter Flow — SDL2 + OpenGL3 + Dear ImGui (macOS)
+# Letter Flow — top-level makefile: plain `make` on any platform.
 #
-# Requires SDL2:  brew install sdl2
-# Build & run:    make && ./letter-flow
-#
-# Layout mirrors imgui/examples/example_sdl2_opengl3/Makefile, with our own
-# sources under src/ and all object files under build/ (keeping the imgui
-# submodule pristine). Linux and Windows builds use Makefile.linux and
-# Makefile.windows; this one keeps the macOS-only bits (platform_macos.mm,
-# the OpenGL framework, GL deprecation silencing).
+# Detects the host OS and includes the matching per-platform makefile
+# (Makefile.macos / Makefile.linux / Makefile.windows), which hold all the
+# real rules. You can also invoke those directly, e.g. `make -f Makefile.linux`.
+# Same trick as imgui's own example makefiles.
 
-EXE       = letter-flow
-IMGUI_DIR = imgui
-BUILD_DIR = build
-# Vendored single-header libraries: nlohmann/json (save files)
-THIRD_PARTY_DIR = third_party
+UNAME_S := $(shell uname -s)
 
-CXX ?= clang++
-
-CXXFLAGS = -std=c++20 -g
-CXXFLAGS += -Isrc
-# Vendored headers are treated as system headers so they can't trip the
-# warnings-as-errors build of our own sources.
-CXXFLAGS += -isystem $(IMGUI_DIR) -isystem $(IMGUI_DIR)/backends -isystem $(THIRD_PARTY_DIR)
-CXXFLAGS += $(shell sdl2-config --cflags)
-# OpenGL is deprecated on macOS (but fully functional) — silence the warnings
-# so our -Werror build of main.cpp stays clean.
-CXXFLAGS += -DGL_SILENCE_DEPRECATION
-CXXFLAGS += -MMD -MP   # header dependency tracking
-
-# Comprehensive but non-opinionated warning set for our own code (src/, tests/),
-# with warnings treated as errors. Third-party code (imgui) is built with
-# neither these flags nor -Werror.
-WARNINGS  = -Wall -Wextra -Wpedantic -Werror
-WARNINGS += -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
-WARNINGS += -Wcast-align -Wnull-dereference -Wimplicit-fallthrough
-WARNINGS += -Wformat=2 
-WARNINGS += -Wno-error=double-promotion
-
-LIBS  = -framework OpenGL
-LIBS += $(shell sdl2-config --libs)
-
-# Simulation layer: pure logic, no SDL/imgui/Metal — the headless tests link
-# against exactly these objects. Keep presentation code out of this list.
-SIM_SOURCES  = src/road.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
-# main.cpp is shared by all platforms; platform_macos.mm holds the macOS-only
-# startup tweaks (see src/platform_macos.h).
-APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/main.cpp src/platform_macos.mm
-# One headless test binary per tests/test_*.cpp file (see the test rules below).
-TEST_SOURCES := $(wildcard tests/*.cpp)
-TEST_EXES    := $(patsubst tests/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))
-
-IMGUI_SOURCES  = $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_demo.cpp $(IMGUI_DIR)/imgui_draw.cpp
-IMGUI_SOURCES += $(IMGUI_DIR)/imgui_tables.cpp $(IMGUI_DIR)/imgui_widgets.cpp
-IMGUI_SOURCES += $(IMGUI_DIR)/backends/imgui_impl_sdl2.cpp $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp
-
-VENDOR_SOURCES = $(IMGUI_SOURCES)
-
-# src/world.cpp -> build/src/world.o, imgui/imgui.cpp -> build/imgui/imgui.o, etc.
-APP_CPP_OBJS    := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(filter %.cpp,$(APP_SOURCES)))
-APP_MM_OBJS     := $(patsubst %.mm,$(BUILD_DIR)/%.o,$(filter %.mm,$(APP_SOURCES)))
-TEST_OBJS       := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(TEST_SOURCES))
-VENDOR_CPP_OBJS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(filter %.cpp,$(VENDOR_SOURCES)))
-# OBJS links into $(EXE); test objects stay out (they contain their own main).
-OBJS := $(APP_CPP_OBJS) $(APP_MM_OBJS) $(VENDOR_CPP_OBJS)
-SIM_OBJS  := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(SIM_SOURCES))
-DEPS := $(OBJS:.o=.d) $(TEST_OBJS:.o=.d)
-# Objects built with the full warning set (everything we wrote, tests included).
-OUR_CPP_OBJS := $(APP_CPP_OBJS) $(TEST_OBJS)
-OUR_MM_OBJS  := $(APP_MM_OBJS)
-
-all: $(EXE)
-
-$(EXE): $(OBJS)
-	$(CXX) -o $@ $^ $(LIBS)
-
-# Our own code: full warning set, warnings as errors. Static pattern rules
-# must list exactly the objects they build (split by extension above): an
-# empty target list would degrade the line to a bare pattern rule that
-# matches every object in the build.
-$(OUR_CPP_OBJS): $(BUILD_DIR)/%.o: %.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(WARNINGS) -c -o $@ $<
-
-# Objective-C++ files (platform_macos.mm) need the ObjC++ flags.
-$(OUR_MM_OBJS): $(BUILD_DIR)/%.o: %.mm
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(WARNINGS) -ObjC++ -fobjc-weak -fobjc-arc -c -o $@ $<
-
-# Vendored code (imgui): no extra warnings, no -Werror.
-$(VENDOR_CPP_OBJS): $(BUILD_DIR)/%.o: %.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-# Headless tests (no window, no SDL): make test builds and runs one binary
-# per tests/test_*.cpp, each linked against exactly the simulation objects.
-# Tests run from the repo root; artifacts go under build/test-saves/.
-test: $(TEST_EXES)
-	@for exe in $(TEST_EXES); do ./$$exe || exit 1; done
-
-$(BUILD_DIR)/test_%: $(BUILD_DIR)/tests/test_%.o $(SIM_OBJS)
-	$(CXX) -o $@ $^
-
-# The tests are assert-based: force asserts on for test objects so a stray
-# -DNDEBUG in CXXFLAGS can never turn them into silent no-ops.
-$(TEST_OBJS): CXXFLAGS += -UNDEBUG
-
-clean:
-	rm -rf $(BUILD_DIR) $(EXE)
-
--include $(DEPS)
-
-.PHONY: all clean test
+ifeq ($(OS), Windows_NT)   # always set on Windows (cmd, PowerShell and MSYS2);
+                           # checked first because uname may not exist in plain cmd
+include Makefile.windows
+else ifeq ($(UNAME_S), Linux)
+include Makefile.linux
+else ifeq ($(UNAME_S), Darwin)
+include Makefile.macos
+else
+$(error Unsupported platform: OS="$(OS)" uname -s="$(UNAME_S)". Expected Windows, Linux or macOS)
+endif

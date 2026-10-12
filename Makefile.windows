@@ -4,7 +4,9 @@
 #   1. Install MSYS2, then from the "MSYS2 MinGW 64-bit" shell:
 #        pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-SDL2 mingw-w64-x86_64-make
 #   2. Build & run (from the repo root, same shell):
-#        mingw32-make -f Makefile.windows && ./letter-flow.exe
+#        mingw32-make && ./letter-flow.exe
+#      (the top-level Makefile detects Windows and includes this file;
+#      equivalent: mingw32-make -f Makefile.windows)
 #
 # Build from the MSYS2 MinGW64 shell (not plain cmd): make needs the POSIX
 # sh from MSYS2 for the mkdir/test rules, and sdl2-config on the PATH.
