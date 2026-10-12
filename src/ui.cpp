@@ -431,19 +431,30 @@ TransportLayout ComputeTransportLayout(const World& world) {
 //
 // The central node is passthrough (ImGuiDockNodeFlags_PassthruCentralNode), so
 // the map — drawn into the background draw list — stays visible and clickable
-// through it. On first run (when imgui.ini holds no docking data for the
-// dockspace yet) the default layout is built programmatically: the inspector
-// ("###Inspector") is docked into a left split. From then on the layout lives in imgui.ini
-// and the user can rearrange/undock windows freely without the code fighting
-// it every frame.
+// through it. On the first frame, if imgui.ini holds no docking data for the
+// dockspace or no settings for the inspector (first run, or an ini written by
+// an older build), the default layout is built programmatically: the
+// inspector ("###Inspector") is docked into a left split. From then on the
+// layout lives in imgui.ini and the user can rearrange/undock windows freely
+// without the code fighting it every frame.
 // ---------------------------------------------------------------------------
 
 void DrawDockspace() {
     const ImGuiID dockspace_id = MainDockSpaceId();
 
+    // Decided once, on the first frame (imgui.ini is loaded by then): later
+    // frames would see the inspector's settings missing until the ini is next
+    // written, and rebuild over and over.
+    static bool layout_checked = false;
+    const bool needs_default_layout =
+        !layout_checked &&
+        (ImGui::DockBuilderGetNode(dockspace_id) == nullptr ||
+         ImGui::FindWindowSettingsByID(ImHashStr("###Inspector")) == nullptr);
+    layout_checked = true;
+
     // DockBuilder* must run before the dockspace node is submitted this frame.
-    if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
-        ImGui::DockBuilderRemoveNode(dockspace_id);  // no-op on a fresh node
+    if (needs_default_layout) {
+        ImGui::DockBuilderRemoveNode(dockspace_id);  // drops any stale layout; no-op on a fresh node
         ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
         ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
 
@@ -455,7 +466,7 @@ void DrawDockspace() {
         ImGui::DockBuilderFinish(dockspace_id);
 
         // Queued by name: applied when the window is submitted this frame and
-        // persisted into imgui.ini, so it only happens on the first run.
+        // persisted into imgui.ini, so later runs keep the user's layout.
         ImGui::DockBuilderDockWindow("###Inspector", dock_id);
     }
 

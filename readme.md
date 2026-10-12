@@ -58,7 +58,8 @@ mingw32-make && ./letter-flow.exe
   `%APPDATA%\LetterFlow\LetterFlow\save.json` on Windows.
   The save includes the RNG's internal state, so a loaded game continues the
   exact same deterministic simulation (if that state is corrupt, the game
-  still loads, with a freshly seeded RNG).
+  still loads, with a freshly seeded RNG). The window layout (`imgui.ini`)
+  is kept in the same directory, so it's the same however the game is launched.
 
 ## Source layout (will probably be out of date soon)
 

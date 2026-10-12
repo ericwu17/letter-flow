@@ -115,13 +115,27 @@ int main(int, char**)
     SDL_GL_MakeCurrent(window, gl_context);
     SDL_GL_SetSwapInterval(1);  // enable vsync
 
+    // Persistence: the save and the window layout (imgui.ini) live in SDL's
+    // per-user app-data directory (SDL_GetPrefPath takes an org and an app
+    // name — created if needed):
+    //   macOS:   ~/Library/Application Support/LetterFlow/LetterFlow/
+    //   Linux:   ~/.local/share/LetterFlow/LetterFlow/
+    //   Windows: %APPDATA%\LetterFlow\LetterFlow
+    // ImGui's default IniFilename is relative to the working directory, which we don't want.
+    char* pref_path = SDL_GetPrefPath("LetterFlow", "LetterFlow");
+    const std::string pref_dir = pref_path ? pref_path : "";
+    SDL_free(pref_path);
+    const std::string save_path = pref_dir + "save.json";
+    const std::string ini_path = pref_dir + "imgui.ini";  // must outlive the ImGui context
+
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = ini_path.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // requires the imgui 'docking' branch
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
@@ -137,18 +151,8 @@ int main(int, char**)
 
     // Our state: the whole game lives here. The UI layer reads/mutates it,
     // and the frame loop below steps it forward at a fixed tick rate.
-    //
-    // Persistence: the save lives in SDL's per-user app-data directory
-    // (SDL_GetPrefPath takes an org and an app name — created if needed):
-    //   macOS:   ~/Library/Application Support/LetterFlow/LetterFlow/
-    //   Linux:   ~/.local/share/LetterFlow/LetterFlow/
-    //   Windows: %APPDATA%\LetterFlow\LetterFlow
     // Startup continues the previous session if a save exists; the autosave
     // after the main loop writes it back on quit.
-    char* pref_path = SDL_GetPrefPath("LetterFlow", "LetterFlow");
-    const std::string save_path = std::string(pref_path ? pref_path : "") + "save.json";
-    SDL_free(pref_path);
-
     World world = create_default_world();
     if (auto saved = World::load_from_file(save_path))
     {
