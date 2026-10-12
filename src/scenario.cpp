@@ -19,6 +19,7 @@ World create_default_world() {
     // Defaults per class, indexed by office_class.
     const std::size_t class_letters_per_day[] = {0, 4, 8, 14};
     const std::size_t class_max_outbound[]    = {0, 40, 60, 100};
+    const int class_build_cost[]              = {0, 1000, 2500, 5000};
     const OfficeDef defs[] = {
         // Local cluster (Mercer County)
         {"Lawrenceville", "NJ/Mercer/Lawrenceville",      {459, 422}, 1},
@@ -73,7 +74,8 @@ World create_default_world() {
     for (const OfficeDef& def : defs)
         world.add_office(def.name, def.postal_code, def.pos,
                          class_letters_per_day[def.office_class],
-                         class_max_outbound[def.office_class]);
+                         class_max_outbound[def.office_class],
+                         class_build_cost[def.office_class]);
 
     return world;
 }

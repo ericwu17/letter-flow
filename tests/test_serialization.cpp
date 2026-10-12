@@ -60,7 +60,13 @@ void write_file(const fs::path& path, const std::string& contents) {
 // fixture asserts at the end hold on every run.
 World build_fixture_world() {
     World w = create_default_world();  // offices: names, postal codes, positions,
-                                       // spawn rates and seeded letters all non-default
+                                       // spawn rates and build costs all non-default
+
+    // Build only the offices the roads below join (paying their build costs),
+    // so the save holds both built and unbuilt offices, then seed their mail.
+    for (const PostOfficeId id : {0u, 1u, 2u, 3u, 4u, 5u, 7u, 11u})
+        assert(w.build_office(id));
+    w.seed_letters();
 
     // Non-default transport state. (advance_tick() ignores these — the frame
     // loop honors them — but they are part of the saved state.)
@@ -70,7 +76,7 @@ World build_fixture_world() {
     // Roads: every schedule below requires a road between its endpoints
     // (add_schedule checks has_road). The seven L-shaped roads form a
     // non-crossing chain Hopewell - Princeton - Lawrenceville - Trenton plus
-    // Princeton - Monroe - Edison - Newark - Brooklyn; the per-road
+    // Princeton - Monroe - Edison - Florham Park - Asbury Park; the per-road
     // vertical_first choices below are the ones that avoid crossings
     // (e.g. Lawrenceville -> Princeton must arrive from the west, since its
     // northern and southern approaches are taken).
@@ -79,8 +85,8 @@ World build_fixture_world() {
     add_l_road(w, 0, 2, /*vertical_first=*/false);  // Lawrenceville -> Trenton
     add_l_road(w, 1, 4, /*vertical_first=*/true);   // Princeton -> Monroe
     add_l_road(w, 4, 5, /*vertical_first=*/false);  // Monroe -> Edison
-    add_l_road(w, 5, 7, /*vertical_first=*/false);  // Edison -> Newark
-    add_l_road(w, 7, 11, /*vertical_first=*/false); // Newark -> Brooklyn
+    add_l_road(w, 5, 7, /*vertical_first=*/false);  // Edison -> Florham Park
+    add_l_road(w, 7, 11, /*vertical_first=*/false); // Florham Park -> Asbury Park
 
     // All three routing-rule types, distinct periods and start offsets;
     // office 0 ends up with three schedules, so schedule list order (the

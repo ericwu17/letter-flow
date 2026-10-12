@@ -89,6 +89,9 @@ struct PostOffice {
     std::size_t max_outbound_letters = 0;  // game-rule cap on the buffer (not vector::capacity!)
     std::size_t letters_per_day = 0;       // expected letters per day: each tick spawns
                                            // one with probability letters_per_day / kTicksPerDay
+    int build_cost = 0;                    // price the player pays to build this office
+    bool built = false;                    // unbuilt offices are inert: no letters in or out,
+                                           // no roads, no schedules (see World::build_office)
     std::vector<Letter> outbound_letters;
     std::vector<TruckSchedule> outbound_schedules;
 

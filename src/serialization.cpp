@@ -35,7 +35,8 @@ namespace {
 // version are rejected on load rather than half-parsed.
 // v2: roads added; TruckState stores a route polyline (vertices/distances)
 //     instead of straight-line from/to.
-constexpr int kSaveFormatVersion = 2;
+// v3: post offices store build_cost and built.
+constexpr int kSaveFormatVersion = 3;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
 // reordering or extending the enum can never silently misread old saves. An
@@ -119,6 +120,8 @@ void to_json(nlohmann::json& j, const PostOffice& office) {
          {"pos", office.pos},
          {"max_outbound_letters", office.max_outbound_letters},
          {"letters_per_day", office.letters_per_day},
+         {"build_cost", office.build_cost},
+         {"built", office.built},
          {"outbound_letters", office.outbound_letters},
          {"outbound_schedules", office.outbound_schedules}};
 }
@@ -129,6 +132,8 @@ void from_json(const nlohmann::json& j, PostOffice& office) {
     j.at("pos").get_to(office.pos);
     j.at("max_outbound_letters").get_to(office.max_outbound_letters);
     j.at("letters_per_day").get_to(office.letters_per_day);
+    j.at("build_cost").get_to(office.build_cost);
+    j.at("built").get_to(office.built);
     j.at("outbound_letters").get_to(office.outbound_letters);
     j.at("outbound_schedules").get_to(office.outbound_schedules);
 }
@@ -177,8 +182,8 @@ namespace {
 // references, schedules violating the invariants add_schedule() enforces
 // (dst is another office, period > 0, non-empty postal prefix), and roads
 // violating the invariants add_road() enforces (normalized src < dst, no
-// duplicates, at least two in-range vertices anchored at the endpoint
-// offices).
+// duplicates, both endpoint offices built, at least two in-range vertices
+// anchored at the endpoint offices).
 bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                            const std::vector<std::shared_ptr<Truck>>& trucks,
                            const std::vector<Road>& roads) {
@@ -207,6 +212,8 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
     for (std::size_t i = 0; i < roads.size(); ++i) {
         const Road& road = roads[i];
         if (road.src >= num_offices || road.dst >= num_offices || road.src >= road.dst)
+            return false;
+        if (!post_offices[road.src].built || !post_offices[road.dst].built)
             return false;
         if (road.vertices.size() < 2 || !all_vertices_in_range(road.vertices))
             return false;

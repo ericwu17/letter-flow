@@ -44,14 +44,17 @@ void add_underpass_road(World& w, PostOfficeId a, PostOfficeId b) {
 // are joined by straight roads. Only office 0 produces mail
 // (`letters_at_source` seeded letters, all addressed to one of the other
 // offices at random, plus that same rate trickling in per tick); every other
-// office has letters_per_day = 0 and stays inert.
+// office has letters_per_day = 0 and stays inert. Every office is built, for
+// free (build_cost 0), so money only moves for roads and schedules.
 World make_line_world(std::size_t count, std::size_t letters_at_source) {
     World w;
     for (std::size_t i = 0; i < count; ++i) {
         const std::string name = "O" + std::to_string(i);
         const std::string code = "T/" + std::to_string(i);
-        w.add_office(name, code, {100 * static_cast<int64_t>(i), 0},
-                     i == 0 ? letters_at_source : 0, /*max_outbound_letters=*/1000);
+        const PostOfficeId id = w.add_office(name, code, {100 * static_cast<int64_t>(i), 0},
+                                             i == 0 ? letters_at_source : 0,
+                                             /*max_outbound_letters=*/1000, /*build_cost=*/0);
+        assert(w.build_office(id));
     }
     w.seed_letters();
     for (std::size_t i = 1; i < count; ++i)
@@ -352,9 +355,11 @@ void road_removal() {
 // schedule delivers it onward — every seeded letter ends up scored, on time.
 void multi_hop_forwarding_delivers_every_letter() {
     World w;
-    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 12, 100);
-    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100);
-    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100);
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 12, 100, 0);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100, 0);
+    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100, 0);
+    for (const PostOfficeId id : {a, b, c})
+        assert(w.build_office(id));
     w.seed_letters();  // 12 letters at A, addressed to B or C at random
     add_straight_road(w, a, b);
     add_straight_road(w, b, c);
@@ -373,6 +378,55 @@ void multi_hop_forwarding_delivers_every_letter() {
     assert(w.get_letters_delivered_on_time() == 12);  // every seeded letter, nothing lost
     for (const PostOffice& office : w.get_post_offices())
         assert(office.outbound_letters.empty());
+}
+
+// Offices start unbuilt and inert: they spawn no letters, receive none, and
+// cannot be joined by roads until the player pays to build them.
+void building_offices() {
+    World w;
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 50, 100, 1000);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 50, 100, 2000);
+    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 50, 100, 10 * kStartingMoney);
+    for (const PostOffice& office : w.get_post_offices())
+        assert(!office.built);
+
+    // Unbuilt: no letters, no roads.
+    w.seed_letters();
+    for (Tick t = 0; t < kTicksPerDay; ++t)
+        w.advance_tick();
+    for (const PostOffice& office : w.get_post_offices())
+        assert(office.outbound_letters.empty());
+    assert(!w.add_road(a, b, {{0, 0}, {100, 0}}));
+    assert(w.get_money() == kStartingMoney);
+
+    // Building charges build_cost once; rebuilding and bad ids are rejected.
+    assert(w.build_office(a));
+    assert(w.get_money() == kStartingMoney - 1000);
+    assert(!w.build_office(a));
+    assert(!w.build_office(99));
+    assert(w.get_money() == kStartingMoney - 1000);
+
+    // A lone built office has nobody to write to.
+    w.seed_letters();
+    assert(w.get_post_offices()[a].outbound_letters.empty());
+
+    // Unaffordable offices stay unbuilt and cost nothing.
+    assert(!w.build_office(c));
+    assert(!w.get_post_offices()[c].built);
+    assert(w.get_money() == kStartingMoney - 1000);
+
+    // With two built offices, mail flows only between them, never to C.
+    assert(w.build_office(b));
+    assert(w.get_money() == kStartingMoney - 3000);
+    assert(w.add_road(a, b, {{0, 0}, {100, 0}}));
+    assert(!w.add_road(b, c, {{100, 0}, {200, 0}}));
+    w.seed_letters();
+    assert(!w.get_post_offices()[a].outbound_letters.empty());
+    assert(!w.get_post_offices()[b].outbound_letters.empty());
+    assert(w.get_post_offices()[c].outbound_letters.empty());
+    for (const PostOffice& office : w.get_post_offices())
+        for (const Letter& letter : office.outbound_letters)
+            assert(letter.dst != c);
 }
 
 }  // namespace
@@ -396,6 +450,8 @@ int main() {
     printf("PASS road_removal\n");
     observed_truck_expires_on_arrival();
     printf("PASS observed_truck_expires_on_arrival\n");
+    building_offices();
+    printf("PASS building_offices\n");
 
     printf("all simulation tests passed\n");
     return 0;

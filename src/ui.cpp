@@ -59,6 +59,7 @@ constexpr ImU32 kColorText         = IM_COL32(235, 235, 240, 255);  // near-whit
 constexpr ImU32 kColorTextShadow   = IM_COL32(0, 0, 0, 255);
 constexpr ImU32 kColorTextDim      = IM_COL32(235, 235, 240, 200);  // inactive icons
 constexpr ImU32 kColorAccent       = IM_COL32(70, 130, 220, 255);    // offices, day-progress fill
+constexpr ImU32 kColorOfficeUnbuilt = IM_COL32(85, 90, 105, 255);    // offices not yet built
 constexpr ImU32 kColorHoverBg      = IM_COL32(70, 130, 220, 90);     // hovered transport buttons
 constexpr ImU32 kColorSelection    = IM_COL32(255, 200, 80, 255);    // selected-office ring
 constexpr ImU32 kColorTruck        = IM_COL32(240, 150, 60, 255);    // trucks, active fast-forward
@@ -585,7 +586,7 @@ void DrawWorld(World& world) {
             PostOfficeId near_office = kNoPostOffice;
             float best_dist = near_radius * near_radius;
             for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                if (id == g_road_builder.src) continue;
+                if (id == g_road_builder.src || !offices[id].built) continue;
                 const ImVec2 oc = WorldToScreen(view, offices[id].pos);
                 const float dx = io.MousePos.x - oc.x;
                 const float dy = io.MousePos.y - oc.y;
@@ -656,7 +657,7 @@ void DrawWorld(World& world) {
         const ImVec2 c = WorldToScreen(view, office.pos);
         if (selected_truck == nullptr && id == g_selected_office)
             draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 2.5f);
-        draw->AddCircleFilled(c, office_radius, kColorAccent);
+        draw->AddCircleFilled(c, office_radius, office.built ? kColorAccent : kColorOfficeUnbuilt);
         draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 1.5f);
 
         const ImVec2 name_size = ImGui::CalcTextSize(office.name.c_str());
@@ -679,7 +680,10 @@ void DrawWorld(World& world) {
         }
 
         char buf[64];
-        std::snprintf(buf, sizeof(buf), "%zu letters", office.outbound_letters.size());
+        if (office.built)
+            std::snprintf(buf, sizeof(buf), "%zu letters", office.outbound_letters.size());
+        else
+            std::snprintf(buf, sizeof(buf), "Build: $%d", office.build_cost);
         DrawCenteredText(draw, {c.x, c.y + office_radius + 12.0f}, buf);
     }
 
@@ -708,8 +712,10 @@ void DrawWorld(World& world) {
             hovered_road = HitTestRoad(world.get_roads(), view, io.MousePos,
                                        std::max(8.0f, 2.5f * view.scale));
     } else if (mouse_on_map && g_road_build_state == RoadBuildState::SelectSource) {
-        // Picking a road's source office: only offices are clickable.
+        // Picking a road's source office: only built offices are clickable.
         hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
+        if (hovered_office.has_value() && !offices[*hovered_office].built)
+            hovered_office.reset();
     }
     if (hovered_truck != nullptr || hovered_office.has_value() || hovered_road.has_value())
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -759,7 +765,7 @@ void DrawWorld(World& world) {
                 // destination office to complete the road.
                 bool hit_office = false;
                 for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                    if (id == g_road_builder.src) continue;
+                    if (id == g_road_builder.src || !offices[id].built) continue;
                     const ImVec2 oc = WorldToScreen(view, offices[id].pos);
                     const float hit_radius = office_radius * 3.0f;
                     const float dx_mouse = io.MousePos.x - oc.x;
@@ -1006,6 +1012,22 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
     }
     if (ImGui::InputText("Postal code", postal_buf, sizeof(postal_buf)))
         world.set_postal_code(selected, postal_buf);
+
+    // An unbuilt office has no letters or schedules yet: offer to build it.
+    if (!office.built) {
+        ImGui::Text("Not built yet. Once built: %zu letters per day, capacity %zu.",
+                    office.letters_per_day, office.max_outbound_letters);
+        const bool affordable = world.get_money() >= office.build_cost;
+        ImGui::BeginDisabled(!affordable);
+        char build_label[64];
+        std::snprintf(build_label, sizeof(build_label), "Build post office ($%d)", office.build_cost);
+        if (ImGui::Button(build_label))
+            world.build_office(selected);
+        ImGui::EndDisabled();
+        if (!affordable)
+            ImGui::TextColored(kColorErrorText, "You only have $%d.", world.get_money());
+        return;
+    }
 
     ImGui::Text("Outbound: %zu / %zu   (%zu per day)",
                 office.outbound_letters.size(), office.max_outbound_letters, office.letters_per_day);

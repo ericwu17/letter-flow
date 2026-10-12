@@ -4,7 +4,9 @@
 
 #include "world.h"
 
-// The starter scenario: thirty offices across New Jersey, New York, and
-// Pennsylvania and no truck routes — the player buys the schedules they want, and each one
-// costs money (see add_schedule).
+// The starter scenario: thirty unbuilt offices across New Jersey, New York,
+// and Pennsylvania, and no roads or truck routes. The player pays to build the
+// offices, roads and schedules they want (see build_office, add_road and
+// add_schedule); bigger offices cost more to build.
+World create_default_world();
 World create_default_world();

@@ -91,12 +91,14 @@ void coordinate_range() {
 // four compass points around (10, 10) plus two far apart on the bound.
 void add_road_rules() {
     World w;
-    const PostOfficeId west = w.add_office("W", "W", {0, 10}, 0, 10);
-    const PostOfficeId east = w.add_office("E", "E", {20, 10}, 0, 10);
-    const PostOfficeId north = w.add_office("N", "N", {10, 0}, 0, 10);
-    const PostOfficeId south = w.add_office("S", "S", {10, 20}, 0, 10);
-    const PostOfficeId far_a = w.add_office("A", "A", {M + 1, 0}, 0, 10);
-    const PostOfficeId far_b = w.add_office("B", "B", {M + 1, 10}, 0, 10);
+    const PostOfficeId west = w.add_office("W", "W", {0, 10}, 0, 10, 0);
+    const PostOfficeId east = w.add_office("E", "E", {20, 10}, 0, 10, 0);
+    const PostOfficeId north = w.add_office("N", "N", {10, 0}, 0, 10, 0);
+    const PostOfficeId south = w.add_office("S", "S", {10, 20}, 0, 10, 0);
+    const PostOfficeId far_a = w.add_office("A", "A", {M + 1, 0}, 0, 10, 0);
+    const PostOfficeId far_b = w.add_office("B", "B", {M + 1, 10}, 0, 10, 0);
+    for (const PostOfficeId id : {west, east, north, south, far_a, far_b})
+        assert(w.build_office(id));
 
     assert(w.add_road(west, east, {{0, 10}, {10, 10}, {20, 10}}));
     const int money = w.get_money();

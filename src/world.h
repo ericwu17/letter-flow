@@ -45,15 +45,22 @@ public:
 
     // Scenario construction. create_default_world() (scenario.h) builds the
     // starter map entirely through this public API — no friendship required.
+    // New offices start unbuilt; the player pays build_cost to build them.
     PostOfficeId add_office(std::string name, std::string postal_code, Position pos,
                             std::size_t letters_per_day,
-                            std::size_t max_outbound_letters);
-    // Fills every office's buffer with one day's worth of letters right away,
+                            std::size_t max_outbound_letters,
+                            int build_cost);
+    // Fills every built office's buffer with one day's worth of letters right away,
     // so a scenario starts in motion instead of waiting for letters to trickle
     // in one probabilistic spawn at a time.
     void seed_letters();
 
     // Player actions (called from the UI).
+    // Builds an office, paying its build_cost up front. Only built offices
+    // spawn and receive letters, and only they can be joined by roads (and
+    // hence schedules). Returns false and changes nothing if the id is
+    // invalid, the office is already built, or the player cannot afford it.
+    bool build_office(PostOfficeId office);
     // Creates a truck schedule on the src -> dst route: departures fall on the
     // grid start_offset + k * period (both in ticks; start_offset is a time of
     // day, i.e. ticks since midnight of day one). The routing rule decides
@@ -84,8 +91,9 @@ public:
     // Build a road from `src` to `dst`. `vertices` is the complete polyline:
     // vertices[0] must equal post_offices[src].pos and vertices.back() must
     // equal post_offices[dst].pos, and every coordinate must be within
-    // ±kMaxCoordinate. All segments must be non-empty and horizontal,
-    // vertical, or exactly 45° diagonal; the road must not touch itself, and
+    // ±kMaxCoordinate. Both offices must be built. All segments must be
+    // non-empty and horizontal, vertical, or exactly 45° diagonal; the road
+    // must not touch itself, and
     // may touch existing roads only at post offices they share as endpoints.
     // The player pays road_cost(road) up front. Internally the
     // road is normalized so src < dst. Returns false and changes nothing on

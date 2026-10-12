@@ -80,6 +80,8 @@ void World::advance_tick() {
 
 void World::maybe_spawn_letter(PostOfficeId office_id) {
     const PostOffice& office = post_offices[office_id];
+    if (!office.built)
+        return;
 
     // Exact integer roll: a uniform value in [0, kTicksPerDay) lands below
     // letters_per_day with probability letters_per_day / kTicksPerDay.
@@ -91,9 +93,18 @@ void World::maybe_spawn_letter(PostOfficeId office_id) {
 }
 
 void World::spawn_letter(PostOfficeId office_id) {
-    if (post_offices.size() < 2)
-        return;
     PostOffice& office = post_offices[office_id];
+    if (!office.built)
+        return;
+
+    // Letters are only addressed to other built offices; with none, there is
+    // nowhere to send mail (this also keeps the dst loop below terminating).
+    const bool has_built_dst = std::any_of(
+        post_offices.begin(), post_offices.end(), [&](const PostOffice& other) {
+            return other.built && &other != &office;
+        });
+    if (!has_built_dst)
+        return;
 
     if (office.outbound_letters.size() >= office.max_outbound_letters)
         return;  // buffer full: this letter is lost
@@ -104,7 +115,7 @@ void World::spawn_letter(PostOfficeId office_id) {
     std::uniform_int_distribution<int> pick_fine(3, 10);
 
     PostOfficeId dst = office_id;
-    while (dst == office_id)
+    while (dst == office_id || !post_offices[dst].built)
         dst = pick_office(rng);
     Letter letter;
     letter.src = office_id;
@@ -249,16 +260,29 @@ void World::set_postal_code(PostOfficeId office, std::string postal_code) {
 
 PostOfficeId World::add_office(std::string name, std::string postal_code, Position pos,
                                std::size_t letters_per_day,
-                               std::size_t max_outbound_letters) {
+                               std::size_t max_outbound_letters,
+                               int build_cost) {
     PostOffice office;
     office.name = std::move(name);
     office.postal_code = std::move(postal_code);
     office.pos = pos;
     office.letters_per_day = letters_per_day;
     office.max_outbound_letters = max_outbound_letters;
+    office.build_cost = build_cost;
     const PostOfficeId id = post_offices.size();
     post_offices.push_back(std::move(office));
     return id;
+}
+
+bool World::build_office(PostOfficeId office) {
+    if (office >= post_offices.size() || post_offices[office].built)
+        return false;
+    const int cost = post_offices[office].build_cost;
+    if (money < cost)
+        return false;
+    money -= cost;
+    post_offices[office].built = true;
+    return true;
 }
 
 void World::seed_letters() {
@@ -292,6 +316,8 @@ const Road* World::find_road(PostOfficeId a, PostOfficeId b) const {
 bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> vertices) {
     // Validate office indices.
     if (src >= post_offices.size() || dst >= post_offices.size() || src == dst)
+        return false;
+    if (!post_offices[src].built || !post_offices[dst].built)
         return false;
     if (vertices.size() < 2)
         return false;
