@@ -142,7 +142,7 @@ int main(int, char**)
     // (SDL_GetPrefPath takes an org and an app name — created if needed):
     //   macOS:   ~/Library/Application Support/LetterFlow/LetterFlow/
     //   Linux:   ~/.local/share/LetterFlow/LetterFlow/
-    //   Windows: %APPDATA%\LetterFlow\LetterFlow\
+    //   Windows: %APPDATA%\LetterFlow\LetterFlow
     // Startup continues the previous session if a save exists; the autosave
     // after the main loop writes it back on quit.
     char* pref_path = SDL_GetPrefPath("LetterFlow", "LetterFlow");
