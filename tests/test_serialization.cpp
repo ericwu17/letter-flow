@@ -15,10 +15,10 @@
 // the saves file stores them (dump(2)), edited as text where a test needs a
 // corrupt or old-format save, and parsed back. The saves file itself is
 // covered by test_save_library.cpp.
-#include "balance.h"
-#include "scenario.h"
-#include "world.h"
-#include "world_json.h"
+#include "sim/balance.h"
+#include "sim/scenario.h"
+#include "sim/world.h"
+#include "persistence/world_json.h"
 
 #include <nlohmann/json.hpp>
 

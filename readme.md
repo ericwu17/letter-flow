@@ -99,33 +99,41 @@ mingw32-make && ./letter-flow.exe
 
 ## Source layout (will probably be out of date soon)
 
+Sources are grouped by layer, one directory each, and includes name the layer
+(`#include "sim/world.h"`). Dependencies only point down the list: `sim/`
+includes nothing else of ours, `persistence/` only `sim/`, `ui/` both of those,
+and `app/` everything.
+
 ```
-src/game_types.h      shared primitives: Tick, Position, world constants
-src/balance.h         gameplay tuning: costs, starting money, truck and letter numbers
-src/entities.h        data entities: Letter (+ trail), RoutingRule, TruckSchedule, PostOffice
-src/stats.*           StatSeries: multi-resolution ring buffers behind every statistic
-src/truck.*           Truck: deterministic point-to-point motion
-src/road.*            Road and the exact integer geometry behind road rules
-src/road_builder.*    RoadBuilder: snaps the road being drawn to legal segments
-src/world.*           World: owns all state, advances the sim in fixed 60 Hz ticks
-src/scenario.*        create_default_world() starter map, create_tutorial_world() practice map
-src/tutorial.*        Tutorial: the tutorial's steps, their completion checks and progress
-src/world_json.h      WorldJson: World <-> JSON, for the persistence code only (keeps nlohmann out of world.h)
-src/serialization.cpp JSON conversion of the whole simulation state: implements WorldJson
-src/save_library.*    SaveLibrary: every save in one JSON file (create, copy, rename, delete, load, store)
-src/ui.*              Dear ImGui presentation layer (ui*.cpp are the only places ImGui exists):
-                      shared UI state and its reset, formatting, the dockspace
-src/ui_internal.h     the per-game UI state (GameUiState) and helpers shared between the ui*.cpp files
-src/ui_map.cpp        the map: camera, offices, roads, trucks, selection, road building
-src/ui_hud.cpp        transport bar (play/pause, speed, clock) and the HUD card
-src/ui_inspector.cpp  inspector: office panel (letters, schedules, new-schedule form), truck panel
-src/ui_menu.cpp       main menu, credits page and save list (the screens before a game starts)
-src/ui_tutorial.cpp   tutorial cards and spotlights
-src/ui_stats.cpp      statistics window, stat widgets and letter-trail tooltips (ImPlot)
-src/ui_theme.*        the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets
-src/main.cpp          SDL2 + OpenGL3 bootstrap and frame loop (all platforms)
-src/app_icon.*        window/Dock icon from assets/logo.png (embedded at build time)
-src/platform_macos.*  macOS-only startup tweaks (the sole Objective-C++ file)
+src/sim/                 the game rules: pure logic, deterministic, no SDL/ImGui/OpenGL
+  game_types.h           shared primitives: Tick, Position, world constants
+  balance.h              gameplay tuning: costs, starting money, truck and letter numbers
+  entities.h             data entities: Letter (+ trail), RoutingRule, TruckSchedule, PostOffice
+  stats.*                StatSeries: multi-resolution ring buffers behind every statistic
+  truck.*                Truck: deterministic point-to-point motion
+  road.*                 Road and the exact integer geometry behind road rules
+  road_builder.*         RoadBuilder: snaps the road being drawn to legal segments
+  world.*                World: owns all state, advances the sim in fixed 60 Hz ticks
+  scenario.*             create_default_world() starter map, create_tutorial_world() practice map
+  tutorial.*             Tutorial: the tutorial's steps, their completion checks and progress
+src/persistence/         saving and loading (the only code that knows nlohmann/json)
+  world_json.h           WorldJson: World <-> JSON (keeps nlohmann out of world.h)
+  serialization.cpp      JSON conversion of the whole simulation state: implements WorldJson
+  save_library.*         SaveLibrary: every save in one JSON file (create, copy, rename, delete, load, store)
+src/ui/                  Dear ImGui presentation layer (the only place ImGui exists)
+  ui.*                   public entry points; shared UI state and its reset, formatting, the dockspace
+  ui_internal.h          the per-game UI state (GameUiState) and helpers shared between the ui*.cpp files
+  ui_map.cpp             the map: camera, offices, roads, trucks, selection, road building
+  ui_hud.cpp             transport bar (play/pause, speed, clock) and the HUD card
+  ui_inspector.cpp       inspector: office panel (letters, schedules, new-schedule form), truck panel
+  ui_menu.cpp            main menu, credits page and save list (the screens before a game starts)
+  ui_tutorial.cpp        tutorial cards and spotlights
+  ui_stats.cpp           statistics window, stat widgets and letter-trail tooltips (ImPlot)
+  ui_theme.*             the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets
+src/app/                 the application shell
+  main.cpp               SDL2 + OpenGL3 bootstrap and frame loop (all platforms)
+  app_icon.*             window/Dock icon from assets/logo.png (embedded at build time)
+  platform_macos.*       macOS-only startup tweaks (the sole Objective-C++ file)
 
 tests/test_geometry.cpp       headless exact road-geometry and truck-motion tests (make test)
 tests/test_road_builder.cpp   headless road-drawing tests: snapping, committing, validity (make test)
@@ -157,6 +165,6 @@ fails loudly. Every `operator==` is `= default` (`World`'s and `Truck`'s
 included), so new fields are compared automatically — just give them a
 distinct value in the fixture.
 
-Everything except `ui*`, `main.cpp` and `platform_macos.*` handles simulation,
-and is fully deterministic (fixed RNG seed, fixed timestep — the RNG state is
+Everything in `src/sim/` and `src/persistence/` handles simulation (the
+headless tests link exactly those), and is fully deterministic (fixed RNG seed, fixed timestep — the RNG state is
 part of the save file, so determinism survives save/load).

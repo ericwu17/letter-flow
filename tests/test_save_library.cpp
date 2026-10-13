@@ -6,11 +6,11 @@
 // (gitignored); the test must run with the repo root as working directory
 // (`make test` does). Reopening a SaveLibrary on the same path is how the
 // tests check that something really reached the file.
-#include "balance.h"
-#include "save_library.h"
-#include "scenario.h"
-#include "world.h"
-#include "world_json.h"
+#include "sim/balance.h"
+#include "persistence/save_library.h"
+#include "sim/scenario.h"
+#include "sim/world.h"
+#include "persistence/world_json.h"
 
 #include <nlohmann/json.hpp>
 

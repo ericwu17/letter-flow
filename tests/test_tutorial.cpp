@@ -3,12 +3,12 @@
 // describe, and a player following the steps through the World API alone,
 // with hand-set UI facts, reaches the end. Run with `make test`. Pure
 // simulation layer: no SDL/imgui/OpenGL.
-#include "entities.h"
-#include "game_types.h"
-#include "scenario.h"
-#include "stats.h"
-#include "tutorial.h"
-#include "world.h"
+#include "sim/entities.h"
+#include "sim/game_types.h"
+#include "sim/scenario.h"
+#include "sim/stats.h"
+#include "sim/tutorial.h"
+#include "sim/world.h"
 
 #include <cassert>
 #include <cstdio>

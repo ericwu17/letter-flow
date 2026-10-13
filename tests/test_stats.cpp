@@ -1,7 +1,7 @@
 // test_stats.cpp — headless tests for StatSeries, the multi-resolution ring
 // buffer behind every statistic (stats.h). Run with `make test`.
 // Pure simulation layer: no SDL/imgui/OpenGL — no window is needed.
-#include "stats.h"
+#include "sim/stats.h"
 
 #include <array>
 #include <cassert>

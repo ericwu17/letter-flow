@@ -2,9 +2,9 @@
 // snapping the road being drawn to legal segments, committing and
 // collapsing vertices, and validity against the World. Run with `make test`.
 // Pure simulation layer: no SDL/imgui/OpenGL — no window needed.
-#include "road.h"
-#include "road_builder.h"
-#include "world.h"
+#include "sim/road.h"
+#include "sim/road_builder.h"
+#include "sim/world.h"
 
 #include <cassert>
 #include <cstdio>

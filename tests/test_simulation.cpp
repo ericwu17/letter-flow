@@ -7,11 +7,11 @@
 // Everything here is deterministic (fixed RNG seed, fixed tick counts) and
 // worlds are built to order through add_office()/seed_letters(), so the
 // asserts hold on every run.
-#include "entities.h"
-#include "balance.h"
-#include "game_types.h"
-#include "truck.h"
-#include "world.h"
+#include "sim/entities.h"
+#include "sim/balance.h"
+#include "sim/game_types.h"
+#include "sim/truck.h"
+#include "sim/world.h"
 
 #include <cassert>
 #include <cstdio>

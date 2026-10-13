@@ -1,11 +1,11 @@
 // test_geometry.cpp — headless tests for the exact road geometry (road.h)
 // and the road rules World::add_road builds on it. Run with `make test`.
 // Pure simulation layer: no SDL/imgui/OpenGL — no window needed.
-#include "balance.h"
-#include "game_types.h"
-#include "road.h"
-#include "truck.h"
-#include "world.h"
+#include "sim/balance.h"
+#include "sim/game_types.h"
+#include "sim/road.h"
+#include "sim/truck.h"
+#include "sim/world.h"
 
 #include <cassert>
 #include <cstdio>

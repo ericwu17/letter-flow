@@ -16,8 +16,8 @@ CXX ?= clang++
 # so our -Werror build of main.cpp stays clean.
 PLATFORM_CXXFLAGS = -DGL_SILENCE_DEPRECATION
 
-# platform_macos.mm holds the macOS-only startup tweaks (see src/platform_macos.h).
-PLATFORM_SOURCES = src/platform_macos.mm
+# platform_macos.mm holds the macOS-only startup tweaks (see src/app/platform_macos.h).
+PLATFORM_SOURCES = src/app/platform_macos.mm
 
 LIBS  = -framework OpenGL
 LIBS += $(shell sdl2-config --libs)
