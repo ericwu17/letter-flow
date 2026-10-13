@@ -231,18 +231,18 @@ std::optional<RoutingRule> World::validate_schedule(PostOfficeId src, PostOffice
                                                     std::size_t ignore_index) const {
     if (src >= post_offices.size() || dst >= post_offices.size() || src == dst || period == 0)
         return std::nullopt;
-    if (rule.type == RoutingRuleType::PostalPrefix && rule.prefix.empty())
-        return std::nullopt;  // an empty prefix must be an explicit AllLetters rule
+    if (!rule.is_well_formed())
+        return std::nullopt;  // e.g. an empty prefix must be an explicit AllLetters rule
 
     // Road constraint: a schedule requires a road connecting the two offices.
     if (!has_road(src, dst))
         return std::nullopt;
 
-    // Normalize: only PostalPrefix rules carry a prefix, so equality (and the
+    // Normalize: only PostalPrefix rules carry prefixes, so equality (and the
     // duplicate check below) compares like with like.
     RoutingRule normalized_rule = rule;
     if (normalized_rule.type != RoutingRuleType::PostalPrefix)
-        normalized_rule.prefix.clear();
+        normalized_rule.prefixes.clear();
 
     const std::vector<TruckSchedule>& schedules = post_offices[src].outbound_schedules;
     for (std::size_t i = 0; i < schedules.size(); ++i) {

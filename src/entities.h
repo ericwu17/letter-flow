@@ -50,14 +50,16 @@ struct MoneyEvent {
 enum class RoutingRuleType {
     ExactDestination,  // only letters addressed to the schedule's dst office
     PostalPrefix,      // letters addressed to offices whose postal code starts
-                       // with `prefix` — hub-style collection; letters not
+                       // with any of `prefixes` — hub-style collection; letters not
                        // addressed to dst are forwarded on arrival
     AllLetters,        // the whole buffer, regardless of address
 };
 
 struct RoutingRule {
     RoutingRuleType type = RoutingRuleType::ExactDestination;
-    std::string prefix;  // only meaningful (and required non-empty) for PostalPrefix
+    // Only meaningful for PostalPrefix, where it is required non-empty with no
+    // empty element; a letter matches if its postal code starts with any of them.
+    std::vector<std::string> prefixes;
 
     // `letter_dst` is the office the letter is addressed to and
     // `dst_postal_code` its current postal code; `schedule_dst` is the office
@@ -70,11 +72,31 @@ struct RoutingRule {
         case RoutingRuleType::PostalPrefix:
             // An empty prefix would match everything; treat it as matching
             // nothing so a misconfigured rule never silently acts as AllLetters.
-            return !prefix.empty() && dst_postal_code.starts_with(prefix);
+            for (const std::string& prefix : prefixes)
+                if (!prefix.empty() && dst_postal_code.starts_with(prefix))
+                    return true;
+            return false;
         case RoutingRuleType::AllLetters:
             return true;
         }
         return false;
+    }
+
+    // False for a PostalPrefix rule with no prefix, an empty one (such a rule
+    // must be an explicit AllLetters rule instead) or one listed twice.
+    bool is_well_formed() const {
+        if (type != RoutingRuleType::PostalPrefix)
+            return true;
+        if (prefixes.empty())
+            return false;
+        for (std::size_t i = 0; i < prefixes.size(); ++i) {
+            if (prefixes[i].empty())
+                return false;
+            for (std::size_t j = 0; j < i; ++j)
+                if (prefixes[j] == prefixes[i])
+                    return false;
+        }
+        return true;
     }
 
     bool operator==(const RoutingRule&) const = default;

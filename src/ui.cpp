@@ -1099,6 +1099,107 @@ static bool EditHoursMinutes(const char* id, Tick& ticks, int max_hours) {
     return changed;
 }
 
+// A PostalPrefix rule's prefix list: one field per prefix, stacked
+// vertically, with an "OR" label in a left gutter halfway between each pair
+// of consecutive fields. Each field has a remove button while more than one
+// prefix is left, and "+ Or..." appends a prefix in use on the map (a real
+// one, so the list stays valid and an edit applied straight to the World is
+// accepted unless the player typed an empty or repeated prefix). `width` spans gutter, fields and buttons; 0 fills the remaining
+// width. Returns true and writes `prefixes` when the player changed the list.
+static bool EditPrefixList(const char* id, std::vector<std::string>& prefixes,
+                           const std::vector<PostOffice>& offices, float width) {
+    // The prefix being typed. A field's buffer is otherwise rebuilt from
+    // `prefixes` every frame, but a keystroke the caller refuses (an empty or
+    // duplicate prefix) must not snap the text back mid-edit, so the active
+    // field keeps its text here; it reverts to the caller's value once
+    // deactivated. Only one field is ever active, so one buffer serves all.
+    static char active_prefix[256];
+
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float or_width = ImGui::CalcTextSize("OR").x;
+    const float gutter = or_width + style.ItemSpacing.x;
+    const float total_width = width > 0.0f ? width : ImGui::GetContentRegionAvail().x;
+    const bool removable = prefixes.size() > 1;
+    const float remove_width = ImGui::CalcTextSize("x").x + style.FramePadding.x * 2.0f;
+    const float field_width = total_width - gutter - (removable ? remove_width + style.ItemSpacing.x : 0.0f);
+
+    bool changed = false;
+    std::optional<std::size_t> to_remove;
+    std::vector<float> row_centers;  // screen y of each field's vertical center
+
+    ImGui::PushID(id);
+    ImGui::BeginGroup();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    for (std::size_t k = 0; k < prefixes.size(); ++k) {
+        ImGui::PushID(static_cast<int>(k));
+        ImGui::SetCursorScreenPos({origin.x + gutter, ImGui::GetCursorScreenPos().y});
+        const ImGuiID field_id = ImGui::GetID("##prefix");
+        const bool editing = ImGui::GetActiveID() == field_id;
+        char row_prefix[256];
+        std::snprintf(row_prefix, sizeof(row_prefix), "%s", prefixes[k].c_str());
+        char* buf = editing ? active_prefix : row_prefix;
+        // Red while the typed text is not (yet) an accepted prefix.
+        const bool refused = editing && prefixes[k] != active_prefix;
+        if (refused)
+            ImGui::PushStyleColor(ImGuiCol_Text, kColorErrorText);
+        ImGui::SetNextItemWidth(field_width);
+        if (ImGui::InputTextWithHint("##prefix", "e.g. NJ/North", buf, sizeof(active_prefix))) {
+            prefixes[k] = buf;
+            changed = true;
+        }
+        if (refused)
+            ImGui::PopStyleColor();
+        if (ImGui::IsItemActivated())
+            std::snprintf(active_prefix, sizeof(active_prefix), "%s", row_prefix);
+        row_centers.push_back((ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
+        if (removable) {
+            ImGui::SameLine();
+            if (ImGui::Button("x"))
+                to_remove = k;
+            ImGui::SetItemTooltip("Remove this prefix");
+        }
+        ImGui::PopID();
+    }
+
+    // Append: every prefix in use on the map that is not listed yet.
+    ImGui::SetCursorScreenPos({origin.x + gutter, ImGui::GetCursorScreenPos().y});
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("+ Or...").x + ImGui::GetFrameHeight() +
+                            style.FramePadding.x * 2.0f);
+    if (ImGui::BeginCombo("##add_prefix", "+ Or...")) {
+        bool any = false;
+        for (const std::string& suggestion : CollectPostalPrefixes(offices)) {
+            if (std::find(prefixes.begin(), prefixes.end(), suggestion) != prefixes.end())
+                continue;
+            any = true;
+            if (ImGui::Selectable(suggestion.c_str())) {
+                prefixes.push_back(suggestion);
+                changed = true;
+            }
+        }
+        if (!any)
+            ImGui::TextDisabled("Every prefix on the map is listed.");
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Also pick up letters addressed to another prefix");
+    ImGui::EndGroup();
+
+    // "OR" between each pair of fields, drawn once their positions are known
+    // so the labels sit exactly halfway without taking part in the layout.
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float text_height = ImGui::GetTextLineHeight();
+    for (std::size_t k = 0; k + 1 < row_centers.size(); ++k) {
+        const float y = (row_centers[k] + row_centers[k + 1]) * 0.5f - text_height * 0.5f;
+        draw->AddText({origin.x, y}, ImGui::GetColorU32(ImGuiCol_TextDisabled), "OR");
+    }
+    ImGui::PopID();
+
+    if (to_remove.has_value()) {
+        prefixes.erase(prefixes.begin() + static_cast<std::ptrdiff_t>(*to_remove));
+        changed = true;
+    }
+    return changed;
+}
+
 // The office's truck schedules as an editable table: the rule and timing
 // cells edit their schedule in place through World::update_schedule, which validates it the
 // same way add_schedule does. Rows can be dragged to reorder them (list
@@ -1122,12 +1223,6 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
     }
     ImGui::TextDisabled("Departures run top to bottom: on simultaneous departures the");
     ImGui::TextDisabled("first schedule whose rule matches a letter picks it up. Drag # to reorder.");
-
-    // The prefix being typed. A row's buffer is otherwise rebuilt from the
-    // World every frame, but a refused keystroke (an empty or duplicate
-    // prefix) must not snap the text back mid-edit, so the active field keeps
-    // its text here; it reverts to the World's value once deactivated.
-    static char active_prefix[128];
 
     // Record edits, removals and reorders and apply them after the loop: the
     // World mutates the very vector we are iterating, which would invalidate
@@ -1183,7 +1278,7 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(offices[schedule.dst].name.c_str());
 
-            // Picks up: the rule type, plus the prefix field for PostalPrefix.
+            // Picks up: the rule type, plus the prefix list for PostalPrefix.
             ImGui::TableSetColumnIndex(2);
             const bool is_prefix = schedule.rule.type == RoutingRuleType::PostalPrefix;
             char exact_label[160];
@@ -1201,7 +1296,7 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
                         // A new prefix rule starts from the destination's own
                         // postal code, the most likely thing to collect.
                         if (edited.rule.type == RoutingRuleType::PostalPrefix)
-                            edited.rule.prefix = offices[edited.dst].postal_code;
+                            edited.rule.prefixes = {offices[edited.dst].postal_code};
                         row_changed = true;
                     }
                 }
@@ -1209,24 +1304,8 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
             }
             if (is_prefix) {
                 ImGui::SameLine();
-                const ImGuiID prefix_id = ImGui::GetID("##prefix");
-                const bool editing = ImGui::GetActiveID() == prefix_id;
-                char row_prefix[128];
-                std::snprintf(row_prefix, sizeof(row_prefix), "%s", schedule.rule.prefix.c_str());
-                char* buf = editing ? active_prefix : row_prefix;
-                // Red while the typed text is not (yet) an accepted prefix.
-                const bool refused = editing && schedule.rule.prefix != active_prefix;
-                if (refused)
-                    ImGui::PushStyleColor(ImGuiCol_Text, kColorErrorText);
-                ImGui::SetNextItemWidth(-FLT_MIN);
-                if (ImGui::InputTextWithHint("##prefix", "e.g. NJ/North", buf, sizeof(active_prefix))) {
-                    edited.rule.prefix = buf;
+                if (EditPrefixList("##prefixes", edited.rule.prefixes, offices, 0.0f))
                     row_changed = true;
-                }
-                if (refused)
-                    ImGui::PopStyleColor();
-                if (ImGui::IsItemActivated())
-                    std::snprintf(active_prefix, sizeof(active_prefix), "%s", row_prefix);
             }
 
             // Every / Starting at: HH:MM, converted to ticks right away.
@@ -1268,8 +1347,8 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
         const auto& [index, s] = *schedule_to_update;
         if (world.update_schedule(selected, index, s.period, s.start_offset, s.rule))
             edit_error.clear();
-        else if (s.rule.type == RoutingRuleType::PostalPrefix && s.rule.prefix.empty())
-            edit_error = "The prefix must not be empty.";
+        else if (!s.rule.is_well_formed())
+            edit_error = "Every prefix must be non-empty and listed once.";
         else
             edit_error = "Another schedule already goes there with that rule.";
     } else if (schedule_to_remove.has_value()) {
@@ -1339,13 +1418,13 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
         static PostOfficeId add_owner = kNoPostOffice;
         static PostOfficeId add_dst = kNoPostOffice;
         static int add_rule_type = 0;  // 0 = exact dst, 1 = postal prefix, 2 = all letters
-        static char add_prefix[128] = "";
+        static std::vector<std::string> add_prefixes = {""};
         static ImGuiTextFilter dst_filter;
         if (add_owner != selected) {
             add_owner = selected;
             add_dst = kNoPostOffice;
             add_rule_type = 0;
-            add_prefix[0] = '\0';
+            add_prefixes = {""};
             dst_filter.Clear();
         }
 
@@ -1390,27 +1469,16 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
             std::snprintf(exact_label, sizeof(exact_label),
                           "Only letters addressed to the destination");
         ImGui::RadioButton(exact_label, &add_rule_type, 0);
-        ImGui::RadioButton("Letters addressed to a postal-code prefix", &add_rule_type, 1);
+        ImGui::RadioButton("Letters addressed to any of these postal-code prefixes", &add_rule_type, 1);
         ImGui::RadioButton("All letters (the rest forward onward from the destination)",
                            &add_rule_type, 2);
 
         bool prefix_ok = true;
         if (add_rule_type == 1) {
-            ImGui::SetNextItemWidth(220.0f);
-            ImGui::InputTextWithHint("Prefix##add_rule_prefix", "e.g. NJ/North",
-                                     add_prefix, sizeof(add_prefix));
-            prefix_ok = add_prefix[0] != '\0';
-            ImGui::SameLine();
-            // Suggestions: every real '/'-delimited prefix in use on the map.
-            if (ImGui::BeginCombo("##add_prefix_suggest", "Suggestions")) {
-                for (const std::string& suggestion : CollectPostalPrefixes(offices)) {
-                    if (ImGui::Selectable(suggestion.c_str()))
-                        std::snprintf(add_prefix, sizeof(add_prefix), "%s", suggestion.c_str());
-                }
-                ImGui::EndCombo();
-            }
+            EditPrefixList("##add_prefixes", add_prefixes, offices, 300.0f);
+            prefix_ok = RoutingRule{RoutingRuleType::PostalPrefix, add_prefixes}.is_well_formed();
             if (!prefix_ok)
-                ImGui::TextColored(kColorErrorText, "The prefix must not be empty.");
+                ImGui::TextColored(kColorErrorText, "Every prefix must be non-empty and listed once.");
         }
 
         // Frequency and offset are entered as 24-hour HH:MM and converted to
@@ -1437,7 +1505,7 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
         RoutingRule rule;
         if (add_rule_type == 1) {
             rule.type = RoutingRuleType::PostalPrefix;
-            rule.prefix = add_prefix;
+            rule.prefixes = add_prefixes;
         } else if (add_rule_type == 2) {
             rule.type = RoutingRuleType::AllLetters;
         }

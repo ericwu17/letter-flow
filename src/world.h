@@ -79,8 +79,9 @@ public:
     // which outbound letters each departure picks up (at most kTruckCapacity).
     // Creating a schedule is free; each departure costs kTruckDepartureCost.
     // Returns false and changes nothing if the route is invalid (bad ids,
-    // zero period, empty postal prefix), an identical (dst, rule) schedule
-    // already exists, or no road connects src and dst.
+    // zero period, a PostalPrefix rule with no, an empty or a repeated
+    // prefix), an identical (dst, rule) schedule already exists, or no road
+    // connects src and dst.
     // Schedules to the same dst with different rules are allowed; on a tick
     // where both depart, the earlier one in the list takes contested letters.
     bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,

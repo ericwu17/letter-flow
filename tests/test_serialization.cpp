@@ -98,8 +98,8 @@ World build_fixture_world() {
     // pick-up priority) is exercised too. Periods stay modest: every
     // departure costs kTruckDepartureCost, and the late routes below must
     // still be affordable three days in.
-    const RoutingRule prefix_rule{RoutingRuleType::PostalPrefix, "NJ/Mercer"};
-    const RoutingRule all_rule{RoutingRuleType::AllLetters, ""};
+    const RoutingRule prefix_rule{RoutingRuleType::PostalPrefix, {"NJ/Mercer", "PA"}};
+    const RoutingRule all_rule{RoutingRuleType::AllLetters, {}};
     assert(w.add_schedule(0, 1, 6 * kTicksPerHour, 0, {}));            // exact
     assert(w.add_schedule(0, 2, 4 * kTicksPerHour, 13, prefix_rule));  // prefix
     assert(w.add_schedule(3, 1, 8 * kTicksPerHour, 7, all_rule));      // all
@@ -218,6 +218,16 @@ void unusable_files_load_as_nullopt() {
         assert(!World::load_from_file((kSaveDir / "bad_rule.json").string()));
     }
 
+    // A postal-prefix rule with an empty prefix in its list.
+    {
+        std::string s = good_json;
+        const auto at = s.find("\"NJ/Mercer\"");
+        assert(at != std::string::npos);
+        s.replace(at, 11, "\"\"");
+        write_file(kSaveDir / "empty_prefix.json", s);
+        assert(!World::load_from_file((kSaveDir / "empty_prefix.json").string()));
+    }
+
     // Dangling post-office reference (office 99 does not exist).
     {
         std::string s = good_json;
@@ -227,6 +237,31 @@ void unusable_files_load_as_nullopt() {
         write_file(kSaveDir / "bad_ref.json", s);
         assert(!World::load_from_file((kSaveDir / "bad_ref.json").string()));
     }
+}
+
+// Saves from before multi-prefix rules hold a single "prefix" string; it
+// loads as a one-prefix list.
+void legacy_single_prefix_loads() {
+    const World original = build_fixture_world();
+    const fs::path path = kSaveDir / "legacy_prefix.json";
+    assert(original.save_to_file(path.string()));
+    std::string s = slurp(path);
+    const auto mercer = s.find("\"NJ/Mercer\"");
+    assert(mercer != std::string::npos);
+    const auto start = s.rfind("\"prefixes\"", mercer);
+    const auto end = s.find(']', mercer);
+    assert(start != std::string::npos && end != std::string::npos);
+    s.replace(start, end + 1 - start, "\"prefix\": \"NJ/Mercer\"");
+    write_file(path, s);
+
+    const auto loaded = World::load_from_file(path.string());
+    assert(loaded.has_value());
+    const RoutingRule legacy{RoutingRuleType::PostalPrefix, {"NJ/Mercer"}};
+    bool found = false;
+    for (const PostOffice& office : loaded->get_post_offices())
+        for (const TruckSchedule& schedule : office.outbound_schedules)
+            found |= schedule.rule == legacy;
+    assert(found);
 }
 
 // The save file minus its "rng" line (dump(2) puts each key on its own line).
@@ -274,6 +309,8 @@ int main() {
     printf("PASS unusable_files_load_as_nullopt\n");
     corrupt_rng_falls_back_to_fresh_rng();
     printf("PASS corrupt_rng_falls_back_to_fresh_rng\n");
+    legacy_single_prefix_loads();
+    printf("PASS legacy_single_prefix_loads\n");
 
     printf("all serialization tests passed\n");
     return 0;

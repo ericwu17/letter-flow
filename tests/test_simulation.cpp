@@ -71,22 +71,31 @@ World make_line_world(std::size_t count, std::size_t letters_at_source) {
 // RoutingRule::matches is pure logic: the rule types, prefix semantics, and
 // the "empty prefix matches nothing" safety net.
 void routing_rule_matches() {
-    const RoutingRule exact{RoutingRuleType::ExactDestination, ""};
+    const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
     assert(exact.matches(3, "T/1", 3));
     assert(!exact.matches(3, "T/1", 4));
 
-    const RoutingRule all{RoutingRuleType::AllLetters, ""};
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
     assert(all.matches(0, "", 9));
 
-    const RoutingRule prefix{RoutingRuleType::PostalPrefix, "NJ/Mercer"};
+    const RoutingRule prefix{RoutingRuleType::PostalPrefix, {"NJ/Mercer"}};
     assert(prefix.matches(5, "NJ/Mercer/Princeton", 9));  // the truck's own dst is irrelevant
     assert(prefix.matches(5, "NJ/Mercer", 9));
     assert(!prefix.matches(5, "NJ/Central/Monroe", 9));
     assert(!prefix.matches(5, "NJ", 9));  // shorter than the prefix
 
-    // A misconfigured empty prefix must match nothing, never everything.
-    const RoutingRule empty_prefix{RoutingRuleType::PostalPrefix, ""};
+    // Several prefixes are OR-ed together.
+    const RoutingRule multi{RoutingRuleType::PostalPrefix, {"NJ/Mercer", "PA/Bucks"}};
+    assert(multi.matches(5, "NJ/Mercer/Princeton", 9));
+    assert(multi.matches(5, "PA/Bucks/Doylestown", 9));
+    assert(!multi.matches(5, "NY/Kings", 9));
+
+    // A misconfigured empty prefix must match nothing, never everything —
+    // whether the list is empty or one of its prefixes is.
+    const RoutingRule empty_prefix{RoutingRuleType::PostalPrefix, {}};
     assert(!empty_prefix.matches(5, "NJ/Mercer", 9));
+    const RoutingRule empty_element{RoutingRuleType::PostalPrefix, {""}};
+    assert(!empty_element.matches(5, "NJ/Mercer", 9));
 }
 
 // add_schedule's rejection matrix, free schedule creation, and duplicate
@@ -98,13 +107,15 @@ void schedule_validation_and_pricing() {
     assert(money0 < kStartingMoney);  // the fixture roads were paid for
 
     // Invalid routes are rejected and cost nothing.
-    const RoutingRule exact{RoutingRuleType::ExactDestination, ""};
+    const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
     assert(!w.add_schedule(99, 1, kTicksPerHour, 0, exact));        // bad src
     assert(!w.add_schedule(0, 99, kTicksPerHour, 0, exact));        // bad dst
     assert(!w.add_schedule(0, 0, kTicksPerHour, 0, exact));         // self-route
     assert(!w.add_schedule(0, 1, 0, 0, exact));                     // zero period
-    const RoutingRule empty_prefix{RoutingRuleType::PostalPrefix, ""};
+    const RoutingRule empty_prefix{RoutingRuleType::PostalPrefix, {}};
     assert(!w.add_schedule(0, 1, kTicksPerHour, 0, empty_prefix));  // empty prefix
+    const RoutingRule empty_element{RoutingRuleType::PostalPrefix, {"T/1", ""}};
+    assert(!w.add_schedule(0, 1, kTicksPerHour, 0, empty_element));  // one empty prefix
     assert(w.get_money() == money0);
 
     // Creating a schedule is free: money only moves when trucks depart.
@@ -114,13 +125,21 @@ void schedule_validation_and_pricing() {
     // Duplicates compare (dst, rule) only — period and offset may differ —
     // and a stale prefix on a non-prefix rule is normalized away first.
     assert(!w.add_schedule(0, 1, kTicksPerHour, 7, exact));
-    const RoutingRule dirty_exact{RoutingRuleType::ExactDestination, "junk"};
+    const RoutingRule dirty_exact{RoutingRuleType::ExactDestination, {"junk"}};
     assert(!w.add_schedule(0, 1, kTicksPerHour, 0, dirty_exact));
     // A different rule or a different dst is a distinct product, though.
-    const RoutingRule all{RoutingRuleType::AllLetters, ""};
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
     assert(w.add_schedule(0, 1, kTicksPerHour, 0, all));
     assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
     assert(w.get_money() == money0);
+
+
+    // A prefix listed twice is refused rather than quietly dropped, so an
+    // inspector edit never makes a field vanish while it is being typed in.
+    const std::size_t count = w.get_post_offices()[0].outbound_schedules.size();
+    assert(!w.add_schedule(0, 1, kTicksPerHour, 0, {RoutingRuleType::PostalPrefix, {"T/2", "T/1", "T/2"}}));
+    assert(w.get_post_offices()[0].outbound_schedules.size() == count);
+    assert(w.add_schedule(0, 1, kTicksPerHour, 0, {RoutingRuleType::PostalPrefix, {"T/2", "T/1"}}));
 }
 
 // update_schedule() edits a schedule's rule and timing in place: same
@@ -129,9 +148,9 @@ void schedule_validation_and_pricing() {
 // re-anchored only when the timing changes.
 void schedule_editing() {
     World w = make_line_world(2, 0);
-    const RoutingRule exact{RoutingRuleType::ExactDestination, ""};
-    const RoutingRule all{RoutingRuleType::AllLetters, ""};
-    const RoutingRule prefix{RoutingRuleType::PostalPrefix, "T/"};
+    const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
+    const RoutingRule prefix{RoutingRuleType::PostalPrefix, {"T/"}};
     assert(w.add_schedule(0, 1, kTicksPerHour, 100, exact));
     assert(w.add_schedule(0, 1, kTicksPerHour, 200, all));
     const auto schedules = [&] { return w.get_post_offices()[0].outbound_schedules; };
@@ -142,7 +161,7 @@ void schedule_editing() {
     assert(!w.update_schedule(9, 0, kTicksPerHour, 100, exact));  // bad src
     assert(!w.update_schedule(0, 0, 0, 100, exact));              // zero period
     assert(!w.update_schedule(0, 0, kTicksPerHour, 100,
-                              {RoutingRuleType::PostalPrefix, ""}));  // empty prefix
+                              {RoutingRuleType::PostalPrefix, {}}));  // empty prefix
     assert(!w.update_schedule(0, 0, kTicksPerHour, 100, all));    // duplicates #2
     assert(schedules() == before);
 
@@ -157,8 +176,8 @@ void schedule_editing() {
     assert(schedules()[0].next_departure == before[0].next_departure);
     assert(schedules()[1] == before[1]);
     // A stale prefix on a non-prefix rule is normalized away, as in add_schedule.
-    assert(!w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::AllLetters, "junk"}));  // == #2
-    assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::ExactDestination, "junk"}));
+    assert(!w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::AllLetters, {"junk"}}));  // == #2
+    assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::ExactDestination, {"junk"}}));
     assert(schedules()[0].rule == exact);
 
     // A new period or offset re-anchors the next departure on the new grid.
@@ -174,7 +193,7 @@ void schedule_editing() {
 // reported as a negative MoneyEvent at the source office. A departure the
 // player cannot afford is skipped: no truck, no letters moved, no charge.
 void departures_are_charged() {
-    const RoutingRule all{RoutingRuleType::AllLetters, ""};
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
     World w = make_line_world(2, 3);
     const int money0 = w.get_money();
     assert(w.add_schedule(0, 1, kTicksPerHour, 1, all));
@@ -209,7 +228,7 @@ void trucks_carry_at_most_capacity() {
     World w = make_line_world(2, 12);  // 12 seeded letters, all for office 1
     const std::vector<Letter> seeded = w.get_post_offices()[0].outbound_letters;
     assert(seeded.size() == 12);
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, ""}));
+    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
     w.advance_tick();  // tick 1
     assert(w.get_trucks().size() == 1);
     const std::vector<Letter>& cargo = w.get_trucks()[0]->get_letters();
@@ -223,7 +242,7 @@ void trucks_carry_at_most_capacity() {
 // schedule created at tick == start_offset first departs one period later
 // (the grid point strictly after creation).
 void departures_follow_the_offset_grid() {
-    const RoutingRule all{RoutingRuleType::AllLetters, ""};
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
     const Tick huge = 100 * kTicksPerDay;  // one departure, ever
 
     World w = make_line_world(2, 5);  // cargo waiting at office 0, all addressed to 1
@@ -253,7 +272,7 @@ void departures_follow_the_offset_grid() {
 // move_schedule() (drag-to-reorder) flips the winner. Both trucks still
 // depart: a truck leaves even when the winner took everything.
 void first_matching_schedule_wins_contested_letters() {
-    const RoutingRule all{RoutingRuleType::AllLetters, ""};
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
     const Tick huge = 100 * kTicksPerDay;
 
     // The buffer holds exactly one truckload: the first AllLetters departure
@@ -288,7 +307,7 @@ void first_matching_schedule_wins_contested_letters() {
 // nothing — and retire on arrival like any other truck.
 void empty_buffer_still_spawns_a_truck() {
     World w = make_line_world(2, 0);  // nobody ever produces mail
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, ""}));
+    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
     w.advance_tick();  // tick 1: first departure
     assert(w.get_trucks().size() == 1);
     assert(w.get_trucks()[0]->get_num_letters() == 0);  // departs empty
@@ -303,7 +322,7 @@ void empty_buffer_still_spawns_a_truck() {
 void postal_code_edits_take_effect_at_departure() {
     World w = make_line_world(3, 30);  // offices coded "T/0", "T/1", "T/2"
     const Tick huge = 100 * kTicksPerDay;
-    assert(w.add_schedule(0, 1, huge, 5, {RoutingRuleType::PostalPrefix, "ZZZ"}));
+    assert(w.add_schedule(0, 1, huge, 5, {RoutingRuleType::PostalPrefix, {"ZZZ"}}));
     while (w.get_tick() < 5)
         w.advance_tick();
     // No code starts with "ZZZ": the truck still departs, but empty.
@@ -313,7 +332,7 @@ void postal_code_edits_take_effect_at_departure() {
     w.set_postal_code(1, "ZZZ/rebranded");
     // Same prefix idea, different string (an identical (dst, rule) pair would
     // be rejected as a duplicate).
-    assert(w.add_schedule(0, 1, huge, 50, {RoutingRuleType::PostalPrefix, "ZZ"}));
+    assert(w.add_schedule(0, 1, huge, 50, {RoutingRuleType::PostalPrefix, {"ZZ"}}));
     // Run to tick 55: the loaded truck departs at 50, and the empty one
     // (departed at 5, one 50-tick hop) arrives and retires at exactly 55.
     while (w.get_tick() < 55)
@@ -337,7 +356,7 @@ void postal_code_edits_take_effect_at_departure() {
 // get_arrival_tick() is exactly the tick has_arrived() first turns true.
 void observed_truck_expires_on_arrival() {
     World w = make_line_world(2, 10);  // 10 seeded letters, all for office 1
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::ExactDestination, ""}));
+    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::ExactDestination, {}}));
     w.advance_tick();  // tick 1: the truck departs with every seeded letter
     assert(w.get_trucks().size() == 1);
     const std::weak_ptr<const Truck> observed = w.get_trucks()[0];
@@ -369,7 +388,7 @@ void observed_truck_expires_on_arrival() {
 // offices, the world stays stable afterwards (no phantom departures from the
 // removed road), in-flight trucks still deliver, and the road can be rebuilt.
 void road_removal() {
-    const RoutingRule exact{RoutingRuleType::ExactDestination, ""};
+    const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
     const Tick huge = 100 * kTicksPerDay;  // one departure, ever
 
     // --- removal, validation and no refund --------------------------------
@@ -419,7 +438,7 @@ void road_removal() {
 
     // --- in-flight trucks are safe: they snapshot the polyline -------------
     World w3 = make_line_world(2, 5);
-    assert(w3.add_schedule(0, 1, huge, 1, {RoutingRuleType::AllLetters, ""}));
+    assert(w3.add_schedule(0, 1, huge, 1, {RoutingRuleType::AllLetters, {}}));
     w3.advance_tick();  // tick 1: truck departs with the 5 seeded letters
     assert(w3.get_trucks().size() == 1);
     assert(w3.remove_road(0, 1));  // destroy the road mid-transit
@@ -455,8 +474,8 @@ void multi_hop_forwarding_delivers_every_letter() {
     // Leg 1 (A -> B) takes everything: both downstream codes start with "P".
     // Leg 2 (B -> C) is exact-destination and departs after leg 1 arrives
     // (tick 1 + 50 = 51), so it finds the forwarded C-mail waiting at B.
-    assert(w.add_schedule(a, b, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, "P"}));
-    assert(w.add_schedule(b, c, 100 * kTicksPerDay, 60, {RoutingRuleType::ExactDestination, ""}));
+    assert(w.add_schedule(a, b, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, {"P"}}));
+    assert(w.add_schedule(b, c, 100 * kTicksPerDay, 60, {RoutingRuleType::ExactDestination, {}}));
 
     for (Tick t = 0; t < 110; ++t)  // leg 2 departs at 60, arrives at 110
         w.advance_tick();

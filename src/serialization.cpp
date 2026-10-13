@@ -92,12 +92,21 @@ void from_json(const nlohmann::json& j, Letter& letter) {
 
 void to_json(nlohmann::json& j, const RoutingRule& rule) {
     j = {{"type", routing_rule_type_to_string(rule.type)},
-         {"prefix", rule.prefix}};
+         {"prefixes", rule.prefixes}};
 }
 
 void from_json(const nlohmann::json& j, RoutingRule& rule) {
     rule.type = routing_rule_type_from_string(j.at("type").get<std::string>());
-    rule.prefix = j.value("prefix", std::string());  // only meaningful for PostalPrefix
+    // Only meaningful for PostalPrefix. Saves from before multi-prefix rules
+    // hold a single "prefix" string instead of the list.
+    rule.prefixes.clear();
+    if (j.contains("prefixes")) {
+        j.at("prefixes").get_to(rule.prefixes);
+    } else {
+        std::string legacy_prefix = j.value("prefix", std::string());
+        if (!legacy_prefix.empty())
+            rule.prefixes.push_back(std::move(legacy_prefix));
+    }
 }
 
 void to_json(nlohmann::json& j, const TruckSchedule& schedule) {
@@ -182,7 +191,7 @@ namespace {
 // already guarantees the JSON shape; this catches structurally valid but
 // logically broken saves (hand-edited or truncated files): dangling office
 // references, schedules violating the invariants add_schedule() enforces
-// (dst is another office, period > 0, non-empty postal prefix), and roads
+// (dst is another office, period > 0, non-empty distinct postal prefixes), and roads
 // violating the invariants add_road() enforces (normalized src < dst, no
 // duplicates, both endpoint offices built, at least two in-range vertices
 // anchored at the endpoint offices).
@@ -200,8 +209,7 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                 return false;
             if (schedule.period == 0)
                 return false;
-            if (schedule.rule.type == RoutingRuleType::PostalPrefix &&
-                schedule.rule.prefix.empty())
+            if (!schedule.rule.is_well_formed())
                 return false;
         }
     }
