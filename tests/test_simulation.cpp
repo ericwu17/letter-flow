@@ -191,6 +191,46 @@ void schedule_editing() {
     assert(schedules()[0].next_departure == 1250);  // 50 + 4 * 300, first slot after 1000
 }
 
+// check_add_schedule() / check_update_schedule() name the reason the
+// matching mutator refuses, and ScheduleError::None exactly when it accepts.
+void schedule_errors() {
+    World w = make_line_world(3, 0);  // roads 0-1 and 1-2, none 0-2
+    const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
+    const RoutingRule bad_prefix{RoutingRuleType::PostalPrefix, {"T/", ""}};
+    const Tick h = kTicksPerHour;
+
+    assert(w.check_add_schedule(99, 1, h, exact) == ScheduleError::UnknownOffice);
+    assert(w.check_add_schedule(0, 99, h, exact) == ScheduleError::UnknownOffice);
+    assert(w.check_add_schedule(0, 0, h, exact) == ScheduleError::SameOffice);
+    assert(w.check_add_schedule(0, 1, 0, exact) == ScheduleError::ZeroPeriod);
+    assert(w.check_add_schedule(0, 1, h, bad_prefix) == ScheduleError::MalformedRule);
+    assert(w.check_add_schedule(0, 2, h, exact) == ScheduleError::NoRoad);
+    assert(w.check_add_schedule(0, 1, h, exact) == ScheduleError::None);
+    assert(w.add_schedule(0, 1, h, 0, exact));
+    assert(w.check_add_schedule(0, 1, 2 * h, exact) == ScheduleError::Duplicate);
+    assert(w.check_add_schedule(0, 1, h, {RoutingRuleType::ExactDestination, {"junk"}}) ==
+           ScheduleError::Duplicate);  // normalized before comparing
+    assert(!w.add_schedule(0, 1, 2 * h, 0, exact));
+    assert(w.add_schedule(0, 1, h, 0, all));
+
+    assert(w.check_update_schedule(0, 9, h, exact) == ScheduleError::UnknownOffice);  // no such schedule
+    assert(w.check_update_schedule(9, 0, h, exact) == ScheduleError::UnknownOffice);
+    assert(w.check_update_schedule(0, 0, 0, exact) == ScheduleError::ZeroPeriod);
+    assert(w.check_update_schedule(0, 0, h, bad_prefix) == ScheduleError::MalformedRule);
+    assert(w.check_update_schedule(0, 0, h, all) == ScheduleError::Duplicate);  // == #2
+    assert(w.check_update_schedule(0, 0, 3 * h, exact) == ScheduleError::None);  // not a duplicate of itself
+    assert(!w.update_schedule(0, 0, h, 0, all));
+    assert(w.update_schedule(0, 0, 3 * h, 0, exact));
+
+    // Removing the road takes the schedules with it; a new one is refused.
+    assert(w.remove_road(1, 0));
+    assert(w.get_post_offices()[0].outbound_schedules.empty());
+    assert(w.check_add_schedule(0, 1, h, exact) == ScheduleError::NoRoad);
+    assert(!w.remove_road(0, 1));  // already gone
+    assert(!w.remove_road(0, 99));
+}
+
 // Each departing truck costs kTruckDepartureCost, charged as it leaves, and
 // reported as a negative MoneyEvent at the source office. A departure the
 // player cannot afford is skipped: no truck, no letters moved, no charge.
@@ -689,6 +729,8 @@ int main() {
     printf("PASS schedule_validation_and_pricing\n");
     schedule_editing();
     printf("PASS schedule_editing\n");
+    schedule_errors();
+    printf("PASS schedule_errors\n");
     departures_are_charged();
     printf("PASS departures_are_charged\n");
     trucks_carry_at_most_capacity();

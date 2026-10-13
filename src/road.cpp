@@ -141,7 +141,7 @@ bool all_segments_valid_direction(const std::vector<Position>& vertices) {
 double polyline_length(const std::vector<Position>& vertices) {
     double total = 0;
     for (std::size_t i = 1; i < vertices.size(); ++i) {
-        total += length(vertices[i] - vertices[i-1]);
+        total += euclidean_length(vertices[i] - vertices[i - 1]);
     }
     return total;
 }

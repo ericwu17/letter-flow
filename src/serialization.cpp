@@ -80,8 +80,8 @@ TrailEvent trail_event_from_string(const std::string& text) {
 }
 
 // A stat level's buckets as one space-separated string: a JSON array would
-// put every one of the (mostly zero) numbers on its own line under dump(2),
-// bloating the file by an order of magnitude. Runs of zeros, the common case,
+// spend a separator (and, pretty-printed, a whole line) on every one of the
+// mostly zero numbers, bloating the file by an order of magnitude. Runs of zeros, the common case,
 // shrink further to "0*<count>", e.g. "0*117 3 0 12".
 std::string buckets_to_string(const std::array<int64_t, kStatBuckets>& buckets) {
     std::ostringstream out;
@@ -472,7 +472,7 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
 
     try {
         if (j.at("format_version").get<int>() != kSaveFormatVersion) {
-            cerr << "Incompatible save version." << endl;
+            cerr << "load: incompatible save format version" << endl;
             return std::nullopt;
         }
 
@@ -499,7 +499,7 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
 
         const nlohmann::json& trucks_json = j.at("trucks");
         if (!trucks_json.is_array()) {
-            cerr << "trucks is not an array." << endl;
+            cerr << "load: \"trucks\" is not an array" << endl;
             return std::nullopt;
         }
         for (const nlohmann::json& truck_json : trucks_json) {
@@ -511,12 +511,12 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
         std::istringstream rng_state(j.at("rng").get<std::string>());
         rng_state >> world.rng;
         if (rng_state.fail()) {
-            cerr << "rng failed. Using a new RNG." << endl;
+            cerr << "load: unreadable RNG state, continuing with a freshly seeded RNG" << endl;
         }
 
         if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads,
                                    world.recent_deliveries, world.next_schedule_id)) {
-            cerr << "loaded state not valid" << endl;
+            cerr << "load: the saved world is inconsistent (see loaded_state_is_valid)" << endl;
             return std::nullopt;
         }
 
@@ -526,7 +526,7 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
         // enum strings, out-of-range numbers — means "no usable save": the
         // caller falls back to a fresh world instead of crashing or loading
         // a half-built one.
-        cerr << "caught exception" << e.what() << endl;
+        cerr << "load: " << e.what() << endl;
         return std::nullopt;
     }
 }

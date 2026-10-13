@@ -11,7 +11,6 @@
 
 #include <cstddef>
 #include <memory>
-#include <optional>
 #include <random>
 #include <string>
 #include <utility>
@@ -55,12 +54,13 @@ private:
     void sample_gauges();
     // The schedule with this id among `office`'s schedules, or nullptr.
     TruckSchedule* find_schedule(PostOfficeId office, ScheduleId id);
-    // Shared validation for add_schedule() / update_schedule(): returns the
-    // normalized rule, or nullopt if the route is invalid or would duplicate
-    // (dst, rule) of any schedule of `src` other than the one at `ignore_index`.
-    std::optional<RoutingRule> validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
-                                                 const RoutingRule& rule,
-                                                 std::size_t ignore_index) const;
+    // Shared validation for add_schedule() / update_schedule() and their
+    // check_* queries: why a schedule src -> dst with this period and
+    // (normalized) rule is refused, given that it would replace the one at
+    // `ignore_index` (no schedule, for a new one) in the duplicate check.
+    ScheduleError validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
+                                    const RoutingRule& normalized_rule,
+                                    std::size_t ignore_index) const;
 
 public:
     // Advances the simulation by one tick: probabilistic letter spawning,
@@ -107,6 +107,14 @@ public:
     // and changes nothing on an invalid index or schedule.
     bool update_schedule(PostOfficeId src, std::size_t schedule_index,
                          Tick period, Tick start_offset, const RoutingRule& rule);
+    // Why add_schedule() / update_schedule() with these arguments would
+    // return false right now, or ScheduleError::None if it would succeed
+    // (start_offset is never a reason, so it is left out). The UI uses these
+    // to explain a refused edit and to validate its form as the player types.
+    ScheduleError check_add_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
+                                     const RoutingRule& rule) const;
+    ScheduleError check_update_schedule(PostOfficeId src, std::size_t schedule_index, Tick period,
+                                        const RoutingRule& rule) const;
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
     // Moves the schedule at index `from` to index `to` (drag-to-reorder in the
     // inspector). List order is the pick-up priority: departures fire in list
@@ -152,7 +160,9 @@ public:
     // Returns a pointer to the Road connecting a and b, or nullptr.
     const Road* find_road(PostOfficeId a, PostOfficeId b) const;
 
-    std::vector<Position> get_road_vertices_from_a_to_b(PostOfficeId src, PostOfficeId dst) const;
+    // The polyline of the road between src and dst, oriented from src to dst
+    // (roads are stored normalized), or empty if there is no such road.
+    std::vector<Position> road_path(PostOfficeId src, PostOfficeId dst) const;
 
     bool polyline_intersects_any(const std::vector<Position>& vertices) const;
     const std::vector<Road>& get_roads() const { return roads; }

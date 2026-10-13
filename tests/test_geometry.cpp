@@ -128,6 +128,34 @@ void truck_zero_length_segment() {
     assert(truck.has_arrived(125));
 }
 
+// has_arrived() works from an arrival tick cached at construction; it must
+// agree, on every tick around arrival and before departure, with the
+// definition it replaced: distance covered (elapsed * speed) >= route length.
+void truck_arrival_matches_distance() {
+    const std::vector<std::vector<Position>> routes = {
+        {{0, 0}, {0, 0}},                         // empty route: arrived at once
+        {{0, 0}, {7, 0}},                         // not a multiple of the speed
+        {{0, 0}, {300, 300}},                     // irrational length
+        {{0, 0}, {40, 40}, {40, 90}, {-10, 140}},  // several segments
+    };
+    for (const float speed : {kTruckSpeed, 0.3f, 3.7f, 0.0f}) {
+        for (const std::vector<Position>& route : routes) {
+            const Tick departure = 1000;
+            const Truck truck(0, 1, route, departure, speed);
+            const TruckState& s = truck.get_state();
+            const Truck reloaded(s);  // the save-file constructor
+            assert(reloaded == truck);
+            for (Tick now = 0; now < departure + 400; ++now) {
+                const Tick elapsed = now > departure ? now - departure : 0;
+                const bool expected = static_cast<double>(elapsed) * static_cast<double>(speed)
+                                   >= truck.route_length();
+                assert(truck.has_arrived(now) == expected);
+                assert(reloaded.has_arrived(now) == expected);
+            }
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -145,6 +173,8 @@ int main() {
     printf("PASS add_road_rules\n");
     truck_zero_length_segment();
     printf("PASS truck_zero_length_segment\n");
+    truck_arrival_matches_distance();
+    printf("PASS truck_arrival_matches_distance\n");
 
     printf("all geometry tests passed\n");
     return 0;

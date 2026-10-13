@@ -35,9 +35,15 @@ struct TruckState {
 class Truck {
 private:
     TruckState state;
+    // Derived from `state` once, in the constructors (the route and speed
+    // never change afterwards): the World asks has_arrived() of every truck
+    // on every tick. Not saved; a loaded truck recomputes it.
+    Tick arrival_tick = 0;
 
     // Distance along the route covered by tick `now` (0 before departure).
     double distance_travelled(Tick now) const;
+    // The first tick whose distance_travelled() covers route_length().
+    Tick compute_arrival_tick() const;
 
 public:
     Truck(
@@ -47,12 +53,14 @@ public:
         Tick departure_tick,
         float speed,
         ScheduleId schedule = kNoSchedule
-    ): state{src, dst, schedule, vertices, {}, departure_tick, speed, {}} {
-        for (size_t i = 1; i < vertices.size(); i++) {
-            state.distances.push_back((length(vertices[i] - vertices[i-1])));
+    ): state{src, dst, schedule, std::move(vertices), {}, departure_tick, speed, {}} {
+        for (std::size_t i = 1; i < state.vertices.size(); i++) {
+            state.distances.push_back(euclidean_length(state.vertices[i] - state.vertices[i - 1]));
         }
+        arrival_tick = compute_arrival_tick();
     }
-    explicit Truck(TruckState initial_state): state(std::move(initial_state)) {}
+    explicit Truck(TruckState initial_state)
+        : state(std::move(initial_state)), arrival_tick(compute_arrival_tick()) {}
 
     // Truck position is computed from the distance travelled since departure
     // (elapsed ticks * speed) along the route, rather than accumulated frame by
@@ -64,8 +72,9 @@ public:
     PostOfficeId get_dst() const { return state.dst; }
     ScheduleId get_schedule() const { return state.schedule; }
     Tick get_departure_tick() const { return state.departure_tick; }
-    // First tick at which has_arrived() is true.
-    Tick get_arrival_tick() const;
+    // First tick at which has_arrived() is true (never, i.e. the largest
+    // Tick, for a non-empty route at a speed of zero or less).
+    Tick get_arrival_tick() const { return arrival_tick; }
     void push_back_letter(Letter);
     std::size_t get_num_letters() const;
     const std::vector<Letter>& get_letters() const;
@@ -76,6 +85,7 @@ public:
     const TruckState& get_state() const { return state; }
 
     // Full-state equality — defaulted, comparing the TruckState member whose
-    // own equality is defaulted in turn (see the note in entities.h).
+    // own equality is defaulted in turn (see the note in entities.h), and the
+    // arrival tick derived from it.
     bool operator==(const Truck&) const = default;
 };

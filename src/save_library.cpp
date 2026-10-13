@@ -60,7 +60,9 @@ bool write_json_file(const std::string& path, const json& j) {
         std::ofstream out(tmp_path);
         if (!out)
             return false;
-        out << j.dump(2) << '\n';
+        // Compact, not indented: the library holds every save's whole world
+        // (statistics included), and indenting nearly doubles its size.
+        out << j.dump() << '\n';
         out.flush();
         if (!out) {
             fs::remove(tmp_path, ec);

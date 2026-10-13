@@ -12,8 +12,10 @@ C++20, SDL2, Dear ImGui (OpenGL3), ImPlot. Runs on macOS, Linux and Windows.
 
 The top-level `Makefile` detects the host OS and includes the matching
 per-platform makefile (`Makefile.macos` / `Makefile.linux` /
-`Makefile.windows`), so a bare `make` works everywhere. Each platform keeps
-its objects in its own build dir, so they never collide.
+`Makefile.windows`), so a bare `make` works everywhere. Those only set the
+platform's compiler, libraries and extra sources; the source lists and every
+rule live in `Makefile.common`. Each platform keeps its objects in its own
+build dir, so they never collide.
 
 macOS:
 
@@ -103,23 +105,30 @@ src/balance.h         gameplay tuning: costs, starting money, truck and letter n
 src/entities.h        data entities: Letter (+ trail), RoutingRule, TruckSchedule, PostOffice
 src/stats.*           StatSeries: multi-resolution ring buffers behind every statistic
 src/truck.*           Truck: deterministic point-to-point motion
+src/road.*            Road and the exact integer geometry behind road rules
+src/road_builder.*    RoadBuilder: snaps the road being drawn to legal segments
 src/world.*           World: owns all state, advances the sim in fixed 60 Hz ticks
 src/scenario.*        create_default_world() starter map, create_tutorial_world() practice map
 src/tutorial.*        Tutorial: the tutorial's steps, their completion checks and progress
 src/world_json.h      WorldJson: World <-> JSON, for the persistence code only (keeps nlohmann out of world.h)
 src/serialization.cpp JSON conversion of the whole simulation state: implements WorldJson
 src/save_library.*    SaveLibrary: every save in one JSON file (create, copy, rename, delete, load, store)
-src/ui.*              Dear ImGui presentation layer (ui*.cpp are the only places ImGui exists)
+src/ui.*              Dear ImGui presentation layer (ui*.cpp are the only places ImGui exists):
+                      shared UI state and its reset, formatting, the dockspace
+src/ui_internal.h     the per-game UI state (GameUiState) and helpers shared between the ui*.cpp files
+src/ui_map.cpp        the map: camera, offices, roads, trucks, selection, road building
+src/ui_hud.cpp        transport bar (play/pause, speed, clock) and the HUD card
+src/ui_inspector.cpp  inspector: office panel (letters, schedules, new-schedule form), truck panel
 src/ui_menu.cpp       main menu, credits page and save list (the screens before a game starts)
 src/ui_tutorial.cpp   tutorial cards and spotlights
 src/ui_stats.cpp      statistics window, stat widgets and letter-trail tooltips (ImPlot)
 src/ui_theme.*        the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets
-src/ui_internal.h     helpers shared between the ui*.cpp files
 src/main.cpp          SDL2 + OpenGL3 bootstrap and frame loop (all platforms)
 src/app_icon.*        window/Dock icon from assets/logo.png (embedded at build time)
 src/platform_macos.*  macOS-only startup tweaks (the sole Objective-C++ file)
 
-tests/test_geometry.cpp       headless exact road-geometry tests (make test)
+tests/test_geometry.cpp       headless exact road-geometry and truck-motion tests (make test)
+tests/test_road_builder.cpp   headless road-drawing tests: snapping, committing, validity (make test)
 tests/test_serialization.cpp  headless World <-> JSON round-trip tests (make test)
 tests/test_save_library.cpp   headless saves-file tests: slots, corruption, legacy import (make test)
 tests/test_simulation.cpp     headless simulation-rule tests (make test)

@@ -88,7 +88,7 @@ void DrawSpotlights(const TutorialStep& step, const World& world) {
     for (const PostOfficeId office : step.rings)
         if (office != kNoPostOffice)
             RingOffice(world, office);
-    const bool office_shown = !ui::TruckSelected() && ui::SelectedOffice() == step.office;
+    const bool office_shown = ui::g_game.selected_truck.expired() && ui::g_game.selected_office == step.office;
     if (step.office != kNoPostOffice && !office_shown) {
         RingOffice(world, step.office);
         return;
@@ -254,8 +254,9 @@ void ui::NoteItemAnchor(TutorialAnchor anchor) {
 }
 
 bool DrawTutorial(Tutorial& tutorial, const World& world) {
-    const TutorialUiFacts facts{ui::SelectedOffice(), ui::TruckSelected(), ui::BuildingRoad(),
-                                ui::StatsWindowOpen()};
+    const ui::GameUiState& ui_state = ui::g_game;
+    const TutorialUiFacts facts{ui_state.selected_office, !ui_state.selected_truck.expired(),
+                                ui_state.road_build_state != ui::RoadBuildState::Idle, ui_state.stats_open};
     tutorial.update(world, facts);
     if (tutorial.index() != g_last_step) {
         g_exit_armed = false;

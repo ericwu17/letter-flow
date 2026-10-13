@@ -15,6 +15,7 @@
 #include "implot.h"
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
@@ -50,10 +51,9 @@ constexpr StatRange kStatRanges[] = {
 };
 constexpr int kStatRangeCount = static_cast<int>(sizeof(kStatRanges) / sizeof(kStatRanges[0]));
 
-int g_range = 1;  // index into kStatRanges, shared by every stats view
-bool g_show_stats = false;
-PostOfficeId g_stats_office = kNoPostOffice;  // picked in the Offices tab
-ScheduleId g_stats_schedule = kNoSchedule;    // picked in the Schedules tab
+// Index into kStatRanges, shared by every stats view. A viewing preference,
+// so unlike the rest of the window state (ui::g_game) it carries over between games.
+int g_range = 1;
 
 const StatRange& CurrentRange() { return kStatRanges[g_range]; }
 Tick RangeTicks(const StatRange& r) { return kStatBucketTicks[r.level] * r.buckets; }
@@ -68,9 +68,9 @@ int64_t RangeSum(const StatSeries& series, Tick now) {
 // A gauge's peak over the current range.
 int64_t RangePeak(const StatSeries& series, Tick now) {
     const StatRange& r = CurrentRange();
-    std::vector<int64_t> values(r.buckets);
+    std::array<int64_t, kStatBuckets> values{};
     series.read(r.level, now, r.buckets, values.data());
-    return *std::max_element(values.begin(), values.end());
+    return *std::max_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(r.buckets));
 }
 
 // The range picker: a segmented control, the current range filled.
@@ -347,23 +347,6 @@ std::size_t ScheduleNumber(const std::vector<PostOffice>& offices, PostOfficeId 
     return 0;
 }
 
-// "Princeton mail" / "Prefix NJ/Mercer, PA" / "All mail".
-std::string RuleSummary(const RoutingRule& rule, const std::vector<PostOffice>& offices, PostOfficeId dst) {
-    switch (rule.type) {
-    case RoutingRuleType::ExactDestination:
-        return offices[dst].name + " mail";
-    case RoutingRuleType::PostalPrefix: {
-        std::string text = "Prefix ";
-        for (std::size_t i = 0; i < rule.prefixes.size(); ++i)
-            text += (i == 0 ? "" : ", ") + rule.prefixes[i];
-        return text;
-    }
-    case RoutingRuleType::AllLetters:
-        return "All mail";
-    }
-    return "";
-}
-
 // Sorts table rows by the active column of a sortable ImGui table; `key`
 // maps (row, column index) to a comparable number.
 template <typename Row, typename Key>
@@ -623,8 +606,8 @@ void DrawOfficesTab(const World& world) {
             ImGui::PushID(static_cast<int>(r.id));
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            if (ImGui::Selectable(o.name.c_str(), g_stats_office == r.id, ImGuiSelectableFlags_SpanAllColumns)) {
-                g_stats_office = r.id;
+            if (ImGui::Selectable(o.name.c_str(), ui::g_game.stats_office == r.id, ImGuiSelectableFlags_SpanAllColumns)) {
+                ui::g_game.stats_office = r.id;
                 ui::SelectOffice(r.id);
             }
             ImGui::TableNextColumn();
@@ -659,12 +642,12 @@ void DrawOfficesTab(const World& world) {
         ImGui::EndTable();
     }
 
-    if (g_stats_office >= offices.size() || !offices[g_stats_office].built) {
+    if (ui::g_game.stats_office >= offices.size() || !offices[ui::g_game.stats_office].built) {
         ImGui::TextDisabled("Click an office for its charts.");
         return;
     }
-    ImGui::SeparatorText(offices[g_stats_office].name.c_str());
-    DrawOfficeCharts(world, g_stats_office, 200.0f, /*side_by_side=*/true);
+    ImGui::SeparatorText(offices[ui::g_game.stats_office].name.c_str());
+    DrawOfficeCharts(world, ui::g_game.stats_office, 200.0f, /*side_by_side=*/true);
 }
 
 // ---------------------------------------------------------------------------
@@ -804,12 +787,12 @@ void DrawSchedulesTab(const World& world) {
             char route[256];
             std::snprintf(route, sizeof(route), "%s #%zu  ->  %s", offices[r.src].name.c_str(), r.index + 1,
                           offices[s.dst].name.c_str());
-            if (ImGui::Selectable(route, g_stats_schedule == s.id, ImGuiSelectableFlags_SpanAllColumns)) {
-                g_stats_schedule = s.id;
+            if (ImGui::Selectable(route, ui::g_game.stats_schedule == s.id, ImGuiSelectableFlags_SpanAllColumns)) {
+                ui::g_game.stats_schedule = s.id;
                 ui::SelectOffice(r.src);
             }
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(RuleSummary(s.rule, offices, s.dst).c_str());
+            ImGui::TextUnformatted(ui::RuleSummary(s.rule, offices, s.dst).c_str());
             ImGui::TableNextColumn();
             ImGui::Text("%lld", static_cast<long long>(r.u.departures));
             ImGui::TableNextColumn();
@@ -850,7 +833,7 @@ void DrawSchedulesTab(const World& world) {
     const TruckSchedule* picked = nullptr;
     PostOfficeId picked_src = kNoPostOffice;
     for (const Row& r : rows)
-        if (r.schedule->id == g_stats_schedule) {
+        if (r.schedule->id == ui::g_game.stats_schedule) {
             picked = r.schedule;
             picked_src = r.src;
         }
@@ -923,13 +906,7 @@ void DrawDeliveriesTab(const World& world) {
         ImGui::TableNextColumn();
         ImGui::Text("%s -> %s", offices[letter.src].name.c_str(), offices[letter.dst].name.c_str());
 
-        Tick transit = 0;
-        std::size_t hops = 0;
-        for (std::size_t i = 1; i < letter.trail.size(); ++i)
-            if (letter.trail[i - 1].event == TrailEvent::Departed && letter.trail[i].event == TrailEvent::Arrived) {
-                transit += letter.trail[i].tick - letter.trail[i - 1].tick;
-                ++hops;
-            }
+        const Tick transit = letter.transit_ticks();
         const Tick took = d.delivered - letter.created;
         char took_text[16], waiting_text[16];
         ui::FormatDuration(took, took_text, sizeof(took_text));
@@ -939,7 +916,7 @@ void DrawDeliveriesTab(const World& world) {
         ImGui::TableNextColumn();
         ImGui::TextUnformatted(waiting_text);
         ImGui::TableNextColumn();
-        ImGui::Text("%zu", hops);
+        ImGui::Text("%zu", letter.hops());
         ImGui::TableNextColumn();
         if (d.delivered <= letter.deadline) {
             ImGui::TextColored(kGood, "on time");
@@ -964,13 +941,13 @@ void DrawDeliveriesTab(const World& world) {
 void DrawStatsWindow(const World& world) {
     const ImGuiIO& io = ImGui::GetIO();
     if (!io.WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_P, false))
-        g_show_stats = !g_show_stats;
-    if (!g_show_stats)
+        ui::g_game.stats_open = !ui::g_game.stats_open;
+    if (!ui::g_game.stats_open)
         return;
 
     ImGui::SetNextWindowSize(ImVec2(900.0f, 640.0f), ImGuiCond_FirstUseEver);
     // Floating only, like the HUD (the dockspace takes no other windows).
-    if (!ImGui::Begin("Statistics (P)###Statistics", &g_show_stats, ImGuiWindowFlags_NoDocking)) {
+    if (!ImGui::Begin("Statistics (P)###Statistics", &ui::g_game.stats_open, ImGuiWindowFlags_NoDocking)) {
         ImGui::End();
         return;
     }
@@ -1000,17 +977,6 @@ void DrawStatsWindow(const World& world) {
 }
 
 namespace ui {
-
-void ToggleStatsWindow() { g_show_stats = !g_show_stats; }
-
-bool StatsWindowOpen() { return g_show_stats; }
-
-// The time range is a viewing preference and carries over between games.
-void ResetStatsUi() {
-    g_show_stats = false;
-    g_stats_office = kNoPostOffice;
-    g_stats_schedule = kNoSchedule;
-}
 
 void DrawOfficeStats(const World& world, PostOfficeId id) {
     const PostOffice& office = world.get_post_offices()[id];

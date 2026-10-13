@@ -64,6 +64,25 @@ struct Letter {
     // When the letter last arrived at (or spawned in) the office it is in.
     Tick waiting_since() const { return trail.empty() ? created : trail.back().tick; }
 
+    // Truck rides completed so far: every Departed -> Arrived pair in the trail.
+    std::size_t hops() const {
+        std::size_t count = 0;
+        for (std::size_t i = 1; i < trail.size(); ++i)
+            if (trail[i - 1].event == TrailEvent::Departed && trail[i].event == TrailEvent::Arrived)
+                ++count;
+        return count;
+    }
+
+    // Total time spent on those rides. Whatever else of its age the letter
+    // has spent waiting in offices.
+    Tick transit_ticks() const {
+        Tick transit = 0;
+        for (std::size_t i = 1; i < trail.size(); ++i)
+            if (trail[i - 1].event == TrailEvent::Departed && trail[i].event == TrailEvent::Arrived)
+                transit += trail[i].tick - trail[i - 1].tick;
+        return transit;
+    }
+
     bool operator==(const Letter&) const = default;
 };
 
@@ -147,6 +166,18 @@ struct RoutingRule {
     }
 
     bool operator==(const RoutingRule&) const = default;
+};
+
+// Why World::add_schedule / update_schedule refused a schedule (see
+// World::check_add_schedule), in the order they are checked.
+enum class ScheduleError {
+    None,           // valid
+    UnknownOffice,  // src or dst is not an office id (or, for an update, no such schedule)
+    SameOffice,     // src == dst
+    ZeroPeriod,     // period == 0
+    MalformedRule,  // RoutingRule::is_well_formed() is false
+    NoRoad,         // no road connects src and dst
+    Duplicate,      // src already has a schedule with the same dst and rule
 };
 
 // One departure of a schedule, for its utilization log.

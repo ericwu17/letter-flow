@@ -12,7 +12,8 @@
 #include <cmath>
 #include <vector>
 
-inline double length(Position p) {
+// Length of the vector p (e.g. a segment b - a).
+inline double euclidean_length(Position p) {
     const auto x = static_cast<double>(p.x);
     const auto y = static_cast<double>(p.y);
     return std::sqrt(x * x + y * y);

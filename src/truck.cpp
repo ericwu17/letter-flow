@@ -2,7 +2,9 @@
 // rendering, no input.
 #include "truck.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 double Truck::route_length() const {
@@ -40,17 +42,20 @@ Position Truck::get_position(Tick now) const {
 }
 
 bool Truck::has_arrived(Tick now) const {
-    return distance_travelled(now) >= route_length();
+    // distance_travelled() is 0 until departure and grows with every tick
+    // after it, so the truck has arrived exactly from arrival_tick on, with
+    // times before departure counting as departure itself.
+    return std::max(now, state.departure_tick) >= arrival_tick;
 }
 
-Tick Truck::get_arrival_tick() const {
-    // Smallest elapsed tick count with elapsed * speed >= route_length — the
-    // exact has_arrived() threshold. ceil() gives the estimate; the loops
-    // correct for floating-point rounding in either direction.
+Tick Truck::compute_arrival_tick() const {
+    // Smallest elapsed tick count with elapsed * speed >= route_length.
+    // ceil() gives the estimate; the loops correct for floating-point
+    // rounding in either direction.
     const double length = route_length();
     const double speed = static_cast<double>(state.speed);
-    if (speed <= 0.0)
-        return state.departure_tick;
+    if (speed <= 0.0)  // never moves: only an empty route is already done
+        return length <= 0.0 ? state.departure_tick : std::numeric_limits<Tick>::max();
     Tick travel = static_cast<Tick>(std::ceil(length / speed));
     while (travel > 0 && static_cast<double>(travel - 1) * speed >= length)
         --travel;
