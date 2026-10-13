@@ -21,6 +21,7 @@
 struct TruckState {
     PostOfficeId src = kNoPostOffice;
     PostOfficeId dst = kNoPostOffice;
+    ScheduleId schedule = kNoSchedule;  // the schedule it departed on (credited on arrival)
     std::vector<Position> vertices;
     std::vector<double> distances;
 
@@ -44,8 +45,9 @@ public:
         PostOfficeId dst,
         std::vector<Position> vertices,
         Tick departure_tick,
-        float speed
-    ): state{src, dst, vertices, {}, departure_tick, speed, {}} {
+        float speed,
+        ScheduleId schedule = kNoSchedule
+    ): state{src, dst, schedule, vertices, {}, departure_tick, speed, {}} {
         for (size_t i = 1; i < vertices.size(); i++) {
             state.distances.push_back((length(vertices[i] - vertices[i-1])));
         }
@@ -60,6 +62,7 @@ public:
     bool has_arrived(Tick now) const;
     PostOfficeId get_src() const { return state.src; }
     PostOfficeId get_dst() const { return state.dst; }
+    ScheduleId get_schedule() const { return state.schedule; }
     Tick get_departure_tick() const { return state.departure_tick; }
     // First tick at which has_arrived() is true.
     Tick get_arrival_tick() const;

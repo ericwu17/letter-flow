@@ -18,6 +18,7 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
+#include "implot.h"
 
 #include "app_icon.h"
 #include "game_types.h"
@@ -140,6 +141,7 @@ int main(int argc, char** argv)
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();  // charts in the stats window
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = ini_path.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -214,6 +216,7 @@ int main(int argc, char** argv)
         DrawTransportBar(world);
         DrawHUD(world);
         DrawInspector(world);
+        DrawStatsWindow(world);
 
         // 4. Rendering
         ImGui::Render();
@@ -235,6 +238,7 @@ int main(int argc, char** argv)
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
 
     SDL_GL_DeleteContext(gl_context);

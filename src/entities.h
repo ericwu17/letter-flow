@@ -3,8 +3,10 @@
 #pragma once
 
 #include "game_types.h"
+#include "stats.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <string>
 #include <vector>
@@ -14,6 +16,29 @@
 // the vector grows — pointers would dangle on every reallocation.
 using PostOfficeId = std::size_t;
 inline constexpr PostOfficeId kNoPostOffice = std::numeric_limits<PostOfficeId>::max();
+
+// Truck schedules are stored by value in their office's list and move around
+// in it (reordering, removal), so anything that must find a schedule again
+// later — a truck crediting income on arrival, a letter's trail — names it by
+// this id instead. Ids are handed out by the World and never reused.
+using ScheduleId = std::uint64_t;
+inline constexpr ScheduleId kNoSchedule = std::numeric_limits<ScheduleId>::max();
+
+// One step of a letter's journey (see Letter::trail).
+enum class TrailEvent {
+    Spawned,   // created at `office`
+    Departed,  // left `office` on a truck of schedule `schedule`
+    Arrived,   // reached `office`: delivered if it is the letter's dst, else forwarded
+};
+
+struct TrailStop {
+    Tick tick = 0;
+    TrailEvent event = TrailEvent::Spawned;
+    PostOfficeId office = kNoPostOffice;
+    ScheduleId schedule = kNoSchedule;  // Departed only
+
+    bool operator==(const TrailStop&) const = default;
+};
 
 // Every entity provides full-state member-wise equality, defaulted so fields
 // added later are compared automatically. This backs the save/load round-trip
@@ -31,9 +56,31 @@ struct Letter {
     Tick deadline = 0;  // delivered by this tick -> earn an early bonus on top of value
     int value = 0;      // always earned on delivery, on time or late
     int max_bonus = 0;  // extra earned if delivered instantly; scaled by time left
+    // Where the letter has been, oldest first: Spawned, then a Departed /
+    // Arrived pair per truck ride. Empty for letters from saves that predate
+    // trails. Bounded by the number of hops, i.e. a handful of entries.
+    std::vector<TrailStop> trail;
+
+    // When the letter last arrived at (or spawned in) the office it is in.
+    Tick waiting_since() const { return trail.empty() ? created : trail.back().tick; }
 
     bool operator==(const Letter&) const = default;
 };
+
+// A letter that reached its destination, kept (with its trail) in the
+// World's recent-deliveries log so finished journeys can still be inspected.
+// The delivery tick is the trail's last stop (or `delivered`, for letters
+// from saves that predate trails).
+struct DeliveredLetter {
+    Letter letter;
+    Tick delivered = 0;
+    int earned = 0;  // value plus early bonus
+
+    bool operator==(const DeliveredLetter&) const = default;
+};
+
+// How many delivered letters the World remembers, newest last.
+inline constexpr std::size_t kRecentDeliveriesSize = 100;
 
 // A change in money at an office: a truck arrival that paid out (`amount` > 0,
 // the total earned — values plus early bonuses — across every letter finally
@@ -102,7 +149,21 @@ struct RoutingRule {
     bool operator==(const RoutingRule&) const = default;
 };
 
+// One departure of a schedule, for its utilization log.
+struct DepartureRecord {
+    Tick tick = 0;
+    std::uint32_t loaded = 0;       // letters that boarded
+    std::uint32_t left_behind = 0;  // matching letters that did not fit
+
+    bool operator==(const DepartureRecord&) const = default;
+};
+
+// Most recent departures (and edits) a schedule remembers.
+inline constexpr std::size_t kDepartureLogSize = 50;
+inline constexpr std::size_t kScheduleEditLogSize = 20;
+
 struct TruckSchedule {
+    ScheduleId id = kNoSchedule;       // assigned by World::add_schedule
     PostOfficeId dst = kNoPostOffice;  // src is implicitly the office that owns this schedule
     RoutingRule rule;                  // which outbound letters the truck picks up
     Tick period = 0;                   // one departure every `period` ticks (must be > 0)
@@ -110,6 +171,12 @@ struct TruckSchedule {
                                        // since midnight; departures fall on the grid
                                        // start_offset + k * period (k = 0, 1, 2, ...)
     Tick next_departure = 0;           // absolute tick of the next departure
+
+    // Utilization history. Kept across update_schedule() edits (it is the same
+    // schedule, retuned), with the edit ticks recorded so a chart can mark them.
+    ScheduleStats stats;
+    std::vector<DepartureRecord> departure_log;  // oldest first, at most kDepartureLogSize
+    std::vector<Tick> edits;                     // oldest first, at most kScheduleEditLogSize
 
     bool operator==(const TruckSchedule&) const = default;
 };
@@ -127,6 +194,7 @@ struct PostOffice {
                                            // no roads, no schedules (see World::build_office)
     std::vector<Letter> outbound_letters;
     std::vector<TruckSchedule> outbound_schedules;
+    OfficeStats stats;
 
     bool operator==(const PostOffice&) const = default;
 };

@@ -1,6 +1,7 @@
 // ui.cpp — Dear ImGui presentation layer: reads World state, draws the map,
 // HUD and inspector, and turns player clicks into World mutations.
 #include "ui.h"
+#include "ui_internal.h"
 
 #include "entities.h"
 #include "balance.h"
@@ -11,6 +12,7 @@
 #include "world.h"
 #include "imgui.h"
 #include "imgui_internal.h"  // DockBuilder* (imgui 'docking' branch)
+#include "implot.h"          // ImPlot::ShowDemoWindow (the HUD's demo toggle)
 
 #include <algorithm>
 #include <cfloat>
@@ -22,6 +24,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+// Shared with ui_stats.cpp through ui_internal.h; defined below.
+using ui::FormatDayTime;
+using ui::FormatDuration;
+using ui::SelectOffice;
 
 namespace {
 
@@ -246,11 +253,14 @@ std::shared_ptr<Truck> HitTestTruck(const World& world, const ViewTransform& vie
 // Selection helpers
 // ---------------------------------------------------------------------------
 
-// Selects an office (and drops any truck selection).
-void SelectOffice(PostOfficeId id) {
+}  // namespace
+
+void ui::SelectOffice(PostOfficeId id) {
     g_selected_truck.reset();
     g_selected_office = id;
 }
+
+namespace {
 
 // Selects a truck, with its destination office as the backup shown once the
 // truck arrives.
@@ -271,18 +281,22 @@ void EnsureOfficeSelected(const World& world) {
 // through these helpers; internally the simulation only ever uses ticks.
 // ---------------------------------------------------------------------------
 
+}  // namespace
+
 // Format an absolute tick as "Day N HH:MM".
-void FormatDayTime(Tick tick, char* buf, std::size_t buf_len) {
+void ui::FormatDayTime(Tick tick, char* buf, std::size_t buf_len) {
     const ClockTime t = tick_to_time_of_day(tick);
     std::snprintf(buf, buf_len, "Day %llu  %02d:%02d",
                   static_cast<unsigned long long>(tick / kTicksPerDay) + 1, t.hour, t.minute);
 }
 
 // Format a tick duration as "HH:MM" (hours may exceed 23).
-void FormatDuration(Tick duration, char* buf, std::size_t buf_len) {
+void ui::FormatDuration(Tick duration, char* buf, std::size_t buf_len) {
     const ClockTime t = duration_to_hours_minutes(duration);
     std::snprintf(buf, buf_len, "%02d:%02d", t.hour, t.minute);
 }
+
+namespace {
 
 // Every '/'-delimited prefix of every office's postal code ("NJ",
 // "NJ/Mercer", "NJ/Mercer/Princeton", ...), sorted and deduplicated — the
@@ -594,7 +608,57 @@ void DrawMoneyPopups(ImDrawList* draw, const ViewTransform& view, World& world) 
     std::erase_if(g_money_popups, [](const MoneyPopup& p) { return p.age >= kPopupDuration; });
 }
 
+// The letter hovered in a list last frame (ui::HighlightLetter). DrawWorld
+// draws its journey and then clears it, so the highlight lapses as soon as
+// the list stops asking for it.
+std::optional<Letter> g_highlight_letter;
+
+// A hovered letter's journey on the map: the legs it has travelled, along the
+// roads it took; the truck it is on, if any; and rings around the office it
+// was posted at and the one it is addressed to.
+void DrawLetterHighlight(ImDrawList* draw, const ViewTransform& view, const World& world, float office_radius) {
+    if (!g_highlight_letter.has_value())
+        return;
+    const Letter& letter = *g_highlight_letter;
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    if (letter.src >= offices.size() || letter.dst >= offices.size())
+        return;
+
+    for (std::size_t i = 1; i < letter.trail.size(); ++i) {
+        const TrailStop& from = letter.trail[i - 1];
+        const TrailStop& to = letter.trail[i];
+        if (from.event != TrailEvent::Departed || to.event != TrailEvent::Arrived ||
+            from.office >= offices.size() || to.office >= offices.size())
+            continue;
+        std::vector<Position> leg = world.get_road_vertices_from_a_to_b(from.office, to.office);
+        if (leg.empty())  // the road has been destroyed since
+            leg = {offices[from.office].pos, offices[to.office].pos};
+        for (std::size_t k = 1; k < leg.size(); ++k)
+            draw->AddLine(WorldToScreen(view, leg[k - 1]), WorldToScreen(view, leg[k]), kColorSelection, 5.0f);
+    }
+
+    // On a truck right now: ring it, and trace the leg so far.
+    if (!letter.trail.empty() && letter.trail.back().event == TrailEvent::Departed) {
+        for (const std::shared_ptr<Truck>& truck : world.get_trucks()) {
+            const std::vector<Letter>& cargo = truck->get_letters();
+            if (std::find(cargo.begin(), cargo.end(), letter) == cargo.end())
+                continue;
+            const ImVec2 at = WorldToScreen(view, truck->get_position(world.get_tick()));
+            draw->AddLine(WorldToScreen(view, offices[truck->get_src()].pos), at, kColorSelection, 3.0f);
+            draw->AddCircle(at, 11.0f, kColorSelection, 0, 3.0f);
+            break;
+        }
+    }
+
+    draw->AddCircle(WorldToScreen(view, offices[letter.src].pos), office_radius + 9.0f, kColorSelection, 0, 2.5f);
+    draw->AddCircle(WorldToScreen(view, offices[letter.dst].pos), office_radius + 9.0f, kColorTruck, 0, 4.0f);
+}
+
 }  // namespace
+
+void ui::HighlightLetter(const Letter& letter) {
+    g_highlight_letter = letter;
+}
 
 void DrawWorld(World& world) {
     UpdateCamera();
@@ -631,6 +695,10 @@ void DrawWorld(World& world) {
             draw->AddCircleFilled(v, 3.0f, color);
         }
     }
+
+    // A letter hovered in a list (last frame): its journey, under the offices.
+    DrawLetterHighlight(draw, view, world, office_radius);
+    g_highlight_letter.reset();
 
     // Road-building preview.
     if (g_road_build_state == RoadBuildState::PlacingVertices) {
@@ -983,6 +1051,7 @@ void DrawTransportBar(World& world) {
 
 void DrawHUD(const World& world) {
     static bool show_imgui_demo = false;
+    static bool show_implot_demo = false;
 
     // Day/time and play/pause now live in the background transport bar
     // (DrawTransportBar); this window is just the score board.
@@ -992,14 +1061,20 @@ void DrawHUD(const World& world) {
     ImGui::Text("Delivered on time: %zu", world.get_letters_delivered_on_time());
     ImGui::Text("Delivered late: %zu", world.get_letters_delivered_late());
     ImGui::Text("Trucks en route: %zu", world.get_trucks().size());
+    if (ImGui::Button("Statistics (P)"))
+        ui::ToggleStatsWindow();
     ImGui::Separator();
     ImGui::Checkbox("ImGui demo", &show_imgui_demo);
+    ImGui::SameLine();
+    ImGui::Checkbox("ImPlot demo", &show_implot_demo);
     ImGui::TextDisabled("Click an office or truck to inspect it.");
     ImGui::End();
 
     // Widget reference window — keep handy while developing.
     if (show_imgui_demo)
         ImGui::ShowDemoWindow(&show_imgui_demo);
+    if (show_implot_demo)
+        ImPlot::ShowDemoWindow(&show_implot_demo);
 }
 
 // ---------------------------------------------------------------------------
@@ -1008,32 +1083,49 @@ void DrawHUD(const World& world) {
 // so it keeps its dock slot.
 // ---------------------------------------------------------------------------
 
-// Letters as a To / Deadline / Value / Max bonus table; overdue deadlines in red.
+// Letters as a To / Here for / Deadline / Value / Max bonus table; overdue
+// deadlines in red. "Here for" is the time since the letter got where it is
+// (this office, or this truck). Hovering a row shows the letter's trail and
+// highlights its journey on the map.
 static void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
                             const std::vector<PostOffice>& offices, Tick now) {
     const ImGuiTableFlags flags =
         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-    if (ImGui::BeginTable(table_id, 4, flags, ImVec2(0.0f, 200.0f))) {
+    if (ImGui::BeginTable(table_id, 5, flags, ImVec2(0.0f, 200.0f))) {
         ImGui::TableSetupColumn("To");
+        ImGui::TableSetupColumn("Here for");
         ImGui::TableSetupColumn("Deadline");
         ImGui::TableSetupColumn("Value");
         ImGui::TableSetupColumn("Max bonus");
         ImGui::TableHeadersRow();
-        for (const Letter& letter : letters) {
+        for (std::size_t i = 0; i < letters.size(); ++i) {
+            const Letter& letter = letters[i];
+            ImGui::PushID(static_cast<int>(i));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextUnformatted(offices[letter.dst].name.c_str());
+            ImGui::Selectable(offices[letter.dst].name.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
+            if (ImGui::IsItemHovered()) {
+                ui::HighlightLetter(letter);
+                ImGui::BeginTooltip();
+                ui::DrawLetterTrail(letter, offices, now);
+                ImGui::EndTooltip();
+            }
             ImGui::TableSetColumnIndex(1);
+            char here_for[16];
+            FormatDuration(now - std::min(now, letter.waiting_since()), here_for, sizeof(here_for));
+            ImGui::TextUnformatted(here_for);
+            ImGui::TableSetColumnIndex(2);
             char due[32];
             FormatDayTime(letter.deadline, due, sizeof(due));
             if (letter.deadline >= now)
                 ImGui::TextUnformatted(due);
             else
                 ImGui::TextColored(kColorErrorText, "LATE (was due %s)", due);
-            ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%d", letter.value);
             ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%d", letter.value);
+            ImGui::TableSetColumnIndex(4);
             ImGui::Text("%d", letter.max_bonus);
+            ImGui::PopID();
         }
         ImGui::EndTable();
     }
@@ -1234,7 +1326,7 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
 
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerV |
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
-    if (ImGui::BeginTable("schedules", 8, flags)) {
+    if (ImGui::BeginTable("schedules", 9, flags)) {
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("To", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Picks up", ImGuiTableColumnFlags_WidthStretch, 1.6f);
@@ -1242,6 +1334,7 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
         ImGui::TableSetupColumn("Starting at", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("Next departure", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("Waiting", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Load", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableHeadersRow();
 
@@ -1332,7 +1425,11 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
             ImGui::Text("%zu", matched);
             ImGui::SetItemTooltip("Outbound letters this rule would pick up right now");
 
+            // Load: how full this schedule's trucks have been leaving.
             ImGui::TableSetColumnIndex(7);
+            ui::DrawScheduleLoadCell(schedule, world.get_tick());
+
+            ImGui::TableSetColumnIndex(8);
             if (ImGui::SmallButton("Remove"))
                 schedule_to_remove = i;
 
@@ -1407,6 +1504,9 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
 
     if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
         DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
+
+    if (ImGui::CollapsingHeader("Statistics"))
+        ui::DrawOfficeStats(world, selected);
 
     if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
         DrawScheduleTable(world, selected);

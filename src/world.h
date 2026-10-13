@@ -6,6 +6,7 @@
 #include "balance.h"
 #include "game_types.h"
 #include "road.h"
+#include "stats.h"
 #include "truck.h"
 
 #include <cstddef>
@@ -32,6 +33,13 @@ private:
     std::size_t letters_delivered_on_time = 0;
     std::size_t letters_delivered_late = 0;
 
+    // Statistics (see stats.h): network-wide series here, per-office and
+    // per-schedule ones on those entities. Simulation state like any other:
+    // saved, loaded and compared.
+    GlobalStats stats;
+    std::vector<DeliveredLetter> recent_deliveries;  // oldest first, at most kRecentDeliveriesSize
+    ScheduleId next_schedule_id = 0;                 // next id add_schedule hands out
+
     // Payouts and departure charges since the UI last called
     // take_money_events(). Transient: neither serialized nor compared.
     std::vector<MoneyEvent> money_events;
@@ -41,8 +49,12 @@ private:
     // Simulation internals, driven by advance_tick() / seed_letters().
     void maybe_spawn_letter(PostOfficeId office);  // per-tick Bernoulli roll
     void spawn_letter(PostOfficeId office);        // one letter, buffer permitting
-    void spawn_truck(PostOfficeId src, const TruckSchedule& schedule);
+    void spawn_truck(PostOfficeId src, TruckSchedule& schedule);
     void deliver(Truck& truck);
+    // Records this tick's sample of every gauge statistic.
+    void sample_gauges();
+    // The schedule with this id among `office`'s schedules, or nullptr.
+    TruckSchedule* find_schedule(PostOfficeId office, ScheduleId id);
     // Shared validation for add_schedule() / update_schedule(): returns the
     // normalized rule, or nullopt if the route is invalid or would duplicate
     // (dst, rule) of any schedule of `src` other than the one at `ignore_index`.
@@ -172,6 +184,8 @@ public:
     int get_money() const { return money; }
     std::size_t get_letters_delivered_on_time() const { return letters_delivered_on_time; }
     std::size_t get_letters_delivered_late() const { return letters_delivered_late; }
+    const GlobalStats& get_stats() const { return stats; }
+    const std::vector<DeliveredLetter>& get_recent_deliveries() const { return recent_deliveries; }
     // Hands over (and clears) the payouts and charges recorded since the last call.
     std::vector<MoneyEvent> take_money_events() { return std::exchange(money_events, {}); }
     const std::vector<PostOffice>& get_post_offices() const { return post_offices; }

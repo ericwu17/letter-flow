@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -24,6 +26,29 @@ Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
     return start_offset + ((now - start_offset) / period + 1) * period;
 }
 
+// Total time a letter has spent on trucks: every Departed -> Arrived pair in
+// its trail. Whatever is left of its age was spent waiting in offices.
+Tick transit_ticks(const Letter& letter) {
+    Tick transit = 0;
+    for (std::size_t i = 1; i < letter.trail.size(); ++i)
+        if (letter.trail[i - 1].event == TrailEvent::Departed &&
+            letter.trail[i].event == TrailEvent::Arrived)
+            transit += letter.trail[i].tick - letter.trail[i - 1].tick;
+    return transit;
+}
+
+// Appends to a bounded log, dropping the oldest entry once it is full.
+template <typename T>
+void push_bounded(std::vector<T>& log, T entry, std::size_t max_size) {
+    log.push_back(std::move(entry));
+    if (log.size() > max_size)
+        log.erase(log.begin(), log.begin() + static_cast<std::ptrdiff_t>(log.size() - max_size));
+}
+
+// Tick durations and counts as stat amounts (well within int64 range).
+template <typename T>
+int64_t as_stat(T amount) { return static_cast<int64_t>(amount); }
+
 }  // namespace
 
 bool World::operator==(const World& other) const {
@@ -39,6 +64,9 @@ bool World::operator==(const World& other) const {
         && money == other.money
         && letters_delivered_on_time == other.letters_delivered_on_time
         && letters_delivered_late == other.letters_delivered_late
+        && stats == other.stats
+        && recent_deliveries == other.recent_deliveries
+        && next_schedule_id == other.next_schedule_id
         && rng == other.rng;
 }
 
@@ -79,6 +107,39 @@ void World::advance_tick() {
             ++i;
         }
     }
+
+    // 4. Statistics: flows were recorded as things happened above; gauges
+    //    are sampled once per tick, after everything has moved.
+    sample_gauges();
+}
+
+void World::sample_gauges() {
+    std::size_t waiting = 0;
+    for (PostOffice& office : post_offices) {
+        if (!office.built)
+            continue;
+        Tick oldest = 0;
+        for (const Letter& letter : office.outbound_letters)
+            oldest = std::max(oldest, current_tick - letter.created);
+        office.stats[OfficeStat::Backlog].sample(current_tick, as_stat(office.outbound_letters.size()));
+        office.stats[OfficeStat::OldestWaiting].sample(current_tick, as_stat(oldest));
+        waiting += office.outbound_letters.size();
+    }
+    std::size_t in_transit = 0;
+    for (const std::shared_ptr<Truck>& truck : trucks)
+        in_transit += truck->get_num_letters();
+    stats[GlobalStat::LettersWaiting].sample(current_tick, as_stat(waiting));
+    stats[GlobalStat::LettersInTransit].sample(current_tick, as_stat(in_transit));
+    stats[GlobalStat::Money].sample(current_tick, std::max(money, 0));
+}
+
+TruckSchedule* World::find_schedule(PostOfficeId office, ScheduleId id) {
+    if (office >= post_offices.size() || id == kNoSchedule)
+        return nullptr;
+    for (TruckSchedule& schedule : post_offices[office].outbound_schedules)
+        if (schedule.id == id)
+            return &schedule;
+    return nullptr;
 }
 
 void World::maybe_spawn_letter(PostOfficeId office_id) {
@@ -109,8 +170,12 @@ void World::spawn_letter(PostOfficeId office_id) {
     if (!has_built_dst)
         return;
 
-    if (office.outbound_letters.size() >= office.max_outbound_letters)
-        return;  // buffer full: this letter is lost
+    if (office.outbound_letters.size() >= office.max_outbound_letters) {
+        // Buffer full: this letter is lost.
+        stats[GlobalStat::LettersLost].add(current_tick, 1);
+        office.stats[OfficeStat::Lost].add(current_tick, 1);
+        return;
+    }
 
     std::uniform_int_distribution<Tick> pick_deadline(kLetterDeadlineMin, kLetterDeadlineMax);
     std::uniform_int_distribution<int> pick_value(kLetterValueMin, kLetterValueMax);
@@ -138,18 +203,27 @@ void World::spawn_letter(PostOfficeId office_id) {
     letter.deadline = current_tick + pick_deadline(rng);
     letter.value = pick_value(rng);
     letter.max_bonus = pick_bonus(rng);
-    office.outbound_letters.push_back(letter);
+    letter.trail.push_back({current_tick, TrailEvent::Spawned, office_id, kNoSchedule});
+    office.outbound_letters.push_back(std::move(letter));
+    stats[GlobalStat::LettersSpawned].add(current_tick, 1);
+    office.stats[OfficeStat::Spawned].add(current_tick, 1);
 }
 
-void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
+void World::spawn_truck(PostOfficeId src_id, TruckSchedule& schedule) {
     PostOffice& src = post_offices[src_id];
 
     // Every departure is paid for when the truck leaves; one the player
     // cannot afford simply does not happen.
-    if (money < kTruckDepartureCost)
+    if (money < kTruckDepartureCost) {
+        stats[GlobalStat::DeparturesSkipped].add(current_tick, 1);
+        schedule.stats[ScheduleStat::Skipped].add(current_tick, 1);
         return;
+    }
     money -= kTruckDepartureCost;
     money_events.push_back({src_id, -kTruckDepartureCost});
+    stats[GlobalStat::SpentTrucks].add(current_tick, kTruckDepartureCost);
+    src.stats[OfficeStat::Departures].add(current_tick, 1);
+    schedule.stats[ScheduleStat::Departures].add(current_tick, 1);
 
     // The schedule's routing rule decides which of the office's letters board
     // the truck: the exact destination, every letter addressed to a postal
@@ -160,20 +234,36 @@ void World::spawn_truck(PostOfficeId src_id, const TruckSchedule& schedule) {
         schedule.dst,
         get_road_vertices_from_a_to_b(src_id, schedule.dst),
         current_tick,
-        kTruckSpeed
+        kTruckSpeed,
+        schedule.id
     );
 
     std::vector<Letter>& outbound = src.outbound_letters;
     std::size_t keep = 0;
+    std::uint32_t left_behind = 0;  // matching letters the truck had no room for
     for (std::size_t i = 0; i < outbound.size(); ++i) {
-        const PostOffice& letter_dst = post_offices[outbound[i].dst];
-        if (truck->get_num_letters() < kTruckCapacity
-            && schedule.rule.matches(outbound[i].dst, letter_dst.postal_code, schedule.dst))
-            truck->push_back_letter(std::move(outbound[i]));
-        else
-            outbound[keep++] = std::move(outbound[i]);
+        Letter& letter = outbound[i];
+        if (!schedule.rule.matches(letter.dst, post_offices[letter.dst].postal_code, schedule.dst)) {
+            outbound[keep++] = std::move(letter);
+        } else if (truck->get_num_letters() >= kTruckCapacity) {
+            ++left_behind;
+            outbound[keep++] = std::move(letter);
+        } else {
+            src.stats[OfficeStat::LettersDeparted].add(current_tick, 1);
+            src.stats[OfficeStat::WaitTicks].add(current_tick, as_stat(current_tick - letter.waiting_since()));
+            letter.trail.push_back({current_tick, TrailEvent::Departed, src_id, schedule.id});
+            truck->push_back_letter(std::move(letter));
+        }
     }
     outbound.resize(keep);
+
+    const auto loaded = static_cast<std::uint32_t>(truck->get_num_letters());
+    schedule.stats[ScheduleStat::LettersLoaded].add(current_tick, loaded);
+    schedule.stats[ScheduleStat::LeftBehind].add(current_tick, left_behind);
+    if (loaded == 0)
+        schedule.stats[ScheduleStat::EmptyDepartures].add(current_tick, 1);
+    push_bounded(schedule.departure_log, DepartureRecord{current_tick, loaded, left_behind},
+                 kDepartureLogSize);
 
     trucks.push_back(std::move(truck));
 }
@@ -193,26 +283,45 @@ std::vector<Position> World::get_road_vertices_from_a_to_b(PostOfficeId src, Pos
 void World::deliver(Truck& truck) {
     const PostOfficeId arrived_at = truck.get_dst();
     PostOffice& office = post_offices[arrived_at];
+    // The schedule that sent this truck, for income credit; null if it has
+    // been removed since the truck left.
+    TruckSchedule* schedule = find_schedule(truck.get_src(), truck.get_schedule());
 
     int earned = 0;
     bool delivered_any = false;
     for (Letter& letter : truck.take_letters()) {
+        letter.trail.push_back({current_tick, TrailEvent::Arrived, arrived_at, kNoSchedule});
         if (letter.dst == arrived_at) {
             delivered_any = true;
-            const int before = money;
             // Final delivery: the base value is always paid; arriving before
             // the deadline adds a bonus proportional to the time left.
-            money += letter.value;
+            int bonus = 0;
             if (current_tick <= letter.deadline) {
                 const Tick window = letter.deadline - letter.created;
                 if (window > 0)
-                    money += static_cast<int>(static_cast<Tick>(letter.max_bonus) * (letter.deadline - current_tick) / window);
+                    bonus = static_cast<int>(static_cast<Tick>(letter.max_bonus) * (letter.deadline - current_tick) / window);
                 letters_delivered_on_time += 1;
+                stats[GlobalStat::DeliveredOnTime].add(current_tick, 1);
             } else {
                 letters_delivered_late += 1;
+                stats[GlobalStat::DeliveredLate].add(current_tick, 1);
             }
-            earned += money - before;
+            const int letter_earned = letter.value + bonus;
+            money += letter_earned;
+            earned += letter_earned;
+
+            stats[GlobalStat::IncomeValue].add(current_tick, letter.value);
+            stats[GlobalStat::IncomeBonus].add(current_tick, bonus);
+            stats[GlobalStat::DeliveryTicks].add(current_tick, as_stat(current_tick - letter.created));
+            stats[GlobalStat::TransitTicks].add(current_tick, as_stat(transit_ticks(letter)));
+            office.stats[OfficeStat::Delivered].add(current_tick, 1);
+            office.stats[OfficeStat::Income].add(current_tick, letter_earned);
+            if (schedule != nullptr)
+                schedule->stats[ScheduleStat::Income].add(current_tick, letter_earned);
+            push_bounded(recent_deliveries, DeliveredLetter{std::move(letter), current_tick, letter_earned},
+                         kRecentDeliveriesSize);
         } else {
+            office.stats[OfficeStat::Forwarded].add(current_tick, 1);
             // Multi-hop forwarding: the letter is addressed somewhere else, so
             // it joins this office's outbound buffer, where later schedules
             // can pick it up (hub-and-spoke routing). Forwarding bypasses
@@ -260,6 +369,7 @@ bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick s
         return false;
 
     TruckSchedule schedule;
+    schedule.id = next_schedule_id++;
     schedule.dst = dst;
     schedule.rule = std::move(*normalized_rule);
     schedule.period = period;
@@ -280,9 +390,13 @@ bool World::update_schedule(PostOfficeId src, std::size_t schedule_index,
         return false;
 
     // Only a new departure grid moves the next departure; a rule edit leaves
-    // the timing exactly as it was.
-    if (period != schedule.period || start_offset != schedule.start_offset)
+    // the timing exactly as it was. A real change is logged for the
+    // schedule's utilization chart; re-submitting the same values is not one.
+    const bool timing_changed = period != schedule.period || start_offset != schedule.start_offset;
+    if (timing_changed)
         schedule.next_departure = first_departure_after(start_offset, period, current_tick);
+    if (timing_changed || *normalized_rule != schedule.rule)
+        push_bounded(schedule.edits, current_tick, kScheduleEditLogSize);
     schedule.rule = std::move(*normalized_rule);
     schedule.period = period;
     schedule.start_offset = start_offset;
@@ -338,6 +452,7 @@ bool World::build_office(PostOfficeId office) {
     if (money < cost)
         return false;
     money -= cost;
+    stats[GlobalStat::SpentOffices].add(current_tick, cost);
     post_offices[office].built = true;
     return true;
 }
@@ -424,6 +539,7 @@ bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> v
     if (money < cost)
         return false;
     money -= cost;
+    stats[GlobalStat::SpentRoads].add(current_tick, cost);
     roads.push_back(std::move(road));
     return true;
 }

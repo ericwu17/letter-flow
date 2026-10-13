@@ -15,6 +15,7 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -175,6 +176,7 @@ void schedule_editing() {
     assert(schedules()[0].dst == before[0].dst);
     assert(schedules()[0].next_departure == before[0].next_departure);
     assert(schedules()[1] == before[1]);
+    assert(schedules()[0].edits == std::vector<Tick>{0});  // logged once, at tick 0
     // A stale prefix on a non-prefix rule is normalized away, as in add_schedule.
     assert(!w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::AllLetters, {"junk"}}));  // == #2
     assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::ExactDestination, {"junk"}}));
@@ -233,8 +235,13 @@ void trucks_carry_at_most_capacity() {
     assert(w.get_trucks().size() == 1);
     const std::vector<Letter>& cargo = w.get_trucks()[0]->get_letters();
     assert(cargo.size() == kTruckCapacity);
-    for (std::size_t i = 0; i < kTruckCapacity; ++i)
-        assert(cargo[i] == seeded[i]);  // the oldest letters boarded
+    const ScheduleId schedule = w.get_post_offices()[0].outbound_schedules[0].id;
+    for (std::size_t i = 0; i < kTruckCapacity; ++i) {
+        // The oldest letters boarded, their trails noting the departure.
+        Letter expected = seeded[i];
+        expected.trail.push_back({1, TrailEvent::Departed, 0, schedule});
+        assert(cargo[i] == expected);
+    }
     assert(w.get_post_offices()[0].outbound_letters.size() >= seeded.size() - kTruckCapacity);
 }
 
@@ -487,6 +494,143 @@ void multi_hop_forwarding_delivers_every_letter() {
         assert(office.outbound_letters.empty());
 }
 
+// The hub route above, checked through its statistics and letter trails:
+// every flow lands on the right office and schedule, and each letter's trail
+// records exactly when it left and reached which office on which schedule.
+void stats_and_trails_follow_a_hub_route() {
+    World w;
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTruckCapacity, 100, 0);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100, 0);
+    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100, 0);
+    for (const PostOfficeId id : {a, b, c})
+        assert(w.build_office(id));
+    w.seed_letters();
+    const int before_roads = w.get_money();
+    add_straight_road(w, a, b);
+    add_straight_road(w, b, c);
+    const int road_spend = before_roads - w.get_money();
+    assert(w.add_schedule(a, b, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, {"P"}}));
+    assert(w.add_schedule(b, c, 100 * kTicksPerDay, 60, {RoutingRuleType::ExactDestination, {}}));
+
+    int64_t to_b = 0, to_c = 0;
+    for (const Letter& letter : w.get_post_offices()[a].outbound_letters)
+        (letter.dst == b ? to_b : to_c) += 1;
+    assert(to_b + to_c == static_cast<int64_t>(kTruckCapacity));
+
+    for (Tick t = 0; t < 110; ++t)
+        w.advance_tick();
+
+    const GlobalStats& g = w.get_stats();
+    const auto& offices = w.get_post_offices();
+    const ScheduleId leg1 = offices[a].outbound_schedules[0].id;
+    const ScheduleId leg2 = offices[b].outbound_schedules[0].id;
+    assert(leg1 != leg2);
+
+    // Global flows. Spawns are counted per office too, trickle included.
+    assert(g[GlobalStat::LettersSpawned].total == offices[a].stats[OfficeStat::Spawned].total);
+    assert(g[GlobalStat::LettersSpawned].total >= static_cast<int64_t>(kTruckCapacity));
+    assert(g[GlobalStat::LettersLost].total == 0);
+    assert(g[GlobalStat::DeliveredOnTime].total == static_cast<int64_t>(kTruckCapacity));
+    assert(g[GlobalStat::DeliveredLate].total == 0);
+    assert(g[GlobalStat::SpentRoads].total == road_spend);
+    assert(g[GlobalStat::SpentTrucks].total == 2 * kTruckDepartureCost);
+    assert(g[GlobalStat::SpentOffices].total == 0);  // they were free
+    // Seeded at tick 0; B-mail arrives at 51 after 50 ticks on the road,
+    // C-mail at 110 after 100.
+    assert(g[GlobalStat::DeliveryTicks].total == 51 * to_b + 110 * to_c);
+    assert(g[GlobalStat::TransitTicks].total == 50 * to_b + 100 * to_c);
+
+    // Income adds up three ways: globally, per delivering office, per log entry.
+    int64_t logged = 0;
+    for (const DeliveredLetter& d : w.get_recent_deliveries())
+        logged += d.earned;
+    const int64_t income = g[GlobalStat::IncomeValue].total + g[GlobalStat::IncomeBonus].total;
+    assert(income == logged);
+    assert(income == offices[b].stats[OfficeStat::Income].total + offices[c].stats[OfficeStat::Income].total);
+    assert(w.get_money() == kStartingMoney - road_spend - 2 * kTruckDepartureCost + income);
+
+    // Offices: B delivers its own mail and forwards C's; each letter waited
+    // 1 tick at A (seeded at 0, left at 1) and C-mail 9 at B (51 -> 60).
+    assert(offices[b].stats[OfficeStat::Delivered].total == to_b);
+    assert(offices[b].stats[OfficeStat::Forwarded].total == to_c);
+    assert(offices[c].stats[OfficeStat::Delivered].total == to_c);
+    assert(offices[a].stats[OfficeStat::LettersDeparted].total == static_cast<int64_t>(kTruckCapacity));
+    assert(offices[a].stats[OfficeStat::WaitTicks].total == static_cast<int64_t>(kTruckCapacity));
+    assert(offices[b].stats[OfficeStat::WaitTicks].total == 9 * to_c);
+    assert(offices[a].stats[OfficeStat::Departures].total == 1);
+
+    // Schedules: leg 1 took everything; income is credited to the schedule
+    // that carried each letter on its final leg.
+    const TruckSchedule& s1 = offices[a].outbound_schedules[0];
+    const TruckSchedule& s2 = offices[b].outbound_schedules[0];
+    assert(s1.stats[ScheduleStat::Departures].total == 1);
+    assert(s1.stats[ScheduleStat::LettersLoaded].total == static_cast<int64_t>(kTruckCapacity));
+    assert(s1.stats[ScheduleStat::LeftBehind].total == 0);
+    assert(s2.stats[ScheduleStat::LettersLoaded].total == to_c);
+    assert(s2.stats[ScheduleStat::EmptyDepartures].total == (to_c == 0 ? 1 : 0));
+    assert(s1.stats[ScheduleStat::Income].total + s2.stats[ScheduleStat::Income].total == income);
+    assert(s1.departure_log == (std::vector<DepartureRecord>{{1, static_cast<std::uint32_t>(kTruckCapacity), 0}}));
+
+    // Trails, from the recent-deliveries log.
+    assert(w.get_recent_deliveries().size() == kTruckCapacity);
+    for (const DeliveredLetter& d : w.get_recent_deliveries()) {
+        std::vector<TrailStop> expected = {
+            {0, TrailEvent::Spawned, a, kNoSchedule},
+            {1, TrailEvent::Departed, a, leg1},
+            {51, TrailEvent::Arrived, b, kNoSchedule},
+        };
+        if (d.letter.dst == c) {
+            expected.push_back({60, TrailEvent::Departed, b, leg2});
+            expected.push_back({110, TrailEvent::Arrived, c, kNoSchedule});
+        }
+        assert(d.letter.trail == expected);
+        assert(d.delivered == expected.back().tick);
+    }
+}
+
+// A full buffer refuses new letters: they are counted as lost, globally and
+// at the office, and the backlog gauge shows the buffer at its cap.
+void lost_letters_are_counted() {
+    World w;
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 100, /*max_outbound_letters=*/2, 0);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100, 0);
+    assert(w.build_office(a) && w.build_office(b));
+    w.seed_letters();  // 100 attempts into a buffer of 2
+    w.advance_tick();
+    const OfficeStats& stats = w.get_post_offices()[a].stats;
+    const int64_t spawned = stats[OfficeStat::Spawned].total;
+    const int64_t lost = stats[OfficeStat::Lost].total;
+    assert(spawned == 2);
+    assert(lost >= 98);  // plus any refused trickle spawn on the tick
+    assert(w.get_stats()[GlobalStat::LettersLost].total == lost);
+    assert(stats[OfficeStat::Backlog].total == 2);
+    assert(w.get_stats()[GlobalStat::LettersWaiting].total == 2);
+}
+
+// An unaffordable departure is counted as skipped on the schedule and
+// globally, and a truck whose schedule is removed mid-trip still scores its
+// letters globally (there is just no schedule left to credit).
+void skipped_departures_and_orphaned_trucks() {
+    World w = make_line_world(2, 5);
+    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
+    const int money = w.get_money();
+    w.set_money(0);
+    w.advance_tick();  // tick 1: due, unaffordable
+    assert(w.get_trucks().empty());
+    assert(w.get_stats()[GlobalStat::DeparturesSkipped].total == 1);
+    assert(w.get_post_offices()[0].outbound_schedules[0].stats[ScheduleStat::Skipped].total == 1);
+
+    w.set_money(money);
+    while (w.get_trucks().empty())
+        w.advance_tick();
+    assert(w.get_trucks()[0]->get_schedule() == w.get_post_offices()[0].outbound_schedules[0].id);
+    w.remove_schedule(0, 0);
+    while (!w.get_trucks().empty())
+        w.advance_tick();
+    assert(w.get_stats()[GlobalStat::DeliveredOnTime].total > 0);
+    assert(w.get_stats()[GlobalStat::IncomeValue].total > 0);
+}
+
 // Offices start unbuilt and inert: they spawn no letters, receive none, and
 // cannot be joined by roads until the player pays to build them.
 void building_offices() {
@@ -559,6 +703,12 @@ int main() {
     printf("PASS postal_code_edits_take_effect_at_departure\n");
     multi_hop_forwarding_delivers_every_letter();
     printf("PASS multi_hop_forwarding_delivers_every_letter\n");
+    stats_and_trails_follow_a_hub_route();
+    printf("PASS stats_and_trails_follow_a_hub_route\n");
+    lost_letters_are_counted();
+    printf("PASS lost_letters_are_counted\n");
+    skipped_departures_and_orphaned_trucks();
+    printf("PASS skipped_departures_and_orphaned_trucks\n");
     road_removal();
     printf("PASS road_removal\n");
     observed_truck_expires_on_arrival();

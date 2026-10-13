@@ -17,6 +17,7 @@
 #include "scenario.h"
 #include "world.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
@@ -24,6 +25,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -117,9 +119,14 @@ World build_fixture_world() {
     for (const auto& [src, dst] : kLateRoutes)
         assert(w.add_schedule(src, dst, kTicksPerDay, late_start, all_rule));
 
+    // Retune one schedule a day in, so its edit log is non-empty too.
+    for (Tick t = 0; t < kTicksPerDay; ++t)
+        w.advance_tick();
+    assert(w.update_schedule(3, 0, 7 * kTicksPerHour, 7, all_rule));
+
     // Run past the late batch's arrivals (the longest of these routes is
     // in flight for well under 500 ticks).
-    for (Tick t = 0; t < late_start + 500; ++t)
+    while (w.get_tick() < late_start + 500)
         w.advance_tick();
 
     // Step until at least one truck is in flight so Truck state is exercised
@@ -137,6 +144,33 @@ World build_fixture_world() {
     assert(w.get_letters_delivered_late() > 0);      // default: 0
     assert(!w.get_trucks().empty());                 // default: empty
     assert(!w.get_roads().empty());                  // default: empty
+
+    // Statistics and trails (stats.h, Letter::trail): every kind of stat
+    // table has been written to, and every log holds entries.
+    assert(w.get_stats() != GlobalStats{});
+    assert(!w.get_recent_deliveries().empty());
+    bool office_stats = false, schedule_stats = false, departure_log = false, edits = false,
+         schedule_ids = false, trails = false, departed_stop = false;
+    for (const PostOffice& office : w.get_post_offices()) {
+        office_stats |= office.stats != OfficeStats{};
+        for (const Letter& letter : office.outbound_letters)
+            trails |= !letter.trail.empty();
+        for (const TruckSchedule& schedule : office.outbound_schedules) {
+            schedule_stats |= schedule.stats != ScheduleStats{};
+            departure_log |= !schedule.departure_log.empty();
+            edits |= !schedule.edits.empty();
+            schedule_ids |= schedule.id != 0;  // default: kNoSchedule, and the first id is 0
+        }
+    }
+    bool truck_schedule = false;
+    for (const auto& truck : w.get_trucks()) {
+        truck_schedule |= truck->get_schedule() != kNoSchedule;
+        for (const Letter& letter : truck->get_letters())
+            for (const TrailStop& stop : letter.trail)
+                departed_stop |= stop.schedule != kNoSchedule;
+    }
+    assert(office_stats && schedule_stats && departure_log && edits && schedule_ids);
+    assert(trails && departed_stop && truck_schedule);
     return w;
 }
 
@@ -264,6 +298,80 @@ void legacy_single_prefix_loads() {
     assert(found);
 }
 
+// Saves from before statistics, trails and schedule ids still load: with
+// empty history, and with every schedule given a distinct fresh id.
+void pre_stats_save_loads() {
+    const World original = build_fixture_world();
+    const fs::path path = kSaveDir / "pre_stats.json";
+    assert(original.save_to_file(path.string()));
+
+    // Drop every line holding a key that did not exist before (dump(2) puts
+    // each scalar key on its own line), then every "stats"/"trail"/log
+    // value, which spans several lines: cut from its key to the matching
+    // close bracket.
+    std::string s = slurp(path);
+    std::string out;
+    std::istringstream lines(s);
+    for (std::string line; std::getline(lines, line);) {
+        if (line.find("\"id\":") != std::string::npos ||
+            line.find("\"next_schedule_id\":") != std::string::npos ||
+            line.find("\"schedule\":") != std::string::npos)
+            continue;
+        out += line + "\n";
+    }
+    s = out;
+    for (const std::string key : {"\"stats\": ", "\"trail\": ", "\"departure_log\": ",
+                                  "\"edits\": ", "\"recent_deliveries\": "}) {
+        for (auto at = s.find(key); at != std::string::npos; at = s.find(key)) {
+            // Find the bracket that closes the value, then the comma (or
+            // newline) after it.
+            std::size_t i = at + key.size();
+            int depth = 0;
+            do {
+                if (s[i] == '{' || s[i] == '[') ++depth;
+                if (s[i] == '}' || s[i] == ']') --depth;
+                ++i;
+            } while (depth > 0);
+            if (s[i] == ',')
+                ++i;
+            else {
+                // Last key in its object: drop the comma before it instead.
+                const auto comma = s.rfind(',', at);
+                s.erase(comma, 1);
+                --at;
+                --i;
+            }
+            s.erase(at, i - at);
+        }
+    }
+    // JSON allows the trailing whitespace this leaves behind.
+    write_file(path, s);
+
+    const auto loaded = World::load_from_file(path.string());
+    assert(loaded.has_value());
+    assert(loaded->get_stats() == GlobalStats{});
+    assert(loaded->get_recent_deliveries().empty());
+    std::vector<ScheduleId> ids;
+    for (const PostOffice& office : loaded->get_post_offices()) {
+        assert(office.stats == OfficeStats{});
+        for (const Letter& letter : office.outbound_letters)
+            assert(letter.trail.empty());
+        for (const TruckSchedule& schedule : office.outbound_schedules) {
+            assert(schedule.stats == ScheduleStats{});
+            ids.push_back(schedule.id);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    assert(std::adjacent_find(ids.begin(), ids.end()) == ids.end());
+    assert(ids.back() != kNoSchedule);
+
+    // ...and it keeps running, recording fresh history.
+    World w = *loaded;
+    for (Tick t = 0; t < kTicksPerDay; ++t)
+        w.advance_tick();
+    assert(w.get_stats() != GlobalStats{});
+}
+
 // The save file minus its "rng" line (dump(2) puts each key on its own line).
 std::string without_rng_line(const std::string& json) {
     const auto start = json.find("\"rng\": \"");
@@ -311,6 +419,8 @@ int main() {
     printf("PASS corrupt_rng_falls_back_to_fresh_rng\n");
     legacy_single_prefix_loads();
     printf("PASS legacy_single_prefix_loads\n");
+    pre_stats_save_loads();
+    printf("PASS pre_stats_save_loads\n");
 
     printf("all serialization tests passed\n");
     return 0;

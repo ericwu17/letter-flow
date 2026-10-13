@@ -31,3 +31,8 @@ void DrawHUD(const World& world);
 // route, timing and cargo. A selected truck that arrives hands the
 // selection over to its destination office.
 void DrawInspector(World& world);
+
+// The statistics window (toggled with P or the HUD button): network-wide,
+// per-office and per-schedule charts over a chosen time range, and the
+// journeys of recently delivered letters.
+void DrawStatsWindow(const World& world);

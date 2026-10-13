@@ -18,6 +18,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -36,6 +39,9 @@ namespace {
 // v2: roads added; TruckState stores a route polyline (vertices/distances)
 //     instead of straight-line from/to.
 // v3: post offices store build_cost and built.
+// Statistics, letter trails, schedule ids and the recent-deliveries log were
+// added within v3 as optional keys: a save without them still loads (with
+// empty history and freshly assigned schedule ids), so no bump was needed.
 constexpr int kSaveFormatVersion = 3;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
@@ -57,6 +63,71 @@ RoutingRuleType routing_rule_type_from_string(const std::string& text) {
     throw std::runtime_error("unknown routing rule type in save file: " + text);
 }
 
+// TrailEvent: a readable string, like RoutingRuleType above.
+const char* trail_event_to_string(TrailEvent event) {
+    switch (event) {
+    case TrailEvent::Spawned:  return "spawned";
+    case TrailEvent::Departed: return "departed";
+    case TrailEvent::Arrived:  return "arrived";
+    }
+    throw std::runtime_error("unknown TrailEvent");  // unreachable
+}
+
+TrailEvent trail_event_from_string(const std::string& text) {
+    if (text == "spawned")  return TrailEvent::Spawned;
+    if (text == "departed") return TrailEvent::Departed;
+    if (text == "arrived")  return TrailEvent::Arrived;
+    throw std::runtime_error("unknown trail event in save file: " + text);
+}
+
+// A stat level's buckets as one space-separated string: a JSON array would
+// put every one of the (mostly zero) numbers on its own line under dump(2),
+// bloating the file by an order of magnitude. Runs of zeros, the common case,
+// shrink further to "0*<count>", e.g. "0*117 3 0 12".
+std::string buckets_to_string(const std::array<int64_t, kStatBuckets>& buckets) {
+    std::ostringstream out;
+    for (std::size_t i = 0; i < buckets.size();) {
+        out << (i == 0 ? "" : " ");
+        std::size_t run = 0;
+        while (i + run < buckets.size() && buckets[i + run] == 0)
+            ++run;
+        if (run > 1) {
+            out << "0*" << run;
+            i += run;
+        } else {
+            out << buckets[i++];
+        }
+    }
+    return out.str();
+}
+
+std::array<int64_t, kStatBuckets> buckets_from_string(const std::string& text) {
+    std::array<int64_t, kStatBuckets> buckets{};
+    std::istringstream in(text);
+    std::string token;
+    std::size_t i = 0;
+    while (in >> token) {
+        std::size_t used = 0;
+        const int64_t value = std::stoll(token, &used);
+        std::size_t repeat = 1;
+        if (used != token.size()) {
+            if (value != 0 || token[used] != '*')
+                throw std::runtime_error("stat buckets: bad token " + token);
+            std::size_t count_used = 0;
+            repeat = std::stoul(token.substr(used + 1), &count_used);
+            if (count_used != token.size() - used - 1)
+                throw std::runtime_error("stat buckets: bad token " + token);
+        }
+        if (repeat > buckets.size() - i)
+            throw std::runtime_error("stat buckets: too many values");
+        for (std::size_t k = 0; k < repeat; ++k)
+            buckets[i++] = value;
+    }
+    if (i != buckets.size())
+        throw std::runtime_error("stat buckets: too few values");
+    return buckets;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -72,13 +143,70 @@ void from_json(const nlohmann::json& j, Position& pos) {
     j.at("y").get_to(pos.y);
 }
 
+// Statistics. A table is an object keyed by each metric's stable save key
+// (stats.h), so adding or reordering metrics never misreads old saves: a
+// metric missing from the file starts empty (which is also how never-written
+// series are saved, by leaving them out), and unknown keys are ignored.
+void to_json(nlohmann::json& j, const StatSeries& series) {
+    nlohmann::json levels = nlohmann::json::array();
+    for (const StatLevel& level : series.levels)
+        levels.push_back({{"newest", level.newest}, {"buckets", buckets_to_string(level.buckets)}});
+    j = {{"total", series.total}, {"levels", std::move(levels)}};
+}
+
+void from_json(const nlohmann::json& j, StatSeries& series) {
+    j.at("total").get_to(series.total);
+    const nlohmann::json& levels = j.at("levels");
+    if (!levels.is_array() || levels.size() != kStatLevels)
+        throw std::runtime_error("stat series: wrong number of levels");
+    for (std::size_t i = 0; i < kStatLevels; ++i) {
+        levels[i].at("newest").get_to(series.levels[i].newest);
+        series.levels[i].buckets = buckets_from_string(levels[i].at("buckets").get<std::string>());
+    }
+}
+
+template <typename Metric>
+void to_json(nlohmann::json& j, const StatTable<Metric>& table) {
+    j = nlohmann::json::object();
+    const std::span<const StatInfo> infos = stat_infos(Metric{});
+    for (std::size_t i = 0; i < infos.size(); ++i)
+        if (table.series[i] != StatSeries{})  // never written: loads back empty anyway
+            j[infos[i].key] = table.series[i];
+}
+
+template <typename Metric>
+void from_json(const nlohmann::json& j, StatTable<Metric>& table) {
+    const std::span<const StatInfo> infos = stat_infos(Metric{});
+    for (std::size_t i = 0; i < infos.size(); ++i) {
+        table.series[i] = StatSeries{};
+        if (j.contains(infos[i].key))
+            j.at(infos[i].key).get_to(table.series[i]);
+    }
+}
+
+void to_json(nlohmann::json& j, const TrailStop& stop) {
+    j = {{"tick", stop.tick},
+         {"event", trail_event_to_string(stop.event)},
+         {"office", stop.office}};
+    if (stop.schedule != kNoSchedule)
+        j["schedule"] = stop.schedule;
+}
+
+void from_json(const nlohmann::json& j, TrailStop& stop) {
+    j.at("tick").get_to(stop.tick);
+    stop.event = trail_event_from_string(j.at("event").get<std::string>());
+    j.at("office").get_to(stop.office);
+    stop.schedule = j.value("schedule", kNoSchedule);
+}
+
 void to_json(nlohmann::json& j, const Letter& letter) {
     j = {{"src", letter.src},
          {"dst", letter.dst},
          {"created", letter.created},
          {"deadline", letter.deadline},
          {"value", letter.value},
-         {"max_bonus", letter.max_bonus}};
+         {"max_bonus", letter.max_bonus},
+         {"trail", letter.trail}};
 }
 
 void from_json(const nlohmann::json& j, Letter& letter) {
@@ -88,6 +216,31 @@ void from_json(const nlohmann::json& j, Letter& letter) {
     j.at("deadline").get_to(letter.deadline);
     j.at("value").get_to(letter.value);
     j.at("max_bonus").get_to(letter.max_bonus);
+    letter.trail = j.value("trail", std::vector<TrailStop>{});
+}
+
+void to_json(nlohmann::json& j, const DeliveredLetter& delivered) {
+    j = {{"letter", delivered.letter},
+         {"delivered", delivered.delivered},
+         {"earned", delivered.earned}};
+}
+
+void from_json(const nlohmann::json& j, DeliveredLetter& delivered) {
+    j.at("letter").get_to(delivered.letter);
+    j.at("delivered").get_to(delivered.delivered);
+    j.at("earned").get_to(delivered.earned);
+}
+
+// A departure record is a compact [tick, loaded, left_behind] triple: a
+// schedule keeps up to kDepartureLogSize of them.
+void to_json(nlohmann::json& j, const DepartureRecord& record) {
+    j = nlohmann::json::array({record.tick, record.loaded, record.left_behind});
+}
+
+void from_json(const nlohmann::json& j, DepartureRecord& record) {
+    j.at(0).get_to(record.tick);
+    j.at(1).get_to(record.loaded);
+    j.at(2).get_to(record.left_behind);
 }
 
 void to_json(nlohmann::json& j, const RoutingRule& rule) {
@@ -110,19 +263,28 @@ void from_json(const nlohmann::json& j, RoutingRule& rule) {
 }
 
 void to_json(nlohmann::json& j, const TruckSchedule& schedule) {
-    j = {{"dst", schedule.dst},
+    j = {{"id", schedule.id},
+         {"dst", schedule.dst},
          {"rule", schedule.rule},
          {"period", schedule.period},
          {"start_offset", schedule.start_offset},
-         {"next_departure", schedule.next_departure}};
+         {"next_departure", schedule.next_departure},
+         {"stats", schedule.stats},
+         {"departure_log", schedule.departure_log},
+         {"edits", schedule.edits}};
 }
 
 void from_json(const nlohmann::json& j, TruckSchedule& schedule) {
+    // Saves from before schedule ids get theirs assigned in load_from_file.
+    schedule.id = j.value("id", kNoSchedule);
     j.at("dst").get_to(schedule.dst);
     j.at("rule").get_to(schedule.rule);
     j.at("period").get_to(schedule.period);
     j.at("start_offset").get_to(schedule.start_offset);
     j.at("next_departure").get_to(schedule.next_departure);
+    schedule.stats = j.value("stats", ScheduleStats{});
+    schedule.departure_log = j.value("departure_log", std::vector<DepartureRecord>{});
+    schedule.edits = j.value("edits", std::vector<Tick>{});
 }
 
 void to_json(nlohmann::json& j, const PostOffice& office) {
@@ -134,7 +296,8 @@ void to_json(nlohmann::json& j, const PostOffice& office) {
          {"build_cost", office.build_cost},
          {"built", office.built},
          {"outbound_letters", office.outbound_letters},
-         {"outbound_schedules", office.outbound_schedules}};
+         {"outbound_schedules", office.outbound_schedules},
+         {"stats", office.stats}};
 }
 
 void from_json(const nlohmann::json& j, PostOffice& office) {
@@ -147,6 +310,7 @@ void from_json(const nlohmann::json& j, PostOffice& office) {
     j.at("built").get_to(office.built);
     j.at("outbound_letters").get_to(office.outbound_letters);
     j.at("outbound_schedules").get_to(office.outbound_schedules);
+    office.stats = j.value("stats", OfficeStats{});
 }
 
 void to_json(nlohmann::json& j, const Road& road) {
@@ -173,6 +337,8 @@ void to_json(nlohmann::json& j, const TruckState& truck) {
          {"departure_tick", truck.departure_tick},
          {"speed", truck.speed},
          {"carried_letters", truck.carried_letters}};
+    if (truck.schedule != kNoSchedule)
+        j["schedule"] = truck.schedule;
 }
 
 void from_json(const nlohmann::json& j, TruckState& truck) {
@@ -183,6 +349,7 @@ void from_json(const nlohmann::json& j, TruckState& truck) {
     j.at("departure_tick").get_to(truck.departure_tick);
     j.at("speed").get_to(truck.speed);
     j.at("carried_letters").get_to(truck.carried_letters);
+    truck.schedule = j.value("schedule", kNoSchedule);
 }
 
 namespace {
@@ -194,17 +361,34 @@ namespace {
 // (dst is another office, period > 0, non-empty distinct postal prefixes), and roads
 // violating the invariants add_road() enforces (normalized src < dst, no
 // duplicates, both endpoint offices built, at least two in-range vertices
-// anchored at the endpoint offices).
+// anchored at the endpoint offices), letters (and their trails) naming
+// offices that do not exist, and schedule ids that repeat or that the
+// World's id counter would hand out again.
+bool letter_is_valid(const Letter& letter, PostOfficeId num_offices) {
+    if (letter.src >= num_offices || letter.dst >= num_offices)
+        return false;
+    for (const TrailStop& stop : letter.trail)
+        if (stop.office >= num_offices)
+            return false;
+    return true;
+}
+
 bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                            const std::vector<std::shared_ptr<Truck>>& trucks,
-                           const std::vector<Road>& roads) {
+                           const std::vector<Road>& roads,
+                           const std::vector<DeliveredLetter>& recent_deliveries,
+                           ScheduleId next_schedule_id) {
     const PostOfficeId num_offices = post_offices.size();
+    std::vector<ScheduleId> schedule_ids;
     for (PostOfficeId office_id = 0; office_id < num_offices; ++office_id) {
         const PostOffice& office = post_offices[office_id];
         for (const Letter& letter : office.outbound_letters)
-            if (letter.src >= num_offices || letter.dst >= num_offices)
+            if (!letter_is_valid(letter, num_offices))
                 return false;
         for (const TruckSchedule& schedule : office.outbound_schedules) {
+            if (schedule.id >= next_schedule_id)
+                return false;
+            schedule_ids.push_back(schedule.id);
             if (schedule.dst >= num_offices || schedule.dst == office_id)
                 return false;
             if (schedule.period == 0)
@@ -218,7 +402,16 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
             return false;
         if (truck->get_state().distances.size() != truck->get_state().vertices.size() - 1) 
             return false;
+        for (const Letter& letter : truck->get_letters())
+            if (!letter_is_valid(letter, num_offices))
+                return false;
     }
+    for (const DeliveredLetter& delivered : recent_deliveries)
+        if (!letter_is_valid(delivered.letter, num_offices))
+            return false;
+    std::sort(schedule_ids.begin(), schedule_ids.end());
+    if (std::adjacent_find(schedule_ids.begin(), schedule_ids.end()) != schedule_ids.end())
+        return false;  // two schedules share an id
     for (std::size_t i = 0; i < roads.size(); ++i) {
         const Road& road = roads[i];
         if (road.src >= num_offices || road.dst >= num_offices || road.src >= road.dst)
@@ -252,6 +445,9 @@ bool World::save_to_file(const std::string& path) const {
     j["money"] = money;
     j["letters_delivered_on_time"] = letters_delivered_on_time;
     j["letters_delivered_late"] = letters_delivered_late;
+    j["next_schedule_id"] = next_schedule_id;
+    j["stats"] = stats;
+    j["recent_deliveries"] = recent_deliveries;
     j["post_offices"] = post_offices;
     j["roads"] = roads;
 
@@ -319,6 +515,17 @@ std::optional<World> World::load_from_file(const std::string& path) {
         j.at("letters_delivered_late").get_to(world.letters_delivered_late);
         j.at("post_offices").get_to(world.post_offices);
         j.at("roads").get_to(world.roads);
+        world.stats = j.value("stats", GlobalStats{});
+        world.recent_deliveries = j.value("recent_deliveries", std::vector<DeliveredLetter>{});
+
+        // Schedule ids. Saves from before ids hold none: hand every
+        // schedule a fresh one, starting past any id already in the file.
+        world.next_schedule_id = j.value("next_schedule_id", ScheduleId{0});
+        if (!j.contains("next_schedule_id")) {
+            for (PostOffice& office : world.post_offices)
+                for (TruckSchedule& schedule : office.outbound_schedules)
+                    schedule.id = world.next_schedule_id++;
+        }
 
         const nlohmann::json& trucks_json = j.at("trucks");
         if (!trucks_json.is_array()) {
@@ -337,7 +544,8 @@ std::optional<World> World::load_from_file(const std::string& path) {
             cerr << "rng failed. Using a new RNG." << endl;
         }
 
-        if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads)) {
+        if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads,
+                                   world.recent_deliveries, world.next_schedule_id)) {
             cerr << "loaded state not valid" << endl;
             return std::nullopt;
         }
