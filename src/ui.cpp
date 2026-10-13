@@ -284,23 +284,6 @@ void FormatDuration(Tick duration, char* buf, std::size_t buf_len) {
     std::snprintf(buf, buf_len, "%02d:%02d", t.hour, t.minute);
 }
 
-// Short human-readable summary of a schedule's pick-up rule, e.g.
-// "Princeton mail", "NJ/Mercer/*" or "all mail".
-void FormatRoutingRule(const TruckSchedule& schedule, const std::vector<PostOffice>& offices,
-                       char* buf, std::size_t buf_len) {
-    switch (schedule.rule.type) {
-    case RoutingRuleType::ExactDestination:
-        std::snprintf(buf, buf_len, "%s mail", offices[schedule.dst].name.c_str());
-        break;
-    case RoutingRuleType::PostalPrefix:
-        std::snprintf(buf, buf_len, "%s*", schedule.rule.prefix.c_str());
-        break;
-    case RoutingRuleType::AllLetters:
-        std::snprintf(buf, buf_len, "all mail");
-        break;
-    }
-}
-
 // Every '/'-delimited prefix of every office's postal code ("NJ",
 // "NJ/Mercer", "NJ/Mercer/Princeton", ...), sorted and deduplicated — the
 // suggestion list for the prefix field of a PostalPrefix rule. Recomputed
@@ -1089,6 +1072,210 @@ static void DrawTruckPanel(const World& world, const Truck& truck) {
         DrawLetterTable("truck_cargo", truck.get_letters(), offices, now);
 }
 
+// An HH:MM cell: two narrow drag fields (drag, or double-click to type).
+// `max_hours` bounds the hour field; the caller clamps the combined value.
+// Returns true and writes `ticks` when the player changed either field.
+static bool EditHoursMinutes(const char* id, Tick& ticks, int max_hours) {
+    const ClockTime t = duration_to_hours_minutes(ticks);
+    int hours = t.hour;
+    int minutes = t.minute;
+    const float field_width = ImGui::CalcTextSize("00").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    ImGui::PushID(id);
+    ImGui::SetNextItemWidth(field_width);
+    bool changed = ImGui::DragInt("##h", &hours, 0.05f, 0, max_hours, "%02d", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SameLine(0.0f, 2.0f);
+    ImGui::TextUnformatted(":");
+    ImGui::SameLine(0.0f, 2.0f);
+    ImGui::SetNextItemWidth(field_width);
+    changed |= ImGui::DragInt("##m", &minutes, 0.2f, 0, 59, "%02d", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::PopID();
+    if (changed)
+        ticks = hours_minutes_to_ticks(hours, minutes);
+    return changed;
+}
+
+// The office's truck schedules as an editable table: the rule and timing
+// cells edit their schedule in place through World::update_schedule, which validates it the
+// same way add_schedule does. Rows can be dragged to reorder them (list
+// order is pick-up priority) and removed.
+static void DrawScheduleTable(World& world, PostOfficeId selected) {
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    const PostOffice& office = offices[selected];
+
+    // Why the last edit was refused, shown under the table until the next
+    // accepted edit or a change of office.
+    static std::string edit_error;
+    static PostOfficeId edit_error_owner = kNoPostOffice;
+    if (edit_error_owner != selected) {
+        edit_error.clear();
+        edit_error_owner = selected;
+    }
+
+    if (office.outbound_schedules.empty()) {
+        ImGui::TextDisabled("No schedules yet. Add one below.");
+        return;
+    }
+    ImGui::TextDisabled("Departures run top to bottom: on simultaneous departures the");
+    ImGui::TextDisabled("first schedule whose rule matches a letter picks it up. Drag # to reorder.");
+
+    // The prefix being typed. A row's buffer is otherwise rebuilt from the
+    // World every frame, but a refused keystroke (an empty or duplicate
+    // prefix) must not snap the text back mid-edit, so the active field keeps
+    // its text here; it reverts to the World's value once deactivated.
+    static char active_prefix[128];
+
+    // Record edits, removals and reorders and apply them after the loop: the
+    // World mutates the very vector we are iterating, which would invalidate
+    // `schedule` and shift the indices of every later row (and of a pending
+    // drag-and-drop payload).
+    std::optional<std::pair<std::size_t, TruckSchedule>> schedule_to_update;
+    std::optional<std::size_t> schedule_to_remove;
+    std::optional<std::pair<std::size_t, std::size_t>> schedule_to_move;  // from, to
+
+    const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerV |
+                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
+    if (ImGui::BeginTable("schedules", 8, flags)) {
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("To", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Picks up", ImGuiTableColumnFlags_WidthStretch, 1.6f);
+        ImGui::TableSetupColumn("Every", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Starting at", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Next departure", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Waiting", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableHeadersRow();
+
+        for (std::size_t i = 0; i < office.outbound_schedules.size(); ++i) {
+            const TruckSchedule& schedule = office.outbound_schedules[i];
+            TruckSchedule edited = schedule;  // this row's pending edit, if any
+            bool row_changed = false;
+
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TableNextRow();
+
+            // #: the drag handle. Dropping it on another row reorders the
+            // schedule to that position.
+            ImGui::TableSetColumnIndex(0);
+            char handle[16];
+            std::snprintf(handle, sizeof(handle), "%zu", i + 1);
+            ImGui::Selectable(handle);
+            ImGui::SetItemTooltip("Drag to reorder");
+            if (ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload("SCHEDULE_REORDER", &i, sizeof(i));
+                ImGui::Text("#%zu  to %s", i + 1, offices[schedule.dst].name.c_str());  // drag preview
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCHEDULE_REORDER")) {
+                    const std::size_t from = *static_cast<const std::size_t*>(payload->Data);
+                    if (from != i)
+                        schedule_to_move = {from, i};
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            // To: fixed once created (remove and re-add to change it).
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(offices[schedule.dst].name.c_str());
+
+            // Picks up: the rule type, plus the prefix field for PostalPrefix.
+            ImGui::TableSetColumnIndex(2);
+            const bool is_prefix = schedule.rule.type == RoutingRuleType::PostalPrefix;
+            char exact_label[160];
+            std::snprintf(exact_label, sizeof(exact_label), "%s mail", offices[schedule.dst].name.c_str());
+            const char* rule_labels[] = {exact_label, "Postal prefix", "All mail"};
+            const RoutingRuleType rule_types[] = {RoutingRuleType::ExactDestination,
+                                                  RoutingRuleType::PostalPrefix,
+                                                  RoutingRuleType::AllLetters};
+            const int current_rule = static_cast<int>(schedule.rule.type);
+            ImGui::SetNextItemWidth(is_prefix ? ImGui::GetContentRegionAvail().x * 0.45f : -FLT_MIN);
+            if (ImGui::BeginCombo("##rule", is_prefix ? "Prefix" : rule_labels[current_rule])) {
+                for (int r = 0; r < 3; ++r) {
+                    if (ImGui::Selectable(rule_labels[r], r == current_rule) && r != current_rule) {
+                        edited.rule.type = rule_types[r];
+                        // A new prefix rule starts from the destination's own
+                        // postal code, the most likely thing to collect.
+                        if (edited.rule.type == RoutingRuleType::PostalPrefix)
+                            edited.rule.prefix = offices[edited.dst].postal_code;
+                        row_changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (is_prefix) {
+                ImGui::SameLine();
+                const ImGuiID prefix_id = ImGui::GetID("##prefix");
+                const bool editing = ImGui::GetActiveID() == prefix_id;
+                char row_prefix[128];
+                std::snprintf(row_prefix, sizeof(row_prefix), "%s", schedule.rule.prefix.c_str());
+                char* buf = editing ? active_prefix : row_prefix;
+                // Red while the typed text is not (yet) an accepted prefix.
+                const bool refused = editing && schedule.rule.prefix != active_prefix;
+                if (refused)
+                    ImGui::PushStyleColor(ImGuiCol_Text, kColorErrorText);
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                if (ImGui::InputTextWithHint("##prefix", "e.g. NJ/North", buf, sizeof(active_prefix))) {
+                    edited.rule.prefix = buf;
+                    row_changed = true;
+                }
+                if (refused)
+                    ImGui::PopStyleColor();
+                if (ImGui::IsItemActivated())
+                    std::snprintf(active_prefix, sizeof(active_prefix), "%s", row_prefix);
+            }
+
+            // Every / Starting at: HH:MM, converted to ticks right away.
+            ImGui::TableSetColumnIndex(3);
+            if (EditHoursMinutes("every", edited.period, 24)) {
+                edited.period = std::clamp(edited.period, kMinSchedulePeriod, kTicksPerDay);
+                row_changed = true;
+            }
+            ImGui::TableSetColumnIndex(4);
+            if (EditHoursMinutes("start", edited.start_offset, 23))
+                row_changed = true;
+
+            ImGui::TableSetColumnIndex(5);
+            char next[32];
+            FormatDayTime(schedule.next_departure, next, sizeof(next));
+            ImGui::TextUnformatted(next);
+
+            // Waiting: how much of the current buffer this rule would load.
+            ImGui::TableSetColumnIndex(6);
+            std::size_t matched = 0;
+            for (const Letter& letter : office.outbound_letters)
+                if (schedule.rule.matches(letter.dst, offices[letter.dst].postal_code, schedule.dst))
+                    ++matched;
+            ImGui::Text("%zu", matched);
+            ImGui::SetItemTooltip("Outbound letters this rule would pick up right now");
+
+            ImGui::TableSetColumnIndex(7);
+            if (ImGui::SmallButton("Remove"))
+                schedule_to_remove = i;
+
+            if (row_changed)
+                schedule_to_update = {i, edited};
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+
+    if (schedule_to_update.has_value()) {
+        const auto& [index, s] = *schedule_to_update;
+        if (world.update_schedule(selected, index, s.period, s.start_offset, s.rule))
+            edit_error.clear();
+        else if (s.rule.type == RoutingRuleType::PostalPrefix && s.rule.prefix.empty())
+            edit_error = "The prefix must not be empty.";
+        else
+            edit_error = "Another schedule already goes there with that rule.";
+    } else if (schedule_to_remove.has_value()) {
+        world.remove_schedule(selected, *schedule_to_remove);
+    } else if (schedule_to_move.has_value()) {
+        world.move_schedule(selected, schedule_to_move->first, schedule_to_move->second);
+    }
+    if (!edit_error.empty())
+        ImGui::TextColored(kColorErrorText, "Not applied: %s", edit_error.c_str());
+}
+
 // A post office: postal code, outbound letters and schedule editing.
 static void DrawOfficePanel(World& world, PostOfficeId selected) {
     const std::vector<PostOffice>& offices = world.get_post_offices();
@@ -1138,51 +1325,7 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
         DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
 
     if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextDisabled("Departures run top to bottom: on simultaneous departures the");
-        ImGui::TextDisabled("first schedule whose rule matches a letter picks it up. Drag to reorder.");
-
-        // Record removals/reorders and apply them after the loop: the World
-        // mutates the very vector we are iterating, which would invalidate the
-        // `schedule` reference and shift the indices of every later row (and
-        // of a pending drag-and-drop payload).
-        std::optional<std::size_t> schedule_to_remove;
-        std::optional<std::pair<std::size_t, std::size_t>> schedule_to_move;  // from, to
-        for (std::size_t i = 0; i < office.outbound_schedules.size(); ++i) {
-            const TruckSchedule& schedule = office.outbound_schedules[i];
-            char every[16], start[16], next[32], pickup[160], label[288];
-            FormatDuration(schedule.period, every, sizeof(every));
-            FormatDuration(schedule.start_offset, start, sizeof(start));
-            FormatDayTime(schedule.next_departure, next, sizeof(next));
-            FormatRoutingRule(schedule, offices, pickup, sizeof(pickup));
-            std::snprintf(label, sizeof(label), "#%zu  to %s  [pickup: %s]  every %s starting at %s (next: %s)",
-                          i + 1, offices[schedule.dst].name.c_str(), pickup, every, start, next);
-
-            ImGui::PushID(static_cast<int>(i));
-            // The row itself is the drag handle; dropping it on another row
-            // reorders the schedule to that position.
-            ImGui::Selectable(label, false, ImGuiSelectableFlags_AllowOverlap);  // ImGuiSelectableFlags_AllowOverlap is needed so that the Remove button can receive clicks.
-            if (ImGui::BeginDragDropSource()) {
-                ImGui::SetDragDropPayload("SCHEDULE_REORDER", &i, sizeof(i));
-                ImGui::TextUnformatted(label);  // drag preview
-                ImGui::EndDragDropSource();
-            }
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("SCHEDULE_REORDER")) {
-                    const std::size_t from = *static_cast<const std::size_t*>(payload->Data);
-                    if (from != i)
-                        schedule_to_move = {from, i};
-                }
-                ImGui::EndDragDropTarget();
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Remove"))
-                schedule_to_remove = i;
-            ImGui::PopID();
-        }
-        if (schedule_to_remove.has_value())
-            world.remove_schedule(selected, *schedule_to_remove);
-        else if (schedule_to_move.has_value())
-            world.move_schedule(selected, schedule_to_move->first, schedule_to_move->second);
+        DrawScheduleTable(world, selected);
 
         ImGui::SeparatorText("Add route");
 

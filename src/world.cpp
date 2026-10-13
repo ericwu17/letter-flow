@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -224,16 +226,17 @@ void World::deliver(Truck& truck) {
         money_events.push_back({arrived_at, earned});
 }
 
-bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
-                         const RoutingRule& rule) {
+std::optional<RoutingRule> World::validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
+                                                    const RoutingRule& rule,
+                                                    std::size_t ignore_index) const {
     if (src >= post_offices.size() || dst >= post_offices.size() || src == dst || period == 0)
-        return false;
+        return std::nullopt;
     if (rule.type == RoutingRuleType::PostalPrefix && rule.prefix.empty())
-        return false;  // an empty prefix must be an explicit AllLetters rule
+        return std::nullopt;  // an empty prefix must be an explicit AllLetters rule
 
     // Road constraint: a schedule requires a road connecting the two offices.
     if (!has_road(src, dst))
-        return false;
+        return std::nullopt;
 
     // Normalize: only PostalPrefix rules carry a prefix, so equality (and the
     // duplicate check below) compares like with like.
@@ -241,18 +244,48 @@ bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick s
     if (normalized_rule.type != RoutingRuleType::PostalPrefix)
         normalized_rule.prefix.clear();
 
-    for (const TruckSchedule& existing : post_offices[src].outbound_schedules) {
-        if (existing.dst == dst && existing.rule == normalized_rule)
-            return false;  // identical schedule already exists
+    const std::vector<TruckSchedule>& schedules = post_offices[src].outbound_schedules;
+    for (std::size_t i = 0; i < schedules.size(); ++i) {
+        if (i != ignore_index && schedules[i].dst == dst && schedules[i].rule == normalized_rule)
+            return std::nullopt;  // identical schedule already exists
     }
+    return normalized_rule;
+}
+
+bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
+                         const RoutingRule& rule) {
+    std::optional<RoutingRule> normalized_rule =
+        validate_schedule(src, dst, period, rule, std::numeric_limits<std::size_t>::max());
+    if (!normalized_rule.has_value())
+        return false;
 
     TruckSchedule schedule;
     schedule.dst = dst;
-    schedule.rule = std::move(normalized_rule);
+    schedule.rule = std::move(*normalized_rule);
     schedule.period = period;
     schedule.start_offset = start_offset;
     schedule.next_departure = first_departure_after(start_offset, period, current_tick);
     post_offices[src].outbound_schedules.push_back(std::move(schedule));
+    return true;
+}
+
+bool World::update_schedule(PostOfficeId src, std::size_t schedule_index,
+                            Tick period, Tick start_offset, const RoutingRule& rule) {
+    if (src >= post_offices.size() || schedule_index >= post_offices[src].outbound_schedules.size())
+        return false;
+    TruckSchedule& schedule = post_offices[src].outbound_schedules[schedule_index];
+    std::optional<RoutingRule> normalized_rule =
+        validate_schedule(src, schedule.dst, period, rule, schedule_index);
+    if (!normalized_rule.has_value())
+        return false;
+
+    // Only a new departure grid moves the next departure; a rule edit leaves
+    // the timing exactly as it was.
+    if (period != schedule.period || start_offset != schedule.start_offset)
+        schedule.next_departure = first_departure_after(start_offset, period, current_tick);
+    schedule.rule = std::move(*normalized_rule);
+    schedule.period = period;
+    schedule.start_offset = start_offset;
     return true;
 }
 

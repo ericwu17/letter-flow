@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -120,6 +121,53 @@ void schedule_validation_and_pricing() {
     assert(w.add_schedule(0, 1, kTicksPerHour, 0, all));
     assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
     assert(w.get_money() == money0);
+}
+
+// update_schedule() edits a schedule's rule and timing in place: same
+// rejection rules as add_schedule (the duplicate check skipping the schedule
+// itself), destination and list position kept, and the next departure
+// re-anchored only when the timing changes.
+void schedule_editing() {
+    World w = make_line_world(2, 0);
+    const RoutingRule exact{RoutingRuleType::ExactDestination, ""};
+    const RoutingRule all{RoutingRuleType::AllLetters, ""};
+    const RoutingRule prefix{RoutingRuleType::PostalPrefix, "T/"};
+    assert(w.add_schedule(0, 1, kTicksPerHour, 100, exact));
+    assert(w.add_schedule(0, 1, kTicksPerHour, 200, all));
+    const auto schedules = [&] { return w.get_post_offices()[0].outbound_schedules; };
+    const std::vector<TruckSchedule> before = schedules();
+
+    // Rejected edits change nothing.
+    assert(!w.update_schedule(0, 9, kTicksPerHour, 100, exact));  // bad index
+    assert(!w.update_schedule(9, 0, kTicksPerHour, 100, exact));  // bad src
+    assert(!w.update_schedule(0, 0, 0, 100, exact));              // zero period
+    assert(!w.update_schedule(0, 0, kTicksPerHour, 100,
+                              {RoutingRuleType::PostalPrefix, ""}));  // empty prefix
+    assert(!w.update_schedule(0, 0, kTicksPerHour, 100, all));    // duplicates #2
+    assert(schedules() == before);
+
+    // Re-submitting a schedule's own values is not a duplicate of itself.
+    assert(w.update_schedule(0, 0, kTicksPerHour, 100, exact));
+    assert(schedules() == before);
+
+    // A rule edit keeps the destination, the timing and the list position.
+    assert(w.update_schedule(0, 0, kTicksPerHour, 100, prefix));
+    assert(schedules()[0].rule == prefix);
+    assert(schedules()[0].dst == before[0].dst);
+    assert(schedules()[0].next_departure == before[0].next_departure);
+    assert(schedules()[1] == before[1]);
+    // A stale prefix on a non-prefix rule is normalized away, as in add_schedule.
+    assert(!w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::AllLetters, "junk"}));  // == #2
+    assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::ExactDestination, "junk"}));
+    assert(schedules()[0].rule == exact);
+
+    // A new period or offset re-anchors the next departure on the new grid.
+    while (w.get_tick() < 1000)
+        w.advance_tick();
+    assert(w.update_schedule(0, 0, 300, 50, exact));
+    assert(schedules()[0].period == 300);
+    assert(schedules()[0].start_offset == 50);
+    assert(schedules()[0].next_departure == 1250);  // 50 + 4 * 300, first slot after 1000
 }
 
 // Each departing truck costs kTruckDepartureCost, charged as it leaves, and
@@ -476,6 +524,8 @@ int main() {
     printf("PASS routing_rule_matches\n");
     schedule_validation_and_pricing();
     printf("PASS schedule_validation_and_pricing\n");
+    schedule_editing();
+    printf("PASS schedule_editing\n");
     departures_are_charged();
     printf("PASS departures_are_charged\n");
     trucks_carry_at_most_capacity();

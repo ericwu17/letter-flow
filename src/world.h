@@ -43,6 +43,12 @@ private:
     void spawn_letter(PostOfficeId office);        // one letter, buffer permitting
     void spawn_truck(PostOfficeId src, const TruckSchedule& schedule);
     void deliver(Truck& truck);
+    // Shared validation for add_schedule() / update_schedule(): returns the
+    // normalized rule, or nullopt if the route is invalid or would duplicate
+    // (dst, rule) of any schedule of `src` other than the one at `ignore_index`.
+    std::optional<RoutingRule> validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
+                                                 const RoutingRule& rule,
+                                                 std::size_t ignore_index) const;
 
 public:
     // Advances the simulation by one tick: probabilistic letter spawning,
@@ -79,6 +85,15 @@ public:
     // where both depart, the earlier one in the list takes contested letters.
     bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
                       const RoutingRule& rule);
+    // Edits the timing and rule of the schedule at `schedule_index` in place
+    // (the inspector's schedule table), keeping its destination and list
+    // position. Same validation as add_schedule, except the duplicate check
+    // skips the schedule itself. Changing period or start_offset re-anchors
+    // the next departure on the new grid (first slot strictly after now);
+    // changing only the rule keeps the next departure as is. Returns false
+    // and changes nothing on an invalid index or schedule.
+    bool update_schedule(PostOfficeId src, std::size_t schedule_index,
+                         Tick period, Tick start_offset, const RoutingRule& rule);
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
     // Moves the schedule at index `from` to index `to` (drag-to-reorder in the
     // inspector). List order is the pick-up priority: departures fire in list
