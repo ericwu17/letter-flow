@@ -76,6 +76,7 @@ src/scenario.*        create_default_world() starter map
 src/serialization.cpp JSON save/load: implements World::save_to_file / load_from_file
 src/ui.*              Dear ImGui presentation layer (the only place ImGui exists)
 src/main.cpp          SDL2 + OpenGL3 bootstrap and frame loop (all platforms)
+src/app_icon.*        window/Dock icon from assets/logo.png (embedded at build time)
 src/platform_macos.*  macOS-only startup tweaks (the sole Objective-C++ file)
 
 tests/test_geometry.cpp       headless exact road-geometry tests (make test)
@@ -83,6 +84,9 @@ tests/test_serialization.cpp  headless save/load round-trip tests (make test)
 tests/test_simulation.cpp     headless simulation-rule tests (make test)
 third_party/nlohmann/json.hpp vendored single-header JSON library (only
                               serialization.cpp includes it)
+third_party/stb/stb_image.h   vendored PNG decoder, v2.30 (only app_icon.cpp
+                              includes it)
+assets/logo.png               app icon, compiled into the executable
 ```
 
 ## Tests

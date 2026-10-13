@@ -19,6 +19,7 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_opengl3.h"
 
+#include "app_icon.h"
 #include "game_types.h"
 #include "scenario.h"
 #include "world.h"
@@ -106,6 +107,7 @@ int main(int argc, char** argv)
         printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
         return 1;
     }
+    SetAppIcon(window);
 
 #ifdef __APPLE__
     ApplyMacOSTweaks();  // disable the press-and-hold accent popup

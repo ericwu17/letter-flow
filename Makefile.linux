@@ -31,6 +31,9 @@ CXXFLAGS += -Isrc
 CXXFLAGS += -isystem $(IMGUI_DIR) -isystem $(IMGUI_DIR)/backends -isystem $(THIRD_PARTY_DIR)
 CXXFLAGS += $(shell sdl2-config --cflags)
 CXXFLAGS += -MMD -MP   # header dependency tracking
+# Build-time generated headers (logo_png.h, see the embed rule below).
+GENERATED_DIR = $(BUILD_DIR)/generated
+CXXFLAGS += -I$(GENERATED_DIR)
 
 # Comprehensive but non-opinionated warning set for our own code (src/, tests/),
 # with warnings treated as errors. Third-party code (imgui) is built with
@@ -50,7 +53,7 @@ LIBS += $(shell sdl2-config --libs)
 # Simulation layer: pure logic, no SDL/imgui/OpenGL — the headless tests link
 # against exactly these objects. Keep presentation code out of this list.
 SIM_SOURCES  = src/road.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
-APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/main.cpp
+APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/main.cpp src/app_icon.cpp
 # One headless test binary per tests/test_*.cpp file (see the test rules below).
 TEST_SOURCES := $(wildcard tests/*.cpp)
 TEST_EXES    := $(patsubst tests/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))
@@ -99,6 +102,18 @@ $(BUILD_DIR)/test_%: $(BUILD_DIR)/tests/test_%.o $(SIM_OBJS)
 # The tests are assert-based: force asserts on for test objects so a stray
 # -DNDEBUG in CXXFLAGS can never turn them into silent no-ops.
 $(TEST_OBJS): CXXFLAGS += -UNDEBUG
+
+# Embed assets/logo.png as a C array (app icon, see src/app_icon.h). Uses od
+# + sed rather than xxd so it needs nothing beyond the POSIX tools.
+LOGO_HEADER = $(GENERATED_DIR)/logo_png.h
+$(LOGO_HEADER): assets/logo.png
+	@mkdir -p $(dir $@)
+	{ echo '// Generated from $< by the makefile. Do not edit.'; \
+	  echo 'static const unsigned char kLogoPng[] = {'; \
+	  od -An -v -tx1 $< | sed 's/ *\([0-9a-f][0-9a-f]\)/0x\1,/g'; \
+	  echo '};'; } > $@
+
+$(BUILD_DIR)/src/app_icon.o: $(LOGO_HEADER)
 
 clean:
 	rm -rf $(BUILD_DIR) $(EXE)
