@@ -357,6 +357,10 @@ bool PointInRect(ImVec2 p, ImVec2 r_min, ImVec2 r_max) {
 
 ImGuiID MainDockSpaceId() { return ImGui::GetID("MainDockSpace"); }
 
+// The left dock node the inspector is pinned into; set by DrawDockspace on
+// the first frame and used by DrawInspector to re-dock it every frame.
+ImGuiID g_inspector_dock_id = 0;
+
 TransportLayout ComputeTransportLayout(const World& world) {
     ImGuiIO& io = ImGui::GetIO();
     TransportLayout l;
@@ -437,29 +441,28 @@ TransportLayout ComputeTransportLayout(const World& world) {
 //
 // The central node is passthrough (ImGuiDockNodeFlags_PassthruCentralNode), so
 // the map — drawn into the background draw list — stays visible and clickable
-// through it. On the first frame, if imgui.ini holds no docking data for the
-// dockspace or no settings for the inspector (first run, or an ini written by
-// an older build), the default layout is built programmatically: the
-// inspector ("###Inspector") is docked into a left split. From then on the
-// layout lives in imgui.ini and the user can rearrange/undock windows freely
-// without the code fighting it every frame.
+// through it. The layout is fixed: the inspector ("###Inspector") is pinned
+// into a left split (DrawInspector re-docks it every frame and its node
+// can't be undocked), and no other window can dock anywhere. Only the split
+// width is user-adjustable, and it persists in imgui.ini.
 // ---------------------------------------------------------------------------
 
 void DrawDockspace() {
     const ImGuiID dockspace_id = MainDockSpaceId();
 
-    // Decided once, on the first frame (imgui.ini is loaded by then): later
-    // frames would see the inspector's settings missing until the ini is next
-    // written, and rebuild over and over.
-    static bool layout_checked = false;
-    const bool needs_default_layout =
-        !layout_checked &&
-        (ImGui::DockBuilderGetNode(dockspace_id) == nullptr ||
-         ImGui::FindWindowSettingsByID(ImHashStr("###Inspector")) == nullptr);
-    layout_checked = true;
+    // Decided once, on the first frame (imgui.ini is loaded by then). An ini
+    // layout with a left split is reused to keep the user's panel width;
+    // anything else (first run, an ini from an older build) is rebuilt.
+    if (g_inspector_dock_id == 0) {
+        const ImGuiDockNode* root = ImGui::DockBuilderGetNode(dockspace_id);
+        if (root != nullptr && root->SplitAxis == ImGuiAxis_X && root->ChildNodes[0] != nullptr &&
+            !root->ChildNodes[0]->IsCentralNode() && root->ChildNodes[1] != nullptr &&
+            root->ChildNodes[1]->IsCentralNode())
+            g_inspector_dock_id = root->ChildNodes[0]->ID;
+    }
 
     // DockBuilder* must run before the dockspace node is submitted this frame.
-    if (needs_default_layout) {
+    if (g_inspector_dock_id == 0) {
         ImGui::DockBuilderRemoveNode(dockspace_id);  // drops any stale layout; no-op on a fresh node
         ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
         ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
@@ -467,16 +470,17 @@ void DrawDockspace() {
         // Split off the left third for the inspector; the remainder stays
         // as the passthrough central node over the map.
         ImGuiID central_id = dockspace_id;
-        const ImGuiID dock_id =
+        g_inspector_dock_id =
             ImGui::DockBuilderSplitNode(central_id, ImGuiDir_Left, 0.35f, nullptr, &central_id);
         ImGui::DockBuilderFinish(dockspace_id);
-
-        // Queued by name: applied when the window is submitted this frame and
-        // persisted into imgui.ini, so later runs keep the user's layout.
-        ImGui::DockBuilderDockWindow("###Inspector", dock_id);
     }
 
-    ImGui::DockSpaceOverViewport(dockspace_id, nullptr, ImGuiDockNodeFlags_PassthruCentralNode);
+    // NoDockingSplit / NoDockingOverCentralNode: nothing can dock into the
+    // map area or split off new nodes.
+    ImGui::DockSpaceOverViewport(dockspace_id, nullptr,
+                                 ImGuiDockNodeFlags_PassthruCentralNode |
+                                     ImGuiDockNodeFlags_NoDockingSplit |
+                                     ImGuiDockNodeFlags_NoDockingOverCentralNode);
 }
 
 // ---------------------------------------------------------------------------
@@ -982,7 +986,8 @@ void DrawHUD(const World& world) {
 
     // Day/time and play/pause now live in the background transport bar
     // (DrawTransportBar); this window is just the score board.
-    ImGui::Begin("Letter Flow");
+    // Floating only: movable and resizable, but never dockable.
+    ImGui::Begin("Letter Flow", nullptr, ImGuiWindowFlags_NoDocking);
     ImGui::Text("Money: $%d", world.get_money());
     ImGui::Text("Delivered on time: %zu", world.get_letters_delivered_on_time());
     ImGui::Text("Delivered late: %zu", world.get_letters_delivered_late());
@@ -1508,6 +1513,15 @@ void DrawInspector(World& world) {
     // what it started with even if a click inside it changes the selection.
     const std::shared_ptr<const Truck> truck = g_selected_truck.lock();
     const PostOfficeId office = g_selected_office;
+
+    // Pinned into the left dock node: re-docked every frame, and its node
+    // can't be dragged out, docked over, or undocked via the window menu.
+    ImGuiWindowClass inspector_class;
+    inspector_class.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoUndocking |
+                                               (int)ImGuiDockNodeFlags_NoWindowMenuButton |
+                                               (int)ImGuiDockNodeFlags_NoDockingOverMe;
+    ImGui::SetNextWindowClass(&inspector_class);
+    ImGui::SetNextWindowDockID(g_inspector_dock_id, ImGuiCond_Always);
     ImGui::Begin(truck != nullptr ? "Truck###Inspector" : "Post office###Inspector");
     if (truck != nullptr)
         DrawTruckPanel(world, *truck);
