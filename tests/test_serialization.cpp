@@ -1,5 +1,5 @@
-// test_serialization.cpp — headless round-trip tests for the JSON save system
-// (World::save_to_file / World::load_from_file). Run with `make test`.
+// test_serialization.cpp — headless round-trip tests for the World <-> JSON
+// conversion (WorldJson::to_json / WorldJson::from_json). Run with `make test`.
 // Pure simulation layer: no SDL/imgui/OpenGL — no window is needed.
 //
 // The core test is round_trip_preserves_every_field(): its fixture world
@@ -11,27 +11,27 @@
 // be extended by hand. When adding any new state, make the fixture give the
 // new field a distinct value (see the note in entities.h).
 //
-// Test artifacts are written under build/test-saves/ (gitignored); the test
-// must run with the repo root as working directory (`make test` does).
+// Everything happens in memory: worlds are dumped to JSON text exactly as
+// the saves file stores them (dump(2)), edited as text where a test needs a
+// corrupt or old-format save, and parsed back. The saves file itself is
+// covered by test_save_library.cpp.
 #include "balance.h"
 #include "scenario.h"
 #include "world.h"
+#include "world_json.h"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
-#include <filesystem>
-#include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
-
-namespace fs = std::filesystem;
-
-const fs::path kSaveDir = "build/test-saves";
 
 // Adds a road between offices a and b as an L-shaped path of two
 // axis-aligned segments: vertical-then-horizontal, or horizontal-then-
@@ -46,16 +46,17 @@ void add_l_road(World& w, PostOfficeId a, PostOfficeId b, bool vertical_first) {
     assert(w.add_road(a, b, {pa, corner, pb}));
 }
 
-std::string slurp(const fs::path& path) {
-    std::ifstream in(path);
-    std::ostringstream contents;
-    contents << in.rdbuf();
-    return contents.str();
+// A world as the saves file stores it.
+std::string dump(const World& w) {
+    return WorldJson::to_json(w).dump(2);
 }
 
-void write_file(const fs::path& path, const std::string& contents) {
-    std::ofstream out(path);
-    out << contents;
+// The inverse of dump(): nullopt for text that isn't JSON, or isn't a usable world.
+std::optional<World> parse(const std::string& text) {
+    const nlohmann::json j = nlohmann::json::parse(text, nullptr, /*allow_exceptions=*/false);
+    if (j.is_discarded())
+        return std::nullopt;
+    return WorldJson::from_json(j);
 }
 
 // A world in which every serialized field holds a distinct, non-default
@@ -178,10 +179,9 @@ World build_fixture_world() {
 
 void round_trip_preserves_every_field() {
     const World original = build_fixture_world();
-    const fs::path path = kSaveDir / "fixture.json";
-    assert(original.save_to_file(path.string()));
+    const std::string saved = dump(original);
 
-    const auto loaded = World::load_from_file(path.string());
+    const auto loaded = parse(saved);
     assert(loaded.has_value());
 
     // The core check: full-state equality. Any field the fixture populated
@@ -190,9 +190,7 @@ void round_trip_preserves_every_field() {
 
     // Re-saving a loaded world must be byte-identical (nothing drifts
     // through the parse/dump cycle).
-    const fs::path resaved = kSaveDir / "fixture_resaved.json";
-    assert(loaded->save_to_file(resaved.string()));
-    assert(slurp(path) == slurp(resaved));
+    assert(dump(*loaded) == saved);
 
     // Sanity check on the checker: equality must actually discriminate, or
     // the asserts above would prove nothing.
@@ -203,9 +201,7 @@ void round_trip_preserves_every_field() {
 
 void determinism_survives_round_trip() {
     World a = build_fixture_world();
-    const fs::path path = kSaveDir / "determinism.json";
-    assert(a.save_to_file(path.string()));
-    auto b = World::load_from_file(path.string());
+    auto b = parse(dump(a));
     assert(b.has_value());
 
     // Simulate both copies for two more in-game days: with the RNG state
@@ -215,32 +211,25 @@ void determinism_survives_round_trip() {
         b->advance_tick();
     }
     assert(a == *b);
-    assert(a.save_to_file((kSaveDir / "determinism_a.json").string()));
-    assert(b->save_to_file((kSaveDir / "determinism_b.json").string()));
-    assert(slurp(kSaveDir / "determinism_a.json") == slurp(kSaveDir / "determinism_b.json"));
+    assert(dump(a) == dump(*b));
 }
 
-void unusable_files_load_as_nullopt() {
+void unusable_saves_load_as_nullopt() {
     // Start from a known-good save to corrupt.
     const World original = build_fixture_world();
-    const fs::path good = kSaveDir / "good.json";
-    assert(original.save_to_file(good.string()));
-    const std::string good_json = slurp(good);
-
-    // Missing file.
-    assert(!World::load_from_file((kSaveDir / "does_not_exist.json").string()));
+    const std::string good_json = dump(original);
 
     // Not JSON at all.
-    write_file(kSaveDir / "garbage.json", "{this is not json");
-    assert(!World::load_from_file((kSaveDir / "garbage.json").string()));
+    assert(!parse("{this is not json"));
 
-    // Structurally valid JSON, truncated mid-file.
-    write_file(kSaveDir / "truncated.json", good_json.substr(0, 500));
-    assert(!World::load_from_file((kSaveDir / "truncated.json").string()));
+    // Truncated mid-file.
+    assert(!parse(good_json.substr(0, 500)));
+
+    // JSON, but not an object.
+    assert(!parse("[1, 2, 3]"));
 
     // Incompatible save version.
-    write_file(kSaveDir / "bad_version.json", R"({"format_version": 999})");
-    assert(!World::load_from_file((kSaveDir / "bad_version.json").string()));
+    assert(!parse(R"({"format_version": 999})"));
 
     // Unknown routing-rule string.
     {
@@ -248,8 +237,7 @@ void unusable_files_load_as_nullopt() {
         const auto at = s.find("\"exact_destination\"");
         assert(at != std::string::npos);
         s.replace(at, 19, "\"not_a_real_rule__\"");  // same length, still valid JSON
-        write_file(kSaveDir / "bad_rule.json", s);
-        assert(!World::load_from_file((kSaveDir / "bad_rule.json").string()));
+        assert(!parse(s));
     }
 
     // A postal-prefix rule with an empty prefix in its list.
@@ -258,8 +246,7 @@ void unusable_files_load_as_nullopt() {
         const auto at = s.find("\"NJ/Mercer\"");
         assert(at != std::string::npos);
         s.replace(at, 11, "\"\"");
-        write_file(kSaveDir / "empty_prefix.json", s);
-        assert(!World::load_from_file((kSaveDir / "empty_prefix.json").string()));
+        assert(!parse(s));
     }
 
     // Dangling post-office reference (office 99 does not exist).
@@ -268,8 +255,7 @@ void unusable_files_load_as_nullopt() {
         const auto at = s.find("\"dst\": 1,");
         assert(at != std::string::npos);
         s.replace(at, 9, "\"dst\": 99,");
-        write_file(kSaveDir / "bad_ref.json", s);
-        assert(!World::load_from_file((kSaveDir / "bad_ref.json").string()));
+        assert(!parse(s));
     }
 }
 
@@ -277,18 +263,15 @@ void unusable_files_load_as_nullopt() {
 // loads as a one-prefix list.
 void legacy_single_prefix_loads() {
     const World original = build_fixture_world();
-    const fs::path path = kSaveDir / "legacy_prefix.json";
-    assert(original.save_to_file(path.string()));
-    std::string s = slurp(path);
+    std::string s = dump(original);
     const auto mercer = s.find("\"NJ/Mercer\"");
     assert(mercer != std::string::npos);
     const auto start = s.rfind("\"prefixes\"", mercer);
     const auto end = s.find(']', mercer);
     assert(start != std::string::npos && end != std::string::npos);
     s.replace(start, end + 1 - start, "\"prefix\": \"NJ/Mercer\"");
-    write_file(path, s);
 
-    const auto loaded = World::load_from_file(path.string());
+    const auto loaded = parse(s);
     assert(loaded.has_value());
     const RoutingRule legacy{RoutingRuleType::PostalPrefix, {"NJ/Mercer"}};
     bool found = false;
@@ -302,14 +285,12 @@ void legacy_single_prefix_loads() {
 // empty history, and with every schedule given a distinct fresh id.
 void pre_stats_save_loads() {
     const World original = build_fixture_world();
-    const fs::path path = kSaveDir / "pre_stats.json";
-    assert(original.save_to_file(path.string()));
 
     // Drop every line holding a key that did not exist before (dump(2) puts
     // each scalar key on its own line), then every "stats"/"trail"/log
     // value, which spans several lines: cut from its key to the matching
     // close bracket.
-    std::string s = slurp(path);
+    std::string s = dump(original);
     std::string out;
     std::istringstream lines(s);
     for (std::string line; std::getline(lines, line);) {
@@ -345,9 +326,7 @@ void pre_stats_save_loads() {
         }
     }
     // JSON allows the trailing whitespace this leaves behind.
-    write_file(path, s);
-
-    const auto loaded = World::load_from_file(path.string());
+    const auto loaded = parse(s);
     assert(loaded.has_value());
     assert(loaded->get_stats() == GlobalStats{});
     assert(loaded->get_recent_deliveries().empty());
@@ -372,7 +351,7 @@ void pre_stats_save_loads() {
     assert(w.get_stats() != GlobalStats{});
 }
 
-// The save file minus its "rng" line (dump(2) puts each key on its own line).
+// A dumped world minus its "rng" line (dump(2) puts each key on its own line).
 std::string without_rng_line(const std::string& json) {
     const auto start = json.find("\"rng\": \"");
     assert(start != std::string::npos);
@@ -385,36 +364,30 @@ std::string without_rng_line(const std::string& json) {
 // RNG and everything else intact (only the random sequence changes).
 void corrupt_rng_falls_back_to_fresh_rng() {
     const World original = build_fixture_world();
-    const fs::path good = kSaveDir / "good_rng.json";
-    assert(original.save_to_file(good.string()));
-    std::string s = slurp(good);
+    const std::string good = dump(original);
+    std::string s = good;
 
     const auto at = s.find("\"rng\": \"");
     assert(at != std::string::npos);
     s[at + 8] = 'x';  // first character of the state dump: no longer a number
-    write_file(kSaveDir / "bad_rng.json", s);
 
-    const auto loaded = World::load_from_file((kSaveDir / "bad_rng.json").string());
+    const auto loaded = parse(s);
     assert(loaded.has_value());
     assert(*loaded != original);  // the RNG differs...
 
     // ...and nothing else does.
-    const fs::path resaved = kSaveDir / "bad_rng_resaved.json";
-    assert(loaded->save_to_file(resaved.string()));
-    assert(without_rng_line(slurp(resaved)) == without_rng_line(slurp(good)));
+    assert(without_rng_line(dump(*loaded)) == without_rng_line(good));
 }
 
 }  // namespace
 
 int main() {
-    fs::create_directories(kSaveDir);
-
     round_trip_preserves_every_field();
     printf("PASS round_trip_preserves_every_field\n");
     determinism_survives_round_trip();
     printf("PASS determinism_survives_round_trip\n");
-    unusable_files_load_as_nullopt();
-    printf("PASS unusable_files_load_as_nullopt\n");
+    unusable_saves_load_as_nullopt();
+    printf("PASS unusable_saves_load_as_nullopt\n");
     corrupt_rng_falls_back_to_fresh_rng();
     printf("PASS corrupt_rng_falls_back_to_fresh_rng\n");
     legacy_single_prefix_loads();

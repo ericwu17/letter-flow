@@ -69,12 +69,21 @@ mingw32-make && ./letter-flow.exe
 - **Mouse wheel / WASD**: zoom and pan the map
 - **Transport bar**: play/pause, x4 fast-forward, day/time readout
 - **F1 / F2**: Dear ImGui / ImPlot demo windows (widget reference while developing)
-- **Saving**: the game autosaves to a JSON file when you quit and reloads it
-  on the next launch, in SDL's per-user app-data directory (`SDL_GetPrefPath`):
-  `~/Library/Application Support/LetterFlow/LetterFlow/save.json` on macOS,
-  `~/.local/share/LetterFlow/LetterFlow/save.json` on Linux,
-  `%APPDATA%\LetterFlow\LetterFlow\save.json` on Windows.
-  The save also holds the statistics history and letter trails (saves from
+- **Main menu and saves**: the game opens on a main menu. *Play* lists
+  your saves (most recently played first): start a new game, or rename,
+  copy, delete or play an existing save (double-clicking a row plays it
+  too). *Credits* is a placeholder page for now.
+- **Saving**: every save lives in one JSON file, `saves.json`, in SDL's
+  per-user app-data directory (`SDL_GetPrefPath`):
+  `~/Library/Application Support/LetterFlow/LetterFlow/saves.json` on macOS,
+  `~/.local/share/LetterFlow/LetterFlow/saves.json` on Linux,
+  `%APPDATA%\LetterFlow\LetterFlow\saves.json` on Windows.
+  Quitting during a game saves it back into the save you launched. The
+  single `save.json` of earlier versions is imported once, as "Imported
+  game", the first time the menu runs (the old file is left in place). If
+  `saves.json` can't be read, it is renamed to `saves.corrupt-<time>.json`
+  rather than overwritten, and the menu says so.
+  Each save also holds the statistics history and letter trails (saves from
   before statistics existed still load, with empty history).
   The save includes the RNG's internal state, so a loaded game continues the
   exact same deterministic simulation (if that state is corrupt, the game
@@ -91,8 +100,11 @@ src/stats.*           StatSeries: multi-resolution ring buffers behind every sta
 src/truck.*           Truck: deterministic point-to-point motion
 src/world.*           World: owns all state, advances the sim in fixed 60 Hz ticks
 src/scenario.*        create_default_world() starter map
-src/serialization.cpp JSON save/load: implements World::save_to_file / load_from_file
+src/world_json.h      WorldJson: World <-> JSON, for the persistence code only (keeps nlohmann out of world.h)
+src/serialization.cpp JSON conversion of the whole simulation state: implements WorldJson
+src/save_library.*    SaveLibrary: every save in one JSON file (create, copy, rename, delete, load, store)
 src/ui.*              Dear ImGui presentation layer (ui*.cpp are the only places ImGui exists)
+src/ui_menu.cpp       main menu, credits page and save list (the screens before a game starts)
 src/ui_stats.cpp      statistics window, stat widgets and letter-trail tooltips (ImPlot)
 src/ui_theme.*        the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets
 src/ui_internal.h     helpers shared between ui.cpp and ui_stats.cpp
@@ -101,12 +113,13 @@ src/app_icon.*        window/Dock icon from assets/logo.png (embedded at build t
 src/platform_macos.*  macOS-only startup tweaks (the sole Objective-C++ file)
 
 tests/test_geometry.cpp       headless exact road-geometry tests (make test)
-tests/test_serialization.cpp  headless save/load round-trip tests (make test)
+tests/test_serialization.cpp  headless World <-> JSON round-trip tests (make test)
+tests/test_save_library.cpp   headless saves-file tests: slots, corruption, legacy import (make test)
 tests/test_simulation.cpp     headless simulation-rule tests (make test)
 tests/test_stats.cpp          headless StatSeries ring-buffer tests (make test)
 implot/                       ImPlot v1.0 (git submodule), charts
 third_party/nlohmann/json.hpp vendored single-header JSON library (only
-                              serialization.cpp includes it)
+                              the persistence code includes it, via world_json.h)
 third_party/stb/stb_image.h   vendored PNG decoder, v2.30 (only app_icon.cpp
                               includes it)
 assets/logo.png               app icon, compiled into the executable

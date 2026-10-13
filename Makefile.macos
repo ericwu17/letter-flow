@@ -48,10 +48,10 @@ LIBS += $(shell sdl2-config --libs)
 
 # Simulation layer: pure logic, no SDL/imgui/Metal — the headless tests link
 # against exactly these objects. Keep presentation code out of this list.
-SIM_SOURCES  = src/road.cpp src/stats.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
+SIM_SOURCES  = src/road.cpp src/stats.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp src/save_library.cpp
 # main.cpp is shared by all platforms; platform_macos.mm holds the macOS-only
 # startup tweaks (see src/platform_macos.h).
-APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/ui_stats.cpp src/ui_theme.cpp src/main.cpp src/app_icon.cpp src/platform_macos.mm
+APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/ui_menu.cpp src/ui_stats.cpp src/ui_theme.cpp src/main.cpp src/app_icon.cpp src/platform_macos.mm
 # One headless test binary per tests/test_*.cpp file (see the test rules below).
 TEST_SOURCES := $(wildcard tests/*.cpp)
 TEST_EXES    := $(patsubst tests/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))

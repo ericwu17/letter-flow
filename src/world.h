@@ -156,18 +156,13 @@ public:
     bool polyline_intersects_any(const std::vector<Position>& vertices) const;
     const std::vector<Road>& get_roads() const { return roads; }
 
-    // Persistence, implemented in serialization.cpp — the only translation
-    // unit that knows nlohmann/json exists, keeping the simulation headers
-    // dependency-free. save_to_file() writes the ENTIRE state (offices,
-    // letters, schedules, in-flight trucks, clock, money, and the RNG's
-    // internal state, so a loaded game continues the identical random
-    // sequence) as JSON, via temp-file + rename (see save_to_file).
-    // load_from_file() returns nullopt if the file is missing or unusable in
-    // any way (corrupt JSON, incompatible version, dangling references), so
-    // callers simply fall back to a fresh world. The one non-fatal problem is
-    // a corrupt RNG dump: the game loads with a freshly seeded RNG instead.
-    bool save_to_file(const std::string& path) const;
-    static std::optional<World> load_from_file(const std::string& path);
+    // Persistence: WorldJson (world_json.h, implemented in serialization.cpp)
+    // converts the ENTIRE state (offices, letters, schedules, in-flight
+    // trucks, clock, money, and the RNG's internal state, so a loaded game
+    // continues the identical random sequence) to and from JSON. It is a
+    // friend so that nlohmann/json stays out of this header; SaveLibrary
+    // (save_library.h) is what reads and writes the files.
+    friend struct WorldJson;
 
     // Full simulation-state equality, RNG included (standard engines are
     // equality-comparable). Hand-written, unlike every entity's: a defaulted

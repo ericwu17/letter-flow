@@ -1,9 +1,10 @@
-// serialization.cpp — save/load the complete simulation state as a JSON file.
+// serialization.cpp — convert the complete simulation state to and from JSON.
 // Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
 //
-// Implements World::save_to_file / World::load_from_file (declared in
-// world.h). This is the only translation unit that knows nlohmann/json exists
-// (single-header library vendored under third_party/).
+// Implements WorldJson::to_json / WorldJson::from_json (declared in
+// world_json.h). Together with save_library.cpp, which stores those JSON
+// worlds in the saves file, this is the only code that knows nlohmann/json
+// exists (single-header library vendored under third_party/).
 //
 // The to_json/from_json overloads below live in the global namespace, right
 // next to the entity types they convert — that is where nlohmann finds them
@@ -14,15 +15,13 @@
 // loaded game continues the exact same random sequence as the saved one:
 // determinism survives save/load, and two copies of a save simulate
 // identically forever.
-#include "world.h"
+#include "world_json.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -46,7 +45,7 @@ constexpr int kSaveFormatVersion = 3;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
 // reordering or extending the enum can never silently misread old saves. An
-// unknown string fails the whole load (see load_from_file's catch-all).
+// unknown string fails the whole load (see WorldJson::from_json's catch-all).
 const char* routing_rule_type_to_string(RoutingRuleType type) {
     switch (type) {
     case RoutingRuleType::ExactDestination: return "exact_destination";
@@ -275,7 +274,7 @@ void to_json(nlohmann::json& j, const TruckSchedule& schedule) {
 }
 
 void from_json(const nlohmann::json& j, TruckSchedule& schedule) {
-    // Saves from before schedule ids get theirs assigned in load_from_file.
+    // Saves from before schedule ids get theirs assigned in WorldJson::from_json.
     schedule.id = j.value("id", kNoSchedule);
     j.at("dst").get_to(schedule.dst);
     j.at("rule").get_to(schedule.rule);
@@ -328,7 +327,7 @@ void from_json(const nlohmann::json& j, Road& road) {
 // TruckState converts like any other entity; Truck itself goes through it
 // (get_state() / the state constructor) because it has no default
 // constructor, so it cannot use the vector-wide from_json path — trucks are
-// converted one by one in save_to_file / load_from_file.
+// converted one by one in WorldJson::to_json / from_json.
 void to_json(nlohmann::json& j, const TruckState& truck) {
     j = {{"src", truck.src},
          {"dst", truck.dst},
@@ -433,26 +432,26 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// World::save_to_file / World::load_from_file
+// WorldJson::to_json / WorldJson::from_json
 // ---------------------------------------------------------------------------
 
-bool World::save_to_file(const std::string& path) const {
+nlohmann::json WorldJson::to_json(const World& world) {
     nlohmann::json j;
     j["format_version"] = kSaveFormatVersion;
-    j["current_tick"] = current_tick;
-    j["paused"] = paused;
-    j["speed_multiplier"] = speed_multiplier;
-    j["money"] = money;
-    j["letters_delivered_on_time"] = letters_delivered_on_time;
-    j["letters_delivered_late"] = letters_delivered_late;
-    j["next_schedule_id"] = next_schedule_id;
-    j["stats"] = stats;
-    j["recent_deliveries"] = recent_deliveries;
-    j["post_offices"] = post_offices;
-    j["roads"] = roads;
+    j["current_tick"] = world.current_tick;
+    j["paused"] = world.paused;
+    j["speed_multiplier"] = world.speed_multiplier;
+    j["money"] = world.money;
+    j["letters_delivered_on_time"] = world.letters_delivered_on_time;
+    j["letters_delivered_late"] = world.letters_delivered_late;
+    j["next_schedule_id"] = world.next_schedule_id;
+    j["stats"] = world.stats;
+    j["recent_deliveries"] = world.recent_deliveries;
+    j["post_offices"] = world.post_offices;
+    j["roads"] = world.roads;
 
     nlohmann::json trucks_json = nlohmann::json::array();
-    for (const std::shared_ptr<Truck>& truck : trucks)
+    for (const std::shared_ptr<Truck>& truck : world.trucks)
         trucks_json.push_back(truck->get_state());
     j["trucks"] = std::move(trucks_json);
 
@@ -461,46 +460,17 @@ bool World::save_to_file(const std::string& path) const {
     // and restored with operator>> on load. This is what makes the
     // simulation continue the identical random sequence after loading.
     std::ostringstream rng_state;
-    rng_state << rng;
+    rng_state << world.rng;
     j["rng"] = rng_state.str();
 
-    // Write to a temp file, then rename over the target, so a crash mid-write
-    // leaves the previous save intact instead of a half-written one. (Not
-    // proof against power loss: nothing fsyncs the file before the rename.)
-    const std::string tmp_path = path + ".tmp";
-    std::error_code ec;
-    {
-        std::ofstream out(tmp_path);
-        if (!out)
-            return false;
-        out << j.dump(2) << '\n';
-        out.flush();
-        if (!out) {
-            std::filesystem::remove(tmp_path, ec);
-            return false;
-        }
-    }
-    std::filesystem::rename(tmp_path, path, ec);
-    if (ec) {
-        std::filesystem::remove(tmp_path, ec);
-        return false;
-    }
-    return true;
+    return j;
 }
 
-std::optional<World> World::load_from_file(const std::string& path) {
+std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
     using std::cerr;
     using std::endl;
 
-    std::ifstream in(path);
-    if (!in) {
-        cerr << "No save file found at " << path << "." << endl;
-        return std::nullopt;
-    }
-
     try {
-        const nlohmann::json j = nlohmann::json::parse(in);
-
         if (j.at("format_version").get<int>() != kSaveFormatVersion) {
             cerr << "Incompatible save version." << endl;
             return std::nullopt;
@@ -536,7 +506,7 @@ std::optional<World> World::load_from_file(const std::string& path) {
             world.trucks.push_back(std::make_shared<Truck>(truck_json.get<TruckState>()));
         }
 
-        // Restore the RNG's full internal state (see save_to_file). operator>>
+        // Restore the RNG's full internal state (see to_json). operator>>
         // validates the dump and sets failbit on malformed input.
         std::istringstream rng_state(j.at("rng").get<std::string>());
         rng_state >> world.rng;
@@ -552,7 +522,7 @@ std::optional<World> World::load_from_file(const std::string& path) {
 
         return world;
     } catch (const std::exception& e) {
-        // Any problem — malformed JSON, missing or mis-typed keys, unknown
+        // Any problem — missing or mis-typed keys, unknown
         // enum strings, out-of-range numbers — means "no usable save": the
         // caller falls back to a fresh world instead of crashing or loading
         // a half-built one.

@@ -22,14 +22,14 @@
 
 #include "app_icon.h"
 #include "game_types.h"
-#include "scenario.h"
+#include "save_library.h"
 #include "world.h"
 #include "ui.h"
 #include "ui_theme.h"
 
 #include <cstdio>
+#include <optional>
 #include <string>
-#include <utility>
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -65,10 +65,11 @@ static void step_world(World& world, float delta_time, float& tick_accumulator)
     }
 }
 
-int main(int argc, char** argv)
+// The game takes no command-line arguments, but main keeps this signature:
+// on Windows SDL_main.h renames main to SDL_main(int, char*[]), which
+// SDL2main calls, so a parameterless main would not build there.
+int main(int, char**)
 {
-    std::vector<std::string> arguments(argv + 1, argv + argc);
-
     // Setup SDL
 #ifdef _WIN32
     ::SetProcessDPIAware();
@@ -126,7 +127,7 @@ int main(int argc, char** argv)
     SDL_GL_MakeCurrent(window, gl_context);
     SDL_GL_SetSwapInterval(1);  // enable vsync
 
-    // Persistence: the save and the window layout (imgui.ini) live in SDL's
+    // Persistence: the saves and the window layout (imgui.ini) live in SDL's
     // per-user app-data directory (SDL_GetPrefPath takes an org and an app
     // name — created if needed):
     //   macOS:   ~/Library/Application Support/LetterFlow/LetterFlow/
@@ -136,7 +137,6 @@ int main(int argc, char** argv)
     char* pref_path = SDL_GetPrefPath("LetterFlow", "LetterFlow");
     const std::string pref_dir = pref_path ? pref_path : "";
     SDL_free(pref_path);
-    const std::string save_path = pref_dir + "save.json";
     const std::string ini_path = pref_dir + "imgui.ini";  // must outlive the ImGui context
 
     // Setup Dear ImGui context
@@ -156,27 +156,17 @@ int main(int argc, char** argv)
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init(nullptr);
 
-    // Our state: the whole game lives here. The UI layer reads/mutates it,
-    // and the frame loop below steps it forward at a fixed tick rate.
-    // Startup continues the previous session if a save exists; the autosave
-    // after the main loop writes it back on quit.
-    // `letter-flow new` deletes the existing save and starts a fresh game.
-    
-    const bool start_new = arguments.size() >= 1 && arguments[0] == "new";
-    if (start_new) {
-        if (std::remove(save_path.c_str()) == 0)
-            printf("Deleted save file %s\n", save_path.c_str());
-        else
-            printf("No save file to delete at %s\n", save_path.c_str());
-    }
-    World world = create_default_world();
-    if (start_new) {
-        printf("Starting a new game\n");
-    }
-    else if (auto saved = World::load_from_file(save_path)) {
-        world = std::move(*saved);
-        printf("Loaded saved game from %s\n", save_path.c_str());
-    }
+    // Every saved game lives in one file (save_library.h). The single
+    // save.json of earlier versions is imported into it on first run.
+    SaveLibrary library(pref_dir + "saves.json");
+    library.import_legacy_save(pref_dir + "save.json");
+
+    // Our state: the whole game lives here once the player launches a save
+    // from the menu (empty until then). The UI layer reads/mutates it, and
+    // the frame loop below steps it forward at a fixed tick rate. Quitting
+    // writes it back into the save it came from.
+    std::optional<World> world;
+    SaveId save_id = 0;
     float tick_accumulator = 0.0f;
     const ImVec4 clear_color = ui::theme::kMap;  // the map's parchment background
 
@@ -200,19 +190,25 @@ int main(int argc, char** argv)
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // 2. Advance the simulation (fixed timestep, see step_world).
-        step_world(world, io.DeltaTime, tick_accumulator);
+        if (world) {
+            // 2. Advance the simulation (fixed timestep, see step_world).
+            step_world(*world, io.DeltaTime, tick_accumulator);
 
-        // 3. Build this frame's UI. Order matters: the dockspace hosts the
-        //    windows, the map goes into the background draw list (under the
-        //    windows), the transport bar is drawn on top of the map, then
-        //    the HUD/inspector windows.
-        DrawDockspace();
-        DrawWorld(world);
-        DrawTransportBar(world);
-        DrawHUD(world);
-        DrawInspector(world);
-        DrawStatsWindow(world);
+            // 3. Build this frame's UI. Order matters: the dockspace hosts the
+            //    windows, the map goes into the background draw list (under the
+            //    windows), the transport bar is drawn on top of the map, then
+            //    the HUD/inspector windows.
+            DrawDockspace();
+            DrawWorld(*world);
+            DrawTransportBar(*world);
+            DrawHUD(*world);
+            DrawInspector(*world);
+            DrawStatsWindow(*world);
+        } else if (const std::optional<SaveId> launched = DrawMainMenu(library, world)) {
+            // 2-3. No game yet: the main menu, until the player launches a save.
+            save_id = *launched;
+            printf("Loaded save %u\n", static_cast<unsigned>(save_id));
+        }
 
         // 4. Rendering
         ImGui::Render();
@@ -225,11 +221,14 @@ int main(int argc, char** argv)
         SDL_GL_SwapWindow(window);
     }
 
-    // Autosave on quit so the next launch continues this session.
-    if (world.save_to_file(save_path))
-        printf("Saved game to %s\n", save_path.c_str());
-    else
-        printf("Warning: failed to save game to %s\n", save_path.c_str());
+    // Autosave on quit into the save that was launched, so the next launch
+    // can continue it. Quitting from the menu has nothing to save.
+    if (world) {
+        if (library.store(save_id, *world))
+            printf("Saved game to %ssaves.json\n", pref_dir.c_str());
+        else
+            printf("Warning: failed to save game to %ssaves.json\n", pref_dir.c_str());
+    }
 
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();

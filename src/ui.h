@@ -4,7 +4,17 @@
 // public API), once per frame. The simulation layer knows nothing about them.
 #pragma once
 
-class World;
+#include "save_library.h"  // SaveId, SaveSummary
+#include "world.h"
+
+#include <optional>
+
+// The screens before a game starts (ui_menu.cpp): the main menu, the credits
+// page and the save list, drawn fullscreen. The save list creates, renames,
+// copies and deletes saves in `library`. When the player launches one, its
+// world is loaded into `game` and its id returned; a save that fails to load
+// stays on the list with an error instead.
+std::optional<SaveId> DrawMainMenu(SaveLibrary& library, std::optional<World>& game);
 
 // Fullscreen dockspace over the main viewport, hosting the dockable windows.
 // The central node is passthrough (transparent and click-through) so the map
