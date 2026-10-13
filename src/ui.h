@@ -18,7 +18,7 @@ void DrawDockspace();
 // on the map.
 void DrawWorld(World& world);
 
-// Top-center transport bar: play/pause, fast-forward and the day/time
+// Top-center transport bar: play/pause, slow-down/speed-up and the day/time
 // readout, drawn into the background draw list on top of the map. Laid out
 // from the display size each frame, so it survives window resizes.
 void DrawTransportBar(World& world);

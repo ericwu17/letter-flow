@@ -48,8 +48,13 @@ static void step_world(World& world, float delta_time, float& tick_accumulator)
         return;
     }
     tick_accumulator += delta_time * world.get_speed_multiplier();
-    if (tick_accumulator > 0.25f)
-        tick_accumulator = 0.25f;  // after a long hitch, don't try to catch up forever
+    // After a long hitch, don't try to catch up forever. The cap is a quarter
+    // second of *real* time, so it scales with the multiplier — a fixed cap
+    // would silently throttle high speeds (one 60 Hz frame at 32x is already
+    // over half a second of game time).
+    const float max_accumulated = 0.25f * world.get_speed_multiplier();
+    if (tick_accumulator > max_accumulated)
+        tick_accumulator = max_accumulated;
     while (tick_accumulator >= kSecondsPerTick)
     {
         world.advance_tick();

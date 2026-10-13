@@ -322,7 +322,8 @@ std::vector<std::string> CollectPostalPrefixes(const std::vector<PostOffice>& of
 }
 
 // ---------------------------------------------------------------------------
-// Transport bar layout: play/pause + fast-forward buttons and the day/time
+// Transport bar layout: play/pause, slow-down/speed-up buttons around the
+// current speed label, and the day/time
 // readout, anchored top-center of the map area — the dockspace's central
 // node, i.e. the display minus the docked inspector panel. Every rect is
 // recomputed from that area and font metrics each frame, so the bar stays
@@ -330,15 +331,35 @@ std::vector<std::string> CollectPostalPrefixes(const std::vector<PostOffice>& of
 // DPI scaling; on very narrow areas the day progress bar shrinks first.
 // ---------------------------------------------------------------------------
 
-constexpr float kFastForwardMultiplier = 4.0f;
+// Simulation speeds the slow-down / speed-up buttons step through.
+constexpr float kSpeedSteps[] = {1.0f, 2.0f, 4.0f, 8.0f, 16.0f, 32.0f};
+constexpr int kSpeedStepCount = sizeof(kSpeedSteps) / sizeof(kSpeedSteps[0]);
+constexpr const char* kWidestSpeedText = "32x";  // reserves a fixed label width
+
+// Next step above / below the current multiplier. Works from the multiplier
+// itself rather than an index, so a value loaded from a save that isn't one of
+// the steps still snaps to the neighbouring step.
+float NextFasterSpeed(float current) {
+    for (float s : kSpeedSteps)
+        if (s > current) return s;
+    return kSpeedSteps[kSpeedStepCount - 1];
+}
+
+float NextSlowerSpeed(float current) {
+    for (int i = kSpeedStepCount - 1; i >= 0; --i)
+        if (kSpeedSteps[i] < current) return kSpeedSteps[i];
+    return kSpeedSteps[0];
+}
 
 struct TransportLayout {
     char time_text[64];
     float button_size = 0.0f;
     ImVec2 bar_min = {0.0f, 0.0f}, bar_max = {0.0f, 0.0f};
     ImVec2 play_min = {0.0f, 0.0f}, play_max = {0.0f, 0.0f};
-    ImVec2 ff_min = {0.0f, 0.0f}, ff_max = {0.0f, 0.0f};
-    ImVec2 speed_text_pos = {0.0f, 0.0f};  // "x4" label; only valid while fast-forwarding
+    char speed_text[16];
+    ImVec2 slower_min = {0.0f, 0.0f}, slower_max = {0.0f, 0.0f};
+    ImVec2 speed_text_pos = {0.0f, 0.0f};  // "4x" label, centered in a fixed-width slot
+    ImVec2 faster_min = {0.0f, 0.0f}, faster_max = {0.0f, 0.0f};
     ImVec2 separator_top = {0.0f, 0.0f}, separator_bottom = {0.0f, 0.0f};
     ImVec2 text_pos = {0.0f, 0.0f};
     ImVec2 progress_min = {0.0f, 0.0f}, progress_max = {0.0f, 0.0f};
@@ -371,14 +392,13 @@ TransportLayout ComputeTransportLayout(const World& world) {
     const float gap = fh * 0.25f;
     const float pad = fh * 0.3f;
     const float separator_w = 1.0f;
-    const bool fast_forward = world.get_speed_multiplier() > 1.0f;
 
     FormatDayTime(world.get_tick(), l.time_text, sizeof(l.time_text));
+    snprintf(l.speed_text, sizeof(l.speed_text), "%gx", world.get_speed_multiplier());
 
     const float time_w = ImGui::CalcTextSize(l.time_text).x;
-    const float speed_w = fast_forward ? ImGui::CalcTextSize("x4").x : 0.0f;
-    const float fixed_w = button + gap + button
-                        + (fast_forward ? gap + speed_w : 0.0f)
+    const float speed_w = ImGui::CalcTextSize(kWidestSpeedText).x;  // fixed, so the bar doesn't jump
+    const float fixed_w = button + gap + button + gap + speed_w + gap + button
                         + gap + separator_w + gap + time_w + gap;
     float progress_w = std::min(140.0f, area_size.x * 0.15f);
 
@@ -401,15 +421,17 @@ TransportLayout ComputeTransportLayout(const World& world) {
     l.play_max = {x + button, cy + button * 0.5f};
     x += button + gap;
 
-    l.ff_min = {x, cy - button * 0.5f};
-    l.ff_max = {x + button, cy + button * 0.5f};
-    x += button;
-    if (fast_forward) {
-        x += gap;
-        l.speed_text_pos = {x, cy - ImGui::CalcTextSize("x4").y * 0.5f};
-        x += speed_w;
-    }
-    x += gap;
+    l.slower_min = {x, cy - button * 0.5f};
+    l.slower_max = {x + button, cy + button * 0.5f};
+    x += button + gap;
+
+    const ImVec2 speed_size = ImGui::CalcTextSize(l.speed_text);
+    l.speed_text_pos = {x + (speed_w - speed_size.x) * 0.5f, cy - speed_size.y * 0.5f};
+    x += speed_w + gap;
+
+    l.faster_min = {x, cy - button * 0.5f};
+    l.faster_max = {x + button, cy + button * 0.5f};
+    x += button + gap;
 
     l.separator_top = {x, cy - button * 0.4f};
     l.separator_bottom = {x, cy + button * 0.4f};
@@ -875,7 +897,7 @@ void DrawWorld(World& world) {
 }
 
 // ---------------------------------------------------------------------------
-// Transport bar (play/pause, fast-forward, day/time) — drawn into the
+// Transport bar (play/pause, slow-down/speed-up, day/time) — drawn into the
 // background draw list, on top of the map but underneath ImGui windows.
 // ---------------------------------------------------------------------------
 
@@ -883,7 +905,10 @@ void DrawTransportBar(World& world) {
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
     const TransportLayout l = ComputeTransportLayout(world);
-    const bool fast_forward = world.get_speed_multiplier() > 1.0f;
+    const float speed = world.get_speed_multiplier();
+    const bool fast_forward = speed > 1.0f;
+    const bool can_slow = speed > kSpeedSteps[0];
+    const bool can_speed_up = speed < kSpeedSteps[kSpeedStepCount - 1];
     const float b = l.button_size;
     const float rounding = b * 0.2f;
 
@@ -896,8 +921,9 @@ void DrawTransportBar(World& world) {
     // landed on an ImGui window from leaking through to the bar.
     const bool interactive = !io.WantCaptureMouse;
     const bool hover_play = interactive && PointInRect(io.MousePos, l.play_min, l.play_max);
-    const bool hover_ff = interactive && PointInRect(io.MousePos, l.ff_min, l.ff_max);
-    if (hover_play || hover_ff)
+    const bool hover_slower = interactive && can_slow && PointInRect(io.MousePos, l.slower_min, l.slower_max);
+    const bool hover_faster = interactive && can_speed_up && PointInRect(io.MousePos, l.faster_min, l.faster_max);
+    if (hover_play || hover_slower || hover_faster)
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
     const ImU32 icon_color = kColorText;
@@ -917,18 +943,30 @@ void DrawTransportBar(World& world) {
                             {l.play_min.x + b * 0.70f, l.play_min.y + b * 0.72f}, icon_color);
     }
 
-    // Fast-forward: double triangle, orange while active, plus an "x4" label.
-    if (hover_ff)
-        draw->AddRectFilled(l.ff_min, l.ff_max, hover_bg, rounding);
-    const ImU32 ff_color = fast_forward ? kColorTruck : kColorTextDim;
-    draw->AddTriangleFilled({l.ff_min.x + b * 0.18f, l.ff_min.y + b * 0.30f},
-                            {l.ff_min.x + b * 0.18f, l.ff_min.y + b * 0.70f},
-                            {l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.50f}, ff_color);
-    draw->AddTriangleFilled({l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.30f},
-                            {l.ff_min.x + b * 0.48f, l.ff_min.y + b * 0.70f},
-                            {l.ff_min.x + b * 0.78f, l.ff_min.y + b * 0.50f}, ff_color);
-    if (fast_forward)
-        draw->AddText(l.speed_text_pos, kColorTruck, "x4");
+    // Slow-down / speed-up: double triangles pointing left / right around the
+    // speed label, which turns orange while fast-forwarding. A button at the
+    // end of the range is drawn faded and ignores the mouse.
+    if (hover_slower)
+        draw->AddRectFilled(l.slower_min, l.slower_max, hover_bg, rounding);
+    const ImU32 slower_color = can_slow ? kColorText : kColorProgressBg;
+    draw->AddTriangleFilled({l.slower_min.x + b * 0.82f, l.slower_min.y + b * 0.30f},
+                            {l.slower_min.x + b * 0.82f, l.slower_min.y + b * 0.70f},
+                            {l.slower_min.x + b * 0.52f, l.slower_min.y + b * 0.50f}, slower_color);
+    draw->AddTriangleFilled({l.slower_min.x + b * 0.52f, l.slower_min.y + b * 0.30f},
+                            {l.slower_min.x + b * 0.52f, l.slower_min.y + b * 0.70f},
+                            {l.slower_min.x + b * 0.22f, l.slower_min.y + b * 0.50f}, slower_color);
+
+    draw->AddText(l.speed_text_pos, fast_forward ? kColorTruck : kColorTextDim, l.speed_text);
+
+    if (hover_faster)
+        draw->AddRectFilled(l.faster_min, l.faster_max, hover_bg, rounding);
+    const ImU32 faster_color = can_speed_up ? kColorText : kColorProgressBg;
+    draw->AddTriangleFilled({l.faster_min.x + b * 0.18f, l.faster_min.y + b * 0.30f},
+                            {l.faster_min.x + b * 0.18f, l.faster_min.y + b * 0.70f},
+                            {l.faster_min.x + b * 0.48f, l.faster_min.y + b * 0.50f}, faster_color);
+    draw->AddTriangleFilled({l.faster_min.x + b * 0.48f, l.faster_min.y + b * 0.30f},
+                            {l.faster_min.x + b * 0.48f, l.faster_min.y + b * 0.70f},
+                            {l.faster_min.x + b * 0.78f, l.faster_min.y + b * 0.50f}, faster_color);
 
     // Separator, day/time readout, day progress.
     draw->AddLine(l.separator_top, l.separator_bottom, kColorSeparator, 1.0f);
@@ -945,8 +983,10 @@ void DrawTransportBar(World& world) {
     if (interactive && io.MouseClicked[0]) {
         if (hover_play)
             world.set_paused(!world.is_paused());
-        else if (hover_ff)
-            world.set_speed_multiplier(fast_forward ? 1.0f : kFastForwardMultiplier);
+        else if (hover_slower)
+            world.set_speed_multiplier(NextSlowerSpeed(speed));
+        else if (hover_faster)
+            world.set_speed_multiplier(NextFasterSpeed(speed));
     }
 }
 
