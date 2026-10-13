@@ -25,6 +25,7 @@
 #include "scenario.h"
 #include "world.h"
 #include "ui.h"
+#include "ui_theme.h"
 
 #include <cstdio>
 #include <string>
@@ -148,13 +149,8 @@ int main(int argc, char** argv)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-
-    // Setup scaling
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.ScaleAllSizes(main_scale);
-    style.FontScaleDpi = main_scale;
+    // Setup the font, Dear ImGui / ImPlot styles and DPI scaling (ui_theme.h)
+    ui::theme::ApplyTheme(main_scale);
 
     // Setup Platform/Renderer backends
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
@@ -182,7 +178,7 @@ int main(int argc, char** argv)
         printf("Loaded saved game from %s\n", save_path.c_str());
     }
     float tick_accumulator = 0.0f;
-    const ImVec4 clear_color = ImVec4(0.07f, 0.08f, 0.10f, 1.00f);
+    const ImVec4 clear_color = ui::theme::kMap;  // the map's parchment background
 
     // Main loop
     bool done = false;

@@ -55,7 +55,7 @@ LIBS += $(shell sdl2-config --libs)
 # Simulation layer: pure logic, no SDL/imgui/OpenGL — the headless tests link
 # against exactly these objects. Keep presentation code out of this list.
 SIM_SOURCES  = src/road.cpp src/stats.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp
-APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/ui_stats.cpp src/main.cpp src/app_icon.cpp
+APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/ui_stats.cpp src/ui_theme.cpp src/main.cpp src/app_icon.cpp
 # One headless test binary per tests/test_*.cpp file (see the test rules below).
 TEST_SOURCES := $(wildcard tests/*.cpp)
 TEST_EXES    := $(patsubst tests/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))
@@ -118,6 +118,18 @@ $(LOGO_HEADER): assets/logo.png
 	  echo '};'; } > $@
 
 $(BUILD_DIR)/src/app_icon.o: $(LOGO_HEADER)
+
+# Embed the UI font (Roboto Medium, shipped with imgui) the same way, so the
+# game finds it however it is launched (see src/ui_theme.h).
+FONT_HEADER = $(GENERATED_DIR)/roboto_ttf.h
+$(FONT_HEADER): $(IMGUI_DIR)/misc/fonts/Roboto-Medium.ttf
+	@mkdir -p $(dir $@)
+	{ echo '// Generated from $< by the makefile. Do not edit.'; \
+	  echo 'static const unsigned char kRobotoTtf[] = {'; \
+	  od -An -v -tx1 $< | sed 's/ *\([0-9a-f][0-9a-f]\)/0x\1,/g'; \
+	  echo '};'; } > $@
+
+$(BUILD_DIR)/src/ui_theme.o: $(FONT_HEADER)
 
 clean:
 	rm -rf $(BUILD_DIR) $(EXE)

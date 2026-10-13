@@ -4,6 +4,7 @@
 // Read-only towards the World, apart from moving the selection.
 #include "ui.h"
 #include "ui_internal.h"
+#include "ui_theme.h"
 
 #include "balance.h"
 #include "entities.h"
@@ -14,6 +15,7 @@
 #include "implot.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -71,11 +73,12 @@ int64_t RangePeak(const StatSeries& series, Tick now) {
     return *std::max_element(values.begin(), values.end());
 }
 
+// The range picker: a segmented control, the current range filled.
 void DrawRangeButtons() {
     for (int i = 0; i < kStatRangeCount; ++i) {
         if (i > 0)
-            ImGui::SameLine();
-        if (ImGui::RadioButton(kStatRanges[i].label, g_range == i))
+            ImGui::SameLine(0.0f, 2.0f);
+        if (ui::theme::SegmentedButton(kStatRanges[i].label, g_range == i))
             g_range = i;
     }
 }
@@ -318,13 +321,15 @@ void Sparkline(const char* id, const std::vector<double>& values, double y_max, 
     ImPlot::PopStyleVar();
 }
 
-// Semantic series colors (the rest come from ImPlot's default colormap).
-constexpr ImVec4 kGood{0.36f, 0.82f, 0.45f, 1.0f};      // income, on-time deliveries
-constexpr ImVec4 kBad{0.94f, 0.36f, 0.33f, 1.0f};       // losses, late deliveries
-constexpr ImVec4 kWarn{0.93f, 0.76f, 0.27f, 1.0f};      // bonuses, left behind
-constexpr ImVec4 kNeutral{0.40f, 0.62f, 0.95f, 1.0f};   // counts, levels
-constexpr ImVec4 kSpend{0.94f, 0.59f, 0.24f, 1.0f};     // money spent
-constexpr ImVec4 kMuted{0.65f, 0.67f, 0.75f, 1.0f};     // secondary lines, markers
+// Semantic series colors, from the shared palette (ui_theme.h); the rest
+// cycle through the theme's "Postal" colormap.
+constexpr ImVec4 kGood = ui::theme::kGood;         // income, on-time deliveries
+constexpr ImVec4 kBad = ui::theme::kBad;           // losses, late deliveries
+constexpr ImVec4 kWarn = ui::theme::kWarn;         // bonuses, left behind (lines and bars)
+constexpr ImVec4 kWarnText = ui::theme::kWarnText; // ...and as text, dark enough to read
+constexpr ImVec4 kNeutral = ui::theme::kNavy;      // counts, levels
+constexpr ImVec4 kSpend = ui::theme::kPlum;        // money spent
+constexpr ImVec4 kMuted = ui::theme::kInkDim;      // secondary lines, markers
 
 // ---------------------------------------------------------------------------
 // Names
@@ -379,6 +384,24 @@ void SortRows(std::vector<Row>& rows, Key key) {
 // Global tab
 // ---------------------------------------------------------------------------
 
+// A summary tile: a small label over a big value, in an inset paper box.
+// Footnote lines go between BeginStatTile and EndStatTile.
+void BeginStatTile(const char* id, const char* label, const char* value, ImVec4 value_color) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::theme::kPaper2);
+    ImGui::BeginChild(id, ImVec2(-FLT_MIN, 0.0f), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushFont(nullptr, ui::theme::kFontSmall);
+    ImGui::TextDisabled("%s", label);
+    ImGui::PopFont();
+    ImGui::PushFont(nullptr, ui::theme::kFontTitle * 1.2f);
+    ImGui::TextColored(value_color, "%s", value);
+    ImGui::PopFont();
+}
+
+void EndStatTile() {
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
 void DrawGlobalTab(const World& world) {
     const GlobalStats& g = world.get_stats();
     const Tick now = world.get_tick();
@@ -395,37 +418,44 @@ void DrawGlobalTab(const World& world) {
     const int64_t lost = total(GlobalStat::LettersLost);
     const int64_t skipped = total(GlobalStat::DeparturesSkipped);
 
-    // Summary for the range.
+    // Summary for the range: one tile per headline number.
     if (ImGui::BeginTable("summary", 4, ImGuiTableFlags_SizingStretchSame)) {
+        char value[48];
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("Income");
-        ImGui::Text("$%lld", static_cast<long long>(income_value + income_bonus));
+        std::snprintf(value, sizeof(value), "$%lld", static_cast<long long>(income_value + income_bonus));
+        BeginStatTile("income", "Income", value, kGood);
         ImGui::TextDisabled("incl. $%lld early bonus", static_cast<long long>(income_bonus));
+        EndStatTile();
 
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("Spent");
-        ImGui::Text("$%lld", static_cast<long long>(spent_trucks + spent_build));
+        std::snprintf(value, sizeof(value), "$%lld", static_cast<long long>(spent_trucks + spent_build));
+        BeginStatTile("spent", "Spent", value, ui::theme::kInk);
         ImGui::TextDisabled("$%lld trucks, $%lld building", static_cast<long long>(spent_trucks),
                             static_cast<long long>(spent_build));
+        EndStatTile();
 
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("Net");
-        ImGui::TextColored(net >= 0 ? kGood : kBad, "%s$%lld", net < 0 ? "-" : "+",
-                           static_cast<long long>(std::llabs(net)));
+        std::snprintf(value, sizeof(value), "%s$%lld", net < 0 ? "-" : "+", static_cast<long long>(std::llabs(net)));
+        BeginStatTile("net", "Net", value, net >= 0 ? kGood : kBad);
+        ImGui::TextDisabled("income minus spending");
+        EndStatTile();
 
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("Delivered");
+        std::snprintf(value, sizeof(value), "%lld", static_cast<long long>(delivered));
+        BeginStatTile("delivered", "Delivered", value, ui::theme::kInk);
         if (delivered > 0)
-            ImGui::Text("%lld  (%.0f%% on time)", static_cast<long long>(delivered),
-                        100.0 * static_cast<double>(on_time) / static_cast<double>(delivered));
+            ImGui::TextDisabled("%.0f%% on time", 100.0 * static_cast<double>(on_time) / static_cast<double>(delivered));
         else
-            ImGui::Text("0");
-        if (lost > 0)
-            ImGui::TextColored(kBad, "%lld lost (buffers full)", static_cast<long long>(lost));
-        else
-            ImGui::TextDisabled("none lost");
+            ImGui::TextDisabled("nothing yet");
+        if (lost > 0) {
+            ImGui::SameLine();
+            ImGui::TextColored(kBad, "%lld lost", static_cast<long long>(lost));
+            ImGui::SetItemTooltip("Refused because the office's outbound buffer was full");
+        }
+        EndStatTile();
         ImGui::EndTable();
     }
+    ImGui::Spacing();
     if (delivered > 0) {
         const double avg_total = TicksToHours(static_cast<Tick>(total(GlobalStat::DeliveryTicks))) / static_cast<double>(delivered);
         const double avg_transit = TicksToHours(static_cast<Tick>(total(GlobalStat::TransitTicks))) / static_cast<double>(delivered);
@@ -617,7 +647,7 @@ void DrawOfficesTab(const World& world) {
                 ImGui::TextUnformatted(wait);
             }
             ImGui::TableNextColumn();
-            ImGui::TextColored(r.fill >= 1.0 ? kBad : r.fill >= 0.75 ? kWarn : ImGui::GetStyleColorVec4(ImGuiCol_Text),
+            ImGui::TextColored(r.fill >= 1.0 ? kBad : r.fill >= ui::theme::kWarnFraction ? kWarnText : ImGui::GetStyleColorVec4(ImGuiCol_Text),
                                "%lld / %zu", static_cast<long long>(r.peak_backlog), o.max_outbound_letters);
             ImGui::TableNextColumn();
             const ChartWindow w = WindowFor(StatKind::Gauge, now);
@@ -789,7 +819,7 @@ void DrawSchedulesTab(const World& world) {
                 ImGui::TextDisabled("-");
             ImGui::TableNextColumn();
             if (r.u.left_behind > 0)
-                ImGui::TextColored(kWarn, "%lld", static_cast<long long>(r.u.left_behind));
+                ImGui::TextColored(kWarnText, "%lld", static_cast<long long>(r.u.left_behind));
             else
                 ImGui::TextDisabled("0");
             ImGui::TableNextColumn();
@@ -995,7 +1025,7 @@ void DrawScheduleLoadCell(const TruckSchedule& schedule, Tick now) {
     if (u.departures == 0) {
         ImGui::TextDisabled("-");
     } else if (u.left_behind > 0) {
-        ImGui::TextColored(kWarn, "%.0f%%+", 100.0 * u.load);  // "+": more mail than fit
+        ImGui::TextColored(kWarnText, "%.0f%%+", 100.0 * u.load);  // "+": more mail than fit
     } else {
         ImGui::Text("%.0f%%", 100.0 * u.load);
     }
@@ -1072,7 +1102,7 @@ void DrawLetterTrail(const Letter& letter, const std::vector<PostOffice>& office
     if (last.event == TrailEvent::Departed)
         ImGui::TextDisabled("      on the road for %s so far", span);
     else
-        ImGui::TextColored(kWarn, "      waiting at %s for %s so far",
+        ImGui::TextColored(kWarnText, "      waiting at %s for %s so far",
                            last.office < offices.size() ? offices[last.office].name.c_str() : "?", span);
 }
 

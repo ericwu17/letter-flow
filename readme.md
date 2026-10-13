@@ -68,6 +68,7 @@ mingw32-make && ./letter-flow.exe
   highlights its route, its truck and its destination.
 - **Mouse wheel / WASD**: zoom and pan the map
 - **Transport bar**: play/pause, x4 fast-forward, day/time readout
+- **F1 / F2**: Dear ImGui / ImPlot demo windows (widget reference while developing)
 - **Saving**: the game autosaves to a JSON file when you quit and reloads it
   on the next launch, in SDL's per-user app-data directory (`SDL_GetPrefPath`):
   `~/Library/Application Support/LetterFlow/LetterFlow/save.json` on macOS,
@@ -93,6 +94,7 @@ src/scenario.*        create_default_world() starter map
 src/serialization.cpp JSON save/load: implements World::save_to_file / load_from_file
 src/ui.*              Dear ImGui presentation layer (ui*.cpp are the only places ImGui exists)
 src/ui_stats.cpp      statistics window, stat widgets and letter-trail tooltips (ImPlot)
+src/ui_theme.*        the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets
 src/ui_internal.h     helpers shared between ui.cpp and ui_stats.cpp
 src/main.cpp          SDL2 + OpenGL3 bootstrap and frame loop (all platforms)
 src/app_icon.*        window/Dock icon from assets/logo.png (embedded at build time)
@@ -108,6 +110,7 @@ third_party/nlohmann/json.hpp vendored single-header JSON library (only
 third_party/stb/stb_image.h   vendored PNG decoder, v2.30 (only app_icon.cpp
                               includes it)
 assets/logo.png               app icon, compiled into the executable
+imgui/misc/fonts/Roboto-Medium.ttf  UI font, compiled into the executable
 ```
 
 ## Tests

@@ -2,6 +2,7 @@
 // HUD and inspector, and turns player clicks into World mutations.
 #include "ui.h"
 #include "ui_internal.h"
+#include "ui_theme.h"
 
 #include "entities.h"
 #include "balance.h"
@@ -57,39 +58,53 @@ constexpr float kPanStep = 5.0f;
 constexpr float kZoomMin = 0.5f;
 constexpr float kZoomMax = 8.0f;
 
-// Map label for an office's postal code: smaller and muted-green so it reads
-// as a subtitle under the (full-size, near-white) office name.
-constexpr float kPostalCodeFontScale = 0.7f;
-constexpr ImU32 kPostalCodeColor = IM_COL32(150, 205, 165, 255);
+namespace theme = ui::theme;
+using theme::U32;
 
-// Shared color palette: every literal color used by the drawing code below,
-// named in one place so re-theming the app is a single edit.
-constexpr ImU32 kColorText         = IM_COL32(235, 235, 240, 255);  // near-white labels/icons
-constexpr ImU32 kColorTextShadow   = IM_COL32(0, 0, 0, 255);
-constexpr ImU32 kColorTextDim      = IM_COL32(235, 235, 240, 200);  // inactive icons
-constexpr ImU32 kColorAccent       = IM_COL32(70, 130, 220, 255);    // offices, day-progress fill
-constexpr ImU32 kColorOfficeUnbuilt = IM_COL32(85, 90, 105, 255);    // offices not yet built
-constexpr ImU32 kColorOfficeEmpty  = IM_COL32(35, 50, 75, 255);      // unfilled part of a built office
-constexpr ImU32 kColorOfficeWarn   = IM_COL32(235, 205, 60, 255);    // buffer nearly full
-constexpr ImU32 kColorOfficeFull   = IM_COL32(225, 60, 55, 255);     // buffer at/near capacity
-constexpr float kOfficeWarnFraction = 0.75f;  // fill fraction at which an office turns yellow
-constexpr float kOfficeFullFraction = 0.9f;   // ...and red
-constexpr ImU32 kColorHoverBg      = IM_COL32(70, 130, 220, 90);     // hovered transport buttons
-constexpr ImU32 kColorSelection    = IM_COL32(255, 200, 80, 255);    // selected-office ring
-constexpr ImU32 kColorTruck        = IM_COL32(240, 150, 60, 255);    // trucks, active fast-forward
-constexpr ImU32 kColorTruckOutline = IM_COL32(30, 30, 30, 255);
-constexpr ImU32 kColorOfficeRing   = IM_COL32(255, 255, 255, 140);
-constexpr ImU32 kColorSeparator    = IM_COL32(110, 120, 150, 140);
-constexpr ImU32 kColorBarBorder    = IM_COL32(110, 120, 150, 100);
-constexpr ImU32 kColorBarBg        = IM_COL32(24, 27, 34, 220);      // transport-bar panel
-constexpr ImU32 kColorProgressBg   = IM_COL32(255, 255, 255, 40);
-constexpr ImVec4 kColorErrorText{1.0f, 0.4f, 0.4f, 1.0f};            // red inline messages
+// Map label for an office's postal code: a small chip under the office.
+constexpr float kPostalCodeFontScale = 0.75f;
 
-// Road colors
-constexpr ImU32 kColorRoadLine    = IM_COL32(100, 180, 140, 220);  // built roads (greenish)
-constexpr ImU32 kColorRoadPreview = IM_COL32(255, 255, 100, 200);  // road-building preview
-constexpr ImU32 kColorRoadVertex  = IM_COL32(255, 255, 100, 180);  // placed vertices in preview
-constexpr ImU32 kColorRoadBad     = IM_COL32(255, 80, 80, 200);    // invalid preview (crossing)
+// The map's and transport bar's colors, named by role. Every value comes from
+// the shared palette in ui_theme.h, so re-theming the app is an edit there.
+constexpr ImU32 kColorText          = U32(theme::kInk);          // labels, icons
+constexpr ImU32 kColorTextDim       = U32(theme::kInkDim);       // speed label at 1x, postal codes
+constexpr ImU32 kColorHalo          = U32(theme::kMap, 0.9f);    // outline around map labels
+constexpr ImU32 kColorGrid          = U32(theme::kMapGrid);      // the map's paper grid
+constexpr ImU32 kColorShadow        = U32(theme::kShadow, 0.22f);
+constexpr ImU32 kColorChipBg        = U32(theme::kPaperLight, 0.9f);  // postal-code chips, cost label
+constexpr ImU32 kColorChipBorder    = U32(theme::kPaper3);
+constexpr ImU32 kColorOfficeBody    = U32(theme::kPaperLight);   // unfilled part of a built office
+constexpr ImU32 kColorOfficeRing    = U32(theme::kNavy);
+constexpr ImU32 kColorOfficeUnbuilt = U32(theme::kPaper2);       // offices not yet built
+constexpr ImU32 kColorUnbuiltRing   = U32(theme::kInkDim);
+constexpr ImU32 kColorSelection     = U32(theme::kRed);          // selection rings, hovered journey
+constexpr ImU32 kColorSelectionHalo = U32(theme::kRed, 0.22f);
+constexpr ImU32 kColorDestination   = U32(theme::kNavy);         // a hovered letter's destination
+constexpr ImU32 kColorTruck         = U32(theme::kRed);
+constexpr ImU32 kColorTruckOutline  = U32(theme::kPaperLight);
+constexpr ImU32 kColorHoverBg       = U32(theme::kPaper3);       // hovered transport buttons
+constexpr ImU32 kColorDisabledIcon  = U32(theme::kPaper4);
+constexpr ImU32 kColorPlayBg        = U32(theme::kRed);          // play button while paused
+constexpr ImU32 kColorPlayBgHover   = U32(theme::kRedHover);
+constexpr ImU32 kColorPlayIcon      = U32(theme::kPaperLight);
+constexpr ImU32 kColorFastForward   = U32(theme::kRed);          // speed label above 1x
+constexpr ImU32 kColorSeparator     = U32(theme::kPaper3);
+constexpr ImU32 kColorProgressBg    = U32(theme::kPaper2);
+constexpr ImU32 kColorProgressFill  = U32(theme::kNavy);
+constexpr ImU32 kColorProgressTick  = U32(theme::kPaper4);
+constexpr ImU32 kColorMoneyIn       = U32(theme::kGood);
+constexpr ImU32 kColorMoneyOut      = U32(theme::kBad);
+constexpr ImVec4 kColorErrorText    = theme::kBad;               // red inline messages
+
+// Road colors: a printed road-map look, an ink outline around a light fill.
+constexpr ImU32 kColorRoadOutline = U32(theme::kInk, 0.8f);
+constexpr ImU32 kColorRoadFill    = U32(theme::kPaperLight);
+constexpr ImU32 kColorRoadPreview = U32(theme::kWarn);       // road-building preview
+constexpr ImU32 kColorRoadVertex  = U32(theme::kWarnText);   // placed vertices in preview
+constexpr ImU32 kColorRoadBad     = U32(theme::kBad);        // invalid preview (crossing)
+
+// The map's paper grid, in world units.
+constexpr float kGridStep = 100.0f;
 
 // Road-building state machine
 enum class RoadBuildState { Idle, SelectSource, PlacingVertices };
@@ -600,9 +615,9 @@ void DrawMoneyPopups(ImDrawList* draw, const ViewTransform& view, World& world) 
         const ImVec2 c = WorldToScreen(view, offices[p.office].pos);
         const ImVec2 size = ImGui::CalcTextSize(text);
         const ImVec2 pos(c.x - size.x * 0.5f, c.y - 62.0f - kPopupRise * rise);
-        const int a = static_cast<int>(255.0f * alpha);
-        draw->AddText({pos.x + 1.0f, pos.y + 1.0f}, IM_COL32(0, 0, 0, a), text);
-        draw->AddText(pos, p.amount < 0 ? IM_COL32(240, 90, 80, a) : IM_COL32(90, 235, 110, a), text);
+        const ImU32 color = p.amount < 0 ? kColorMoneyOut : kColorMoneyIn;
+        theme::DrawHaloText(draw, pos, (color & ~IM_COL32_A_MASK) | (static_cast<ImU32>(255.0f * alpha) << IM_COL32_A_SHIFT),
+                            U32(theme::kPaperLight, alpha), text);
     }
     ImGui::PopFont();
     std::erase_if(g_money_popups, [](const MoneyPopup& p) { return p.age >= kPopupDuration; });
@@ -645,13 +660,62 @@ void DrawLetterHighlight(ImDrawList* draw, const ViewTransform& view, const Worl
                 continue;
             const ImVec2 at = WorldToScreen(view, truck->get_position(world.get_tick()));
             draw->AddLine(WorldToScreen(view, offices[truck->get_src()].pos), at, kColorSelection, 3.0f);
+            draw->AddCircleFilled(at, 13.0f, kColorSelectionHalo);
             draw->AddCircle(at, 11.0f, kColorSelection, 0, 3.0f);
             break;
         }
     }
 
     draw->AddCircle(WorldToScreen(view, offices[letter.src].pos), office_radius + 9.0f, kColorSelection, 0, 2.5f);
-    draw->AddCircle(WorldToScreen(view, offices[letter.dst].pos), office_radius + 9.0f, kColorTruck, 0, 4.0f);
+    draw->AddCircle(WorldToScreen(view, offices[letter.dst].pos), office_radius + 9.0f, kColorDestination, 0, 4.0f);
+}
+
+// Faint grid lines every kGridStep world units across the whole display, like
+// the squares on a paper map; they pan and zoom with the camera. Skipped when
+// zoomed out so far that they would crowd together.
+void DrawMapGrid(ImDrawList* draw, const ViewTransform& view) {
+    const float step_px = kGridStep * view.scale;
+    if (step_px < 12.0f)
+        return;
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    // First grid line at or left of / above the screen edge.
+    const float first_x = view.offset.x + std::floor(-view.offset.x / step_px) * step_px;
+    const float first_y = view.offset.y + std::floor(-view.offset.y / step_px) * step_px;
+    for (float x = first_x; x < display.x; x += step_px)
+        draw->AddLine({x, 0.0f}, {x, display.y}, kColorGrid, 1.0f);
+    for (float y = first_y; y < display.y; y += step_px)
+        draw->AddLine({0.0f, y}, {display.x, y}, kColorGrid, 1.0f);
+}
+
+// A polyline stroked in one color, with round joints: thick ImGui lines
+// leave notches where segments meet, so each inner vertex gets a disc.
+void StrokePolyline(ImDrawList* draw, const ViewTransform& view, const std::vector<Position>& points,
+                    ImU32 color, float thickness) {
+    for (std::size_t i = 1; i < points.size(); ++i)
+        draw->AddLine(WorldToScreen(view, points[i - 1]), WorldToScreen(view, points[i]), color, thickness);
+    for (std::size_t i = 1; i + 1 < points.size(); ++i)
+        draw->AddCircleFilled(WorldToScreen(view, points[i]), thickness * 0.5f, color);
+}
+
+// A built road: an outline under a light fill, like a road on a printed map.
+void DrawRoad(ImDrawList* draw, const ViewTransform& view, const std::vector<Position>& vertices,
+              ImU32 outline) {
+    StrokePolyline(draw, view, vertices, outline, 6.0f);
+    StrokePolyline(draw, view, vertices, kColorRoadFill, 3.0f);
+}
+
+// Small text in a rounded chip centered on `center` (postal codes, the
+// road-building cost readout). Uses the current font.
+void DrawChip(ImDrawList* draw, ImVec2 center, const char* text, ImU32 text_color) {
+    const ImVec2 size = ImGui::CalcTextSize(text);
+    const float pad_x = 5.0f;
+    const float pad_y = 1.0f;
+    const ImVec2 min(center.x - size.x * 0.5f - pad_x, center.y - size.y * 0.5f - pad_y);
+    const ImVec2 max(center.x + size.x * 0.5f + pad_x, center.y + size.y * 0.5f + pad_y);
+    const float rounding = (max.y - min.y) * 0.5f;
+    draw->AddRectFilled(min, max, kColorChipBg, rounding);
+    draw->AddRect(min, max, kColorChipBorder, rounding);
+    draw->AddText({min.x + pad_x, min.y + pad_y}, text_color, text);
 }
 
 }  // namespace
@@ -676,24 +740,16 @@ void DrawWorld(World& world) {
     ImGuiIO& io = ImGui::GetIO();
     Position mouse_world = ScreenToWorld(view, io.MousePos);
 
+    DrawMapGrid(draw, view);
+
     // Roads (built, underneath schedule routes). The road whose destroy menu
-    // is open is tinted with the selection color so it is unambiguous which
+    // is open is outlined with the selection color so it is unambiguous which
     // road the menu refers to.
     for (const Road& road : world.get_roads()) {
         const bool has_menu = g_road_menu_road.has_value()
                            && road.src == g_road_menu_road->src
                            && road.dst == g_road_menu_road->dst;
-        const ImU32 color = has_menu ? kColorSelection : kColorRoadLine;
-        for (std::size_t i = 1; i < road.vertices.size(); ++i) {
-            const ImVec2 a = WorldToScreen(view, road.vertices[i - 1]);
-            const ImVec2 b = WorldToScreen(view, road.vertices[i]);
-            draw->AddLine(a, b, color, 2.5f);
-        }
-        // Small circles at intermediate vertices.
-        for (std::size_t i = 1; i + 1 < road.vertices.size(); ++i) {
-            const ImVec2 v = WorldToScreen(view, road.vertices[i]);
-            draw->AddCircleFilled(v, 3.0f, color);
-        }
+        DrawRoad(draw, view, road.vertices, has_menu ? kColorSelection : kColorRoadOutline);
     }
 
     // A letter hovered in a list (last frame): its journey, under the offices.
@@ -735,22 +791,22 @@ void DrawWorld(World& world) {
         for (std::size_t i = 1; i < g_road_builder.vertices.size(); ++i) {
             const ImVec2 a = WorldToScreen(view, g_road_builder.vertices[i - 1]);
             const ImVec2 b = WorldToScreen(view, g_road_builder.vertices[i]);
-            draw->AddLine(a, b, road_color, 2.5f);
-            draw->AddCircleFilled(b, 3.0f, kColorRoadVertex);
+            draw->AddLine(a, b, road_color, 4.0f);
+            draw->AddCircleFilled(b, 3.5f, kColorRoadVertex);
         }
         Position last_vertex = g_road_builder.vertices.back();
         if (g_road_builder.middle.has_value()) {
             const ImVec2 a = WorldToScreen(view, last_vertex);
             const ImVec2 b = WorldToScreen(view, g_road_builder.middle.value());
-            draw->AddLine(a, b, road_color, 2.5f);
-            draw->AddCircleFilled(b, 3.0f, kColorRoadVertex);
+            draw->AddLine(a, b, road_color, 4.0f);
+            draw->AddCircleFilled(b, 3.5f, kColorRoadVertex);
             last_vertex = g_road_builder.middle.value();
         }
         if (g_road_builder.head.has_value()) {
             const ImVec2 a = WorldToScreen(view, last_vertex);
             const ImVec2 b = WorldToScreen(view, g_road_builder.head.value());
-            draw->AddLine(a, b, road_color, 2.5f);
-            draw->AddCircleFilled(b, 3.0f, kColorRoadVertex);
+            draw->AddLine(a, b, road_color, 4.0f);
+            draw->AddCircleFilled(b, 3.5f, kColorRoadVertex);
             last_vertex = g_road_builder.head.value();
         }
 
@@ -769,29 +825,39 @@ void DrawWorld(World& world) {
         const int cost = road_cost(full_path);
         char cost_text[64];
         std::snprintf(cost_text, sizeof(cost_text), "$%d (%.0f units)", cost, total_len);
-        const ImVec2 text_pos(io.MousePos.x + 8.0f, io.MousePos.y - ImGui::GetFontSize() * 0.5f);
-        draw->AddText(text_pos, kColorText, cost_text);
+        const ImVec2 cost_size = ImGui::CalcTextSize(cost_text);
+        DrawChip(draw, {io.MousePos.x + 16.0f + cost_size.x * 0.5f, io.MousePos.y + 2.0f}, cost_text,
+                 g_road_builder.is_invalid ? kColorRoadBad : kColorText);
     }
 
     // Post offices.
     for (PostOfficeId id = 0; id < offices.size(); ++id) {
         const PostOffice& office = offices[id];
         const ImVec2 c = WorldToScreen(view, office.pos);
-        if (selected_truck == nullptr && id == g_selected_office)
-            draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 2.5f);
+        if (selected_truck == nullptr && id == g_selected_office) {
+            draw->AddCircleFilled(c, office_radius + 9.0f, kColorSelectionHalo);
+            draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 3.0f);
+        }
+        draw->AddCircleFilled({c.x, c.y + 2.0f}, office_radius + 1.0f, kColorShadow);
         if (!office.built) {
+            // Not built yet: a blank disc with a dashed rim.
             draw->AddCircleFilled(c, office_radius, kColorOfficeUnbuilt);
+            constexpr int kDashes = 12;
+            const float dash = 2.0f * IM_PI / static_cast<float>(kDashes);
+            for (int i = 0; i < kDashes; ++i) {
+                const float a0 = static_cast<float>(i) * dash;
+                draw->PathArcTo(c, office_radius, a0, a0 + dash * 0.55f, 4);
+                draw->PathStroke(kColorUnbuiltRing, 0, 1.5f);
+            }
         } else {
             // Clock-style fill: a wedge sweeping clockwise from 12 o'clock
-            // shows how full the outbound buffer is, turning yellow then red
+            // shows how full the outbound buffer is, turning warn then bad
             // as it nears max_outbound_letters.
             const float fill = office.max_outbound_letters == 0 ? 0.0f
                 : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
                                      / static_cast<float>(office.max_outbound_letters));
-            const ImU32 fill_color = fill >= kOfficeFullFraction ? kColorOfficeFull
-                                   : fill >= kOfficeWarnFraction ? kColorOfficeWarn
-                                   : kColorAccent;
-            draw->AddCircleFilled(c, office_radius, kColorOfficeEmpty);
+            const ImU32 fill_color = U32(theme::FillColor(fill));
+            draw->AddCircleFilled(c, office_radius, kColorOfficeBody);
             if (fill >= 1.0f) {
                 draw->AddCircleFilled(c, office_radius, fill_color);
             } else if (fill > 0.0f) {
@@ -800,26 +866,21 @@ void DrawWorld(World& world) {
                 draw->PathArcTo(c, office_radius, start, start + 2.0f * IM_PI * fill);
                 draw->PathFillConcave(fill_color);
             }
+            draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 2.0f);
         }
-        draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 1.5f);
 
         const ImVec2 name_size = ImGui::CalcTextSize(office.name.c_str());
         const ImVec2 name_pos(c.x - name_size.x * 0.5f, c.y - office_radius - name_size.y - 5.0f);
-        draw->AddText({name_pos.x + 1.0f, name_pos.y + 1.0f}, kColorTextShadow, office.name.c_str());
-        draw->AddText(name_pos, kColorText, office.name.c_str());
+        theme::DrawHaloText(draw, name_pos, office.built ? kColorText : kColorTextDim, kColorHalo,
+                            office.name.c_str());
 
-        // Postal code, centered below the circle in a smaller, muted
-        // green font. PushFont(nullptr, size) rescales the current font (both
+        // Postal code, in a small chip centered below the circle.
+        // PushFont(nullptr, size) rescales the current font (both
         // CalcTextSize and AddText honor it); FontSizeBase rather than
         // GetFontSize() so the DPI/global scale is applied exactly once.
         if (!office.postal_code.empty()) {
-            const float code_font_size = ImGui::GetStyle().FontSizeBase * kPostalCodeFontScale;
-            ImGui::PushFont(nullptr, code_font_size);
-            const ImVec2 code_extent = ImGui::CalcTextSize(office.postal_code.c_str());
-            const ImVec2 code_pos(c.x - code_extent.x * 0.5f,
-                                  c.y + office_radius + 12.0f - code_extent.y * 0.5f);
-            draw->AddText({code_pos.x + 1.0f, code_pos.y + 1.0f}, kColorTextShadow, office.postal_code.c_str());
-            draw->AddText(code_pos, kPostalCodeColor, office.postal_code.c_str());
+            ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * kPostalCodeFontScale);
+            DrawChip(draw, {c.x, c.y + office_radius + 13.0f}, office.postal_code.c_str(), kColorTextDim);
             ImGui::PopFont();
         }
     }
@@ -861,18 +922,21 @@ void DrawWorld(World& world) {
 
     // Trucks in transit (position is derived from the tick, so they animate
     // smoothly as the simulation advances and freeze when it is paused). The
-    // hovered truck gets a highlighted outline, the selected one a ring.
+    // hovered truck gets an ink outline, the selected one a haloed ring.
     for (const std::shared_ptr<Truck>& truck : world.get_trucks()) {
         const ImVec2 c = WorldToScreen(view, truck->get_position(world.get_tick()));
         const float r = truck_half;
         const bool hovered = hovered_truck != nullptr && hovered_truck == truck;
-        draw->AddRectFilled({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruck);
-        draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r},
-                      hovered ? kColorSelection : kColorTruckOutline, 0.0f, 0, hovered ? 2.0f : 1.0f);
         if (truck == selected_truck) {
             const float ring = r + 4.0f;
-            draw->AddRect({c.x - ring, c.y - ring}, {c.x + ring, c.y + ring}, kColorSelection, 0.0f, 0, 2.5f);
+            draw->AddRectFilled({c.x - ring - 3.0f, c.y - ring - 3.0f}, {c.x + ring + 3.0f, c.y + ring + 3.0f},
+                                kColorSelectionHalo, 5.0f);
+            draw->AddRect({c.x - ring, c.y - ring}, {c.x + ring, c.y + ring}, kColorSelection, 3.0f, 0, 2.5f);
         }
+        draw->AddRectFilled({c.x - r, c.y - r + 1.5f}, {c.x + r, c.y + r + 1.5f}, kColorShadow, 2.0f);
+        draw->AddRectFilled({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruck, 2.0f);
+        draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r},
+                      hovered ? kColorText : kColorTruckOutline, 2.0f, 0, hovered ? 2.0f : 1.5f);
     }
     if (hovered_truck != nullptr) {
         const Truck& truck = *hovered_truck;
@@ -968,8 +1032,7 @@ void DrawTransportBar(World& world) {
     const float rounding = b * 0.2f;
 
     // Panel.
-    draw->AddRectFilled(l.bar_min, l.bar_max, kColorBarBg, rounding * 1.5f);
-    draw->AddRect(l.bar_min, l.bar_max, kColorBarBorder, rounding * 1.5f);
+    theme::DrawShadowedPanel(draw, l.bar_min, l.bar_max, rounding * 1.5f);
 
     // Background drawing has no widget behaviour, so the buttons are plain
     // rects hit-tested against the mouse. WantCaptureMouse keeps clicks that
@@ -984,13 +1047,17 @@ void DrawTransportBar(World& world) {
     const ImU32 icon_color = kColorText;
     const ImU32 hover_bg = kColorHoverBg;
 
-    // Play/pause: a triangle when paused, two bars when running.
-    if (hover_play)
+    // Play/pause: a triangle when paused, two bars when running. While paused
+    // the button is a red disc, so the way to resume stands out.
+    const ImVec2 play_center = {(l.play_min.x + l.play_max.x) * 0.5f, (l.play_min.y + l.play_max.y) * 0.5f};
+    if (world.is_paused())
+        draw->AddCircleFilled(play_center, b * 0.5f, hover_play ? kColorPlayBgHover : kColorPlayBg);
+    else if (hover_play)
         draw->AddRectFilled(l.play_min, l.play_max, hover_bg, rounding);
     if (world.is_paused())
-        draw->AddTriangleFilled({l.play_min.x + b * 0.36f, l.play_min.y + b * 0.26f},
-                                {l.play_min.x + b * 0.36f, l.play_min.y + b * 0.74f},
-                                {l.play_min.x + b * 0.76f, l.play_min.y + b * 0.50f}, icon_color);
+        draw->AddTriangleFilled({l.play_min.x + b * 0.38f, l.play_min.y + b * 0.28f},
+                                {l.play_min.x + b * 0.38f, l.play_min.y + b * 0.72f},
+                                {l.play_min.x + b * 0.74f, l.play_min.y + b * 0.50f}, kColorPlayIcon);
     else {
         draw->AddRectFilled({l.play_min.x + b * 0.30f, l.play_min.y + b * 0.28f},
                             {l.play_min.x + b * 0.44f, l.play_min.y + b * 0.72f}, icon_color);
@@ -1003,7 +1070,7 @@ void DrawTransportBar(World& world) {
     // end of the range is drawn faded and ignores the mouse.
     if (hover_slower)
         draw->AddRectFilled(l.slower_min, l.slower_max, hover_bg, rounding);
-    const ImU32 slower_color = can_slow ? kColorText : kColorProgressBg;
+    const ImU32 slower_color = can_slow ? kColorText : kColorDisabledIcon;
     draw->AddTriangleFilled({l.slower_min.x + b * 0.82f, l.slower_min.y + b * 0.30f},
                             {l.slower_min.x + b * 0.82f, l.slower_min.y + b * 0.70f},
                             {l.slower_min.x + b * 0.52f, l.slower_min.y + b * 0.50f}, slower_color);
@@ -1011,11 +1078,11 @@ void DrawTransportBar(World& world) {
                             {l.slower_min.x + b * 0.52f, l.slower_min.y + b * 0.70f},
                             {l.slower_min.x + b * 0.22f, l.slower_min.y + b * 0.50f}, slower_color);
 
-    draw->AddText(l.speed_text_pos, fast_forward ? kColorTruck : kColorTextDim, l.speed_text);
+    draw->AddText(l.speed_text_pos, fast_forward ? kColorFastForward : kColorTextDim, l.speed_text);
 
     if (hover_faster)
         draw->AddRectFilled(l.faster_min, l.faster_max, hover_bg, rounding);
-    const ImU32 faster_color = can_speed_up ? kColorText : kColorProgressBg;
+    const ImU32 faster_color = can_speed_up ? kColorText : kColorDisabledIcon;
     draw->AddTriangleFilled({l.faster_min.x + b * 0.18f, l.faster_min.y + b * 0.30f},
                             {l.faster_min.x + b * 0.18f, l.faster_min.y + b * 0.70f},
                             {l.faster_min.x + b * 0.48f, l.faster_min.y + b * 0.50f}, faster_color);
@@ -1023,16 +1090,24 @@ void DrawTransportBar(World& world) {
                             {l.faster_min.x + b * 0.48f, l.faster_min.y + b * 0.70f},
                             {l.faster_min.x + b * 0.78f, l.faster_min.y + b * 0.50f}, faster_color);
 
-    // Separator, day/time readout, day progress.
+    // Separator, day/time readout, day progress (with marks at 06, 12 and
+    // 18 h, so the time of day reads at a glance).
     draw->AddLine(l.separator_top, l.separator_bottom, kColorSeparator, 1.0f);
     draw->AddText(l.text_pos, kColorText, l.time_text);
+    const float progress_w = l.progress_max.x - l.progress_min.x;
     const float progress_rounding = (l.progress_max.y - l.progress_min.y) * 0.5f;
     draw->AddRectFilled(l.progress_min, l.progress_max, kColorProgressBg, progress_rounding);
     const float day_fraction = static_cast<float>(world.get_tick() % kTicksPerDay) / static_cast<float>(kTicksPerDay);
     if (day_fraction > 0.0f)
-        draw->AddRectFilled(l.progress_min,
-                            {l.progress_min.x + (l.progress_max.x - l.progress_min.x) * day_fraction, l.progress_max.y},
-                            kColorAccent, progress_rounding);
+        draw->AddRectFilled(l.progress_min, {l.progress_min.x + progress_w * day_fraction, l.progress_max.y},
+                            kColorProgressFill, progress_rounding);
+    if (progress_w > 0.0f) {
+        for (int quarter = 1; quarter < 4; ++quarter) {
+            const float x = l.progress_min.x + progress_w * static_cast<float>(quarter) * 0.25f;
+            draw->AddLine({x, l.progress_min.y - 3.0f}, {x, l.progress_min.y - 1.0f}, kColorProgressTick, 1.0f);
+            draw->AddLine({x, l.progress_max.y + 1.0f}, {x, l.progress_max.y + 3.0f}, kColorProgressTick, 1.0f);
+        }
+    }
 
     // Clicks.
     if (interactive && io.MouseClicked[0]) {
@@ -1049,28 +1124,94 @@ void DrawTransportBar(World& world) {
 // HUD
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// One "label ....... value" row of the HUD's stat table, value right-aligned.
+void HudStatRow(const char* label, const char* value, ImVec4 value_color) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextDisabled("%s", label);
+    ImGui::TableSetColumnIndex(1);
+    const float value_w = ImGui::CalcTextSize(value).x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - value_w));
+    ImGui::TextColored(value_color, "%s", value);
+}
+
+}  // namespace
+
 void DrawHUD(const World& world) {
     static bool show_imgui_demo = false;
     static bool show_implot_demo = false;
+    static float last_hud_width = 0.0f;  // last frame's, to dodge the transport bar
 
-    // Day/time and play/pause now live in the background transport bar
-    // (DrawTransportBar); this window is just the score board.
-    // Floating only: movable and resizable, but never dockable.
-    ImGui::Begin("Letter Flow", nullptr, ImGuiWindowFlags_NoDocking);
-    ImGui::Text("Money: $%d", world.get_money());
-    ImGui::Text("Delivered on time: %zu", world.get_letters_delivered_on_time());
-    ImGui::Text("Delivered late: %zu", world.get_letters_delivered_late());
-    ImGui::Text("Trucks en route: %zu", world.get_trucks().size());
-    if (ImGui::Button("Statistics (P)"))
+    // Widget reference windows, kept handy while developing: F1 / F2.
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!io.WantCaptureKeyboard) {
+        if (ImGui::IsKeyPressed(ImGuiKey_F1, false))
+            show_imgui_demo = !show_imgui_demo;
+        if (ImGui::IsKeyPressed(ImGuiKey_F2, false))
+            show_implot_demo = !show_implot_demo;
+    }
+
+    // A card pinned to the top-right corner of the map area (the dockspace's
+    // central node), like the transport bar, so it follows window resizes
+    // and the inspector's width. When the area is too narrow for both side
+    // by side, the card drops below the bar.
+    ImVec2 area_min = {0.0f, 0.0f};
+    ImVec2 area_size = io.DisplaySize;
+    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(MainDockSpaceId())) {
+        area_min = central->Pos;
+        area_size = central->Size;
+    }
+    const float margin = ImGui::GetFrameHeight() * 0.4f;
+    const float right = area_min.x + area_size.x - margin;
+    const TransportLayout bar = ComputeTransportLayout(world);
+    const float top = right - last_hud_width < bar.bar_max.x + margin ? bar.bar_max.y + margin
+                                                                      : area_min.y + margin;
+    ImGui::SetNextWindowPos({right, top}, ImGuiCond_Always, {1.0f, 0.0f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+    ImGui::Begin("##hud", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImGui::PopStyleVar();
+    const ImVec2 hud_min = ImGui::GetWindowPos();
+    const ImVec2 hud_size = ImGui::GetWindowSize();
+    last_hud_width = hud_size.x;
+    // The card's drop shadow goes underneath the window, on top of the map.
+    theme::DrawShadowedPanel(ImGui::GetBackgroundDrawList(), hud_min,
+                             {hud_min.x + hud_size.x, hud_min.y + hud_size.y}, ImGui::GetStyle().WindowRounding);
+
+    ImGui::PushFont(nullptr, theme::kFontSmall);
+    ImGui::TextColored(theme::kRed, "LETTER FLOW");
+    ImGui::PopFont();
+
+    // Money: green while above the starting balance, red once in debt.
+    const int money = world.get_money();
+    const ImVec4 money_color = money < 0 ? theme::kBad : money >= kStartingMoney ? theme::kGood : theme::kInk;
+    ImGui::PushFont(nullptr, theme::kFontHuge);
+    ImGui::TextColored(money_color, "%s$%d", money < 0 ? "-" : "", std::abs(money));
+    ImGui::PopFont();
+
+    if (ImGui::BeginTable("hud_stats", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("00000").x);
+        char value[32];
+        std::snprintf(value, sizeof(value), "%zu", world.get_letters_delivered_on_time());
+        HudStatRow("Delivered on time", value, theme::kGood);
+        const std::size_t late = world.get_letters_delivered_late();
+        std::snprintf(value, sizeof(value), "%zu", late);
+        HudStatRow("Delivered late", value, late > 0 ? theme::kBad : theme::kInk);
+        std::snprintf(value, sizeof(value), "%zu", world.get_trucks().size());
+        HudStatRow("Trucks en route", value, theme::kInk);
+        ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    if (theme::PrimaryButton("Statistics  (P)", ImVec2(-FLT_MIN, 0.0f)))
         ui::ToggleStatsWindow();
-    ImGui::Separator();
-    ImGui::Checkbox("ImGui demo", &show_imgui_demo);
-    ImGui::SameLine();
-    ImGui::Checkbox("ImPlot demo", &show_implot_demo);
-    ImGui::TextDisabled("Click an office or truck to inspect it.");
     ImGui::End();
 
-    // Widget reference window — keep handy while developing.
     if (show_imgui_demo)
         ImGui::ShowDemoWindow(&show_imgui_demo);
     if (show_implot_demo)
@@ -1083,18 +1224,30 @@ void DrawHUD(const World& world) {
 // so it keeps its dock slot.
 // ---------------------------------------------------------------------------
 
+// Text pushed to the right edge of the current table cell (numbers).
+static void TextRightAligned(const char* text, ImVec4 color = theme::kInk) {
+    const float w = ImGui::CalcTextSize(text).x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - w));
+    ImGui::TextColored(color, "%s", text);
+}
+
 // Letters as a To / Here for / Deadline / Value / Max bonus table; overdue
-// deadlines in red. "Here for" is the time since the letter got where it is
+// deadlines get a red LATE tag. "Here for" is the time since the letter got where it is
 // (this office, or this truck). Hovering a row shows the letter's trail and
 // highlights its journey on the map.
 static void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
                             const std::vector<PostOffice>& offices, Tick now) {
-    const ImGuiTableFlags flags =
-        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+    const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH |
+                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
+    if (letters.empty()) {
+        ImGui::TextDisabled("No letters.");
+        return;
+    }
     if (ImGui::BeginTable(table_id, 5, flags, ImVec2(0.0f, 200.0f))) {
+        ImGui::TableSetupScrollFreeze(0, 1);  // keep the header visible while scrolling
         ImGui::TableSetupColumn("To");
         ImGui::TableSetupColumn("Here for");
-        ImGui::TableSetupColumn("Deadline");
+        ImGui::TableSetupColumn("Deadline", ImGuiTableColumnFlags_WidthStretch, 1.6f);
         ImGui::TableSetupColumn("Value");
         ImGui::TableSetupColumn("Max bonus");
         ImGui::TableHeadersRow();
@@ -1117,14 +1270,20 @@ static void DrawLetterTable(const char* table_id, const std::vector<Letter>& let
             ImGui::TableSetColumnIndex(2);
             char due[32];
             FormatDayTime(letter.deadline, due, sizeof(due));
-            if (letter.deadline >= now)
+            if (letter.deadline >= now) {
                 ImGui::TextUnformatted(due);
-            else
-                ImGui::TextColored(kColorErrorText, "LATE (was due %s)", due);
+            } else {
+                theme::Pill("LATE", theme::kBad, theme::kPaperLight);
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", due);
+            }
+            char money[16];
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%d", letter.value);
+            std::snprintf(money, sizeof(money), "$%d", letter.value);
+            TextRightAligned(money);
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%d", letter.max_bonus);
+            std::snprintf(money, sizeof(money), "$%d", letter.max_bonus);
+            TextRightAligned(money, theme::kGood);
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -1137,7 +1296,11 @@ static void DrawTruckPanel(const World& world, const Truck& truck) {
     const std::vector<PostOffice>& offices = world.get_post_offices();
     const PostOfficeId src = truck.get_src();
     const PostOfficeId dst = truck.get_dst();
+
+    theme::Pill("TRUCK IN TRANSIT", theme::kRed, theme::kPaperLight);
+    ImGui::PushFont(nullptr, theme::kFontTitle);
     ImGui::Text("%s  ->  %s", offices[src].name.c_str(), offices[dst].name.c_str());
+    ImGui::PopFont();
 
     char go_label[160];
     std::snprintf(go_label, sizeof(go_label), "Go to %s##go_src", offices[src].name.c_str());
@@ -1147,6 +1310,7 @@ static void DrawTruckPanel(const World& world, const Truck& truck) {
     std::snprintf(go_label, sizeof(go_label), "Go to %s##go_dst", offices[dst].name.c_str());
     if (ImGui::SmallButton(go_label))
         SelectOffice(dst);
+    ImGui::Spacing();
 
     const Tick now = world.get_tick();
     const Tick departure = truck.get_departure_tick();
@@ -1155,18 +1319,35 @@ static void DrawTruckPanel(const World& world, const Truck& truck) {
     FormatDayTime(departure, departed, sizeof(departed));
     FormatDayTime(arrival, eta, sizeof(eta));
     FormatDuration(arrival > now ? arrival - now : 0, left, sizeof(left));
-    std::snprintf(overlay, sizeof(overlay), "%s left", left);
-    ImGui::Text("Departed: %s", departed);
-    ImGui::Text("Arrives:  %s", eta);
+    std::snprintf(overlay, sizeof(overlay), "%s to go", left);
+    if (ImGui::BeginTable("truck_times", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("Departed");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(departed);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("Arrives");
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(eta);
+        ImGui::EndTable();
+    }
     const Tick elapsed = now > departure ? now - departure : 0;
     const float progress = arrival > departure
         ? std::clamp(static_cast<float>(elapsed) / static_cast<float>(arrival - departure), 0.0f, 1.0f)
         : 1.0f;
+    // A tan fill rather than navy, so the ink overlay text stays readable.
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::kInk);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme::kPaper4);
     ImGui::ProgressBar(progress, ImVec2(-FLT_MIN, 0.0f), overlay);
+    ImGui::PopStyleColor(2);
 
-    ImGui::Text("Cargo: %zu letters", truck.get_num_letters());
-    if (ImGui::CollapsingHeader("Cargo", ImGuiTreeNodeFlags_DefaultOpen))
-        DrawLetterTable("truck_cargo", truck.get_letters(), offices, now);
+    char cargo_title[64];
+    std::snprintf(cargo_title, sizeof(cargo_title), "Cargo  (%zu / %zu letters)", truck.get_num_letters(),
+                  kTruckCapacity);
+    theme::SectionHeading(cargo_title);
+    DrawLetterTable("truck_cargo", truck.get_letters(), offices, now);
 }
 
 // An HH:MM cell: two narrow drag fields (drag, or double-click to type).
@@ -1292,6 +1473,25 @@ static bool EditPrefixList(const char* id, std::vector<std::string>& prefixes,
     return changed;
 }
 
+// A schedule row's drag handle: a 2x3 grip of dots and the row number, as a
+// selectable so it can be grabbed for drag-and-drop.
+static void DrawDragHandle(const char* number) {
+    const float dot_area = ImGui::GetFontSize() * 0.6f;
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    char id[32];
+    std::snprintf(id, sizeof(id), "##handle%s", number);
+    ImGui::Selectable(id, false, 0, ImVec2(dot_area + ImGui::CalcTextSize(number).x + 4.0f, 0.0f));
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImU32 dot_color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    const float line_h = ImGui::GetTextLineHeight();
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 2; ++col)
+            draw->AddCircleFilled({pos.x + 2.5f + static_cast<float>(col) * 4.0f,
+                                   pos.y + line_h * 0.5f + static_cast<float>(row - 1) * 4.0f},
+                                  1.3f, dot_color);
+    draw->AddText({pos.x + dot_area + 2.0f, pos.y}, ImGui::GetColorU32(ImGuiCol_Text), number);
+}
+
 // The office's truck schedules as an editable table: the rule and timing
 // cells edit their schedule in place through World::update_schedule, which validates it the
 // same way add_schedule does. Rows can be dragged to reorder them (list
@@ -1313,8 +1513,10 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
         ImGui::TextDisabled("No schedules yet. Add one below.");
         return;
     }
-    ImGui::TextDisabled("Departures run top to bottom: on simultaneous departures the");
-    ImGui::TextDisabled("first schedule whose rule matches a letter picks it up. Drag # to reorder.");
+    ImGui::TextDisabled("Drag a row's grip to reorder.");
+    ImGui::SameLine();
+    theme::HelpMarker("Departures run top to bottom: when several schedules depart at the same time, "
+                      "the first one whose rule matches a letter picks it up.");
 
     // Record edits, removals and reorders and apply them after the loop: the
     // World mutates the very vector we are iterating, which would invalidate
@@ -1324,15 +1526,23 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
     std::optional<std::size_t> schedule_to_remove;
     std::optional<std::pair<std::size_t, std::size_t>> schedule_to_move;  // from, to
 
-    const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerV |
+    const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH |
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
-    if (ImGui::BeginTable("schedules", 9, flags)) {
-        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed);
+    // Nine columns need more room than a narrow inspector has: the table
+    // keeps a minimum width and scrolls sideways inside an auto-height child
+    // rather than crushing its stretch columns ("To", "Picks up").
+    const float table_w = std::max(ImGui::GetContentRegionAvail().x, ImGui::GetFontSize() * 40.0f);
+    ImGui::BeginChild("schedules_scroll", ImVec2(-FLT_MIN, 0.0f), ImGuiChildFlags_AutoResizeY,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+    if (ImGui::BeginTable("schedules", 9, flags, ImVec2(table_w, 0.0f))) {
+        // Wide enough for DrawDragHandle's grip plus a two-digit row number.
+        ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::GetFontSize() * 0.6f + ImGui::CalcTextSize("00").x + 6.0f);
         ImGui::TableSetupColumn("To", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Picks up", ImGuiTableColumnFlags_WidthStretch, 1.6f);
         ImGui::TableSetupColumn("Every", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("Starting at", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("Next departure", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("Next", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("Waiting", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("Load", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
@@ -1351,7 +1561,7 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
             ImGui::TableSetColumnIndex(0);
             char handle[16];
             std::snprintf(handle, sizeof(handle), "%zu", i + 1);
-            ImGui::Selectable(handle);
+            DrawDragHandle(handle);
             ImGui::SetItemTooltip("Drag to reorder");
             if (ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("SCHEDULE_REORDER", &i, sizeof(i));
@@ -1430,8 +1640,9 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
             ui::DrawScheduleLoadCell(schedule, world.get_tick());
 
             ImGui::TableSetColumnIndex(8);
-            if (ImGui::SmallButton("Remove"))
+            if (theme::DangerSmallButton(" x "))
                 schedule_to_remove = i;
+            ImGui::SetItemTooltip("Remove this schedule");
 
             if (row_changed)
                 schedule_to_update = {i, edited};
@@ -1439,6 +1650,7 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
         }
         ImGui::EndTable();
     }
+    ImGui::EndChild();
 
     if (schedule_to_update.has_value()) {
         const auto& [index, s] = *schedule_to_update;
@@ -1457,13 +1669,20 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
         ImGui::TextColored(kColorErrorText, "Not applied: %s", edit_error.c_str());
 }
 
-// A post office: postal code, outbound letters and schedule editing.
-static void DrawOfficePanel(World& world, PostOfficeId selected) {
-    const std::vector<PostOffice>& offices = world.get_post_offices();
+// The office panel's header: name, postal-code tag and an office switcher
+// (map clicking is the other way to change selection).
+static void DrawOfficeHeader(const std::vector<PostOffice>& offices, PostOfficeId selected) {
     const PostOffice& office = offices[selected];
+    ImGui::PushFont(nullptr, theme::kFontTitle);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(office.name.c_str());
+    ImGui::PopFont();
 
-    // Office picker (map clicking is the other way to change selection).
-    if (ImGui::BeginCombo("Office", office.name.c_str())) {
+    const float combo_w = ImGui::GetFontSize() * 8.0f;
+    ImGui::SameLine();
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - combo_w));
+    ImGui::SetNextItemWidth(combo_w);
+    if (ImGui::BeginCombo("##office", "Switch office", ImGuiComboFlags_HeightLarge)) {
         for (PostOfficeId id = 0; id < offices.size(); ++id) {
             if (ImGui::Selectable(offices[id].name.c_str(), id == selected))
                 SelectOffice(id);
@@ -1471,204 +1690,285 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
         ImGui::EndCombo();
     }
 
-    // Postal code, editable. InputText needs a mutable buffer, so keep one
-    // static buffer that is reloaded whenever the selection changes, and
-    // commit every keystroke to the World — the map label updates live.
-    static char postal_buf[128];
-    static PostOfficeId postal_buf_owner = kNoPostOffice;
-    if (postal_buf_owner != selected) {
-        std::snprintf(postal_buf, sizeof(postal_buf), "%s", office.postal_code.c_str());
-        postal_buf_owner = selected;
+    if (!office.postal_code.empty()) {
+        theme::Pill(office.postal_code.c_str(), theme::kPaper2, theme::kInkDim);
+        ImGui::SameLine();
     }
-    if (ImGui::InputText("Postal code", postal_buf, sizeof(postal_buf)))
-        world.set_postal_code(selected, postal_buf);
+    if (office.built)
+        theme::Pill("OPEN", theme::kGood, theme::kPaperLight);
+    else
+        theme::Pill("NOT BUILT", theme::kPaper3, theme::kInkDim);
+    ImGui::Spacing();
+}
 
-    // An unbuilt office has no letters or schedules yet: offer to build it.
-    if (!office.built) {
-        ImGui::Text("Not built yet. Once built: %zu letters per day, capacity %zu.",
-                    office.letters_per_day, office.max_outbound_letters);
-        const bool affordable = world.get_money() >= office.build_cost;
-        ImGui::BeginDisabled(!affordable);
-        char build_label[64];
-        std::snprintf(build_label, sizeof(build_label), "Build post office ($%d)", office.build_cost);
-        if (ImGui::Button(build_label))
-            world.build_office(selected);
-        ImGui::EndDisabled();
-        if (!affordable)
-            ImGui::TextColored(kColorErrorText, "You only have $%d.", world.get_money());
-        return;
+// How full the outbound buffer is: "Outbound ... n / max" over a thin bar
+// that turns warn / bad at the same thresholds as the office on the map.
+static void DrawCapacityBar(const PostOffice& office) {
+    const float fill = office.max_outbound_letters == 0 ? 0.0f
+        : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
+                             / static_cast<float>(office.max_outbound_letters));
+    ImGui::TextDisabled("Outbound letters");
+    ImGui::SameLine();
+    char count[48];
+    std::snprintf(count, sizeof(count), "%zu / %zu", office.outbound_letters.size(), office.max_outbound_letters);
+    TextRightAligned(count, fill >= theme::kWarnFraction ? theme::FillColor(fill) : theme::kInk);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme::FillColor(fill));
+    ImGui::ProgressBar(fill, ImVec2(-FLT_MIN, ImGui::GetFontSize() * 0.45f), "");
+    ImGui::PopStyleColor();
+    ImGui::TextDisabled("About %zu new letters posted per day.", office.letters_per_day);
+}
+
+// A label cell of the add-route form, aligned with the widget beside it.
+static void FormLabel(const char* label) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s", label);
+    ImGui::TableSetColumnIndex(1);
+}
+
+// The "New schedule" form under the schedule table.
+static void DrawAddScheduleForm(World& world, PostOfficeId selected) {
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    const PostOffice& office = offices[selected];
+
+    theme::SectionHeading("New schedule");
+
+    // Add-route widget state. Statics are reset whenever the inspected
+    // office changes (same pattern as the postal-code buffer).
+    static PostOfficeId add_owner = kNoPostOffice;
+    static PostOfficeId add_dst = kNoPostOffice;
+    static int add_rule_type = 0;  // 0 = exact dst, 1 = postal prefix, 2 = all letters
+    static std::vector<std::string> add_prefixes = {""};
+    static ImGuiTextFilter dst_filter;
+    if (add_owner != selected) {
+        add_owner = selected;
+        add_dst = kNoPostOffice;
+        add_rule_type = 0;
+        add_prefixes = {""};
+        dst_filter.Clear();
     }
+    // Frequency and offset, in ticks (edited as HH:MM). Defaults spell out
+    // the canonical example: every 3 hours starting at 00:30.
+    static Tick add_period = hours_minutes_to_ticks(3, 0);
+    static Tick add_start = hours_minutes_to_ticks(0, 30);
 
-    ImGui::Text("Outbound: %zu / %zu   (%zu per day expected)",
-                office.outbound_letters.size(), office.max_outbound_letters, office.letters_per_day);
+    const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size() && world.has_road(selected, add_dst);
+    bool prefix_ok = true;
 
-    if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
-        DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
-
-    if (ImGui::CollapsingHeader("Statistics"))
-        ui::DrawOfficeStats(world, selected);
-
-    if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawScheduleTable(world, selected);
-
-        ImGui::SeparatorText("Add route");
-
-        // Add-route widget state. Statics are reset whenever the inspected
-        // office changes (same pattern as the postal-code buffer above).
-        static PostOfficeId add_owner = kNoPostOffice;
-        static PostOfficeId add_dst = kNoPostOffice;
-        static int add_rule_type = 0;  // 0 = exact dst, 1 = postal prefix, 2 = all letters
-        static std::vector<std::string> add_prefixes = {""};
-        static ImGuiTextFilter dst_filter;
-        if (add_owner != selected) {
-            add_owner = selected;
-            add_dst = kNoPostOffice;
-            add_rule_type = 0;
-            add_prefixes = {""};
-            dst_filter.Clear();
-        }
+    if (ImGui::BeginTable("add_schedule_form", 2, ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("field", ImGuiTableColumnFlags_WidthStretch);
 
         // Destination: a dropdown that narrows as you type, matching both
         // office names and postal codes.
-        const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size() && world.has_road(selected, add_dst);
-        const char* dst_preview = dst_ok ? offices[add_dst].name.c_str() : "Choose destination...";
-        if (ImGui::BeginCombo("To", dst_preview)) {
+        FormLabel("To");
+        const char* dst_preview = dst_ok ? offices[add_dst].name.c_str() : "Choose a destination...";
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##add_dst", dst_preview, ImGuiComboFlags_HeightLarge)) {
             if (ImGui::IsWindowAppearing()) {
                 dst_filter.Clear();
                 ImGui::SetKeyboardFocusHere();  // typing filters immediately
             }
-            dst_filter.Draw("Search name or postal code##add_dst_filter");
+            dst_filter.Draw("##add_dst_filter", -FLT_MIN);
+            bool any = false;
             for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                if (id == selected) {
+                if (id == selected || !world.has_road(selected, id))
                     continue;
-                }
-                if (!world.has_road(selected, id)) {
-                    continue;
-                }
                 const PostOffice& other = offices[id];
                 if (!dst_filter.PassFilter(other.name.c_str()) &&
                     !dst_filter.PassFilter(other.postal_code.c_str()))
                     continue;
-                char item[192];
-                std::snprintf(item, sizeof(item), "%s   %s",
-                              other.name.c_str(), other.postal_code.c_str());
-                if (ImGui::Selectable(item, id == add_dst))
+                any = true;
+                ImGui::PushID(static_cast<int>(id));
+                if (ImGui::Selectable(other.name.c_str(), id == add_dst))
                     add_dst = id;
                 if (id == add_dst)
                     ImGui::SetItemDefaultFocus();
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", other.postal_code.c_str());
+                ImGui::PopID();
             }
+            if (!any)
+                ImGui::TextDisabled("No office reachable by road matches.");
             ImGui::EndCombo();
         }
 
         // Routing rule: which of this office's letters each departure takes.
-        char exact_label[128];
-        if (dst_ok)
-            std::snprintf(exact_label, sizeof(exact_label),
-                          "Only letters addressed to %s", offices[add_dst].name.c_str());
+        FormLabel("Picks up");
+        const char* rule_names[] = {"Destination", "Postal prefixes", "All mail"};
+        for (int r = 0; r < 3; ++r) {
+            if (r > 0)
+                ImGui::SameLine(0.0f, 2.0f);
+            if (theme::SegmentedButton(rule_names[r], add_rule_type == r))
+                add_rule_type = r;
+        }
+        char rule_help[160];
+        if (add_rule_type == 0)
+            std::snprintf(rule_help, sizeof(rule_help), "Only letters addressed to %s.",
+                          dst_ok ? offices[add_dst].name.c_str() : "the destination");
+        else if (add_rule_type == 1)
+            std::snprintf(rule_help, sizeof(rule_help), "Letters addressed to any of these postal-code prefixes.");
         else
-            std::snprintf(exact_label, sizeof(exact_label),
-                          "Only letters addressed to the destination");
-        ImGui::RadioButton(exact_label, &add_rule_type, 0);
-        ImGui::RadioButton("Letters addressed to any of these postal-code prefixes", &add_rule_type, 1);
-        ImGui::RadioButton("All letters (the rest forward onward from the destination)",
-                           &add_rule_type, 2);
-
-        bool prefix_ok = true;
+            std::snprintf(rule_help, sizeof(rule_help), "Every letter; the rest forward onward from the destination.");
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("%s", rule_help);
+        ImGui::PopTextWrapPos();
         if (add_rule_type == 1) {
-            EditPrefixList("##add_prefixes", add_prefixes, offices, 300.0f);
+            EditPrefixList("##add_prefixes", add_prefixes, offices, std::min(300.0f, ImGui::GetContentRegionAvail().x));
             prefix_ok = RoutingRule{RoutingRuleType::PostalPrefix, add_prefixes}.is_well_formed();
             if (!prefix_ok)
                 ImGui::TextColored(kColorErrorText, "Every prefix must be non-empty and listed once.");
         }
 
-        // Frequency and offset are entered as 24-hour HH:MM and converted to
-        // ticks right away — the World only ever sees ticks. Defaults spell
-        // out the canonical example: every 3 hours starting at 00:30.
-        static int frequency_hhmm[2] = {3, 0};
-        static int start_hhmm[2] = {0, 30};
-        ImGui::InputInt2("Every (hh:mm)", frequency_hhmm);
-        ImGui::InputInt2("Starting at (hh:mm)", start_hhmm);
-        frequency_hhmm[0] = std::clamp(frequency_hhmm[0], 0, 24);
-        frequency_hhmm[1] = std::clamp(frequency_hhmm[1], 0, 59);
-        start_hhmm[0] = std::clamp(start_hhmm[0], 0, 23);
-        start_hhmm[1] = std::clamp(start_hhmm[1], 0, 59);
-        const Tick period = std::clamp(hours_minutes_to_ticks(frequency_hhmm[0], frequency_hhmm[1]),
-                                       kMinSchedulePeriod, kTicksPerDay);
-        const Tick start_offset = hours_minutes_to_ticks(start_hhmm[0], start_hhmm[1]);
+        FormLabel("Every");
+        if (EditHoursMinutes("add_every", add_period, 24))
+            add_period = std::clamp(add_period, kMinSchedulePeriod, kTicksPerDay);
+        ImGui::SameLine();
+        ImGui::TextDisabled("hh:mm");
 
-        // Creating a schedule is free; each truck is paid for as it departs.
-        ImGui::TextDisabled("Each truck costs $%d when it departs and carries up to %zu letters.",
-                            kTruckDepartureCost, kTruckCapacity);
+        FormLabel("Starting at");
+        EditHoursMinutes("add_start", add_start, 23);
+        ImGui::SameLine();
+        ImGui::TextDisabled("hh:mm");
 
-        // The fully configured rule, used for the live match count, the
-        // duplicate check and the World call.
-        RoutingRule rule;
-        if (add_rule_type == 1) {
-            rule.type = RoutingRuleType::PostalPrefix;
-            rule.prefixes = add_prefixes;
-        } else if (add_rule_type == 2) {
-            rule.type = RoutingRuleType::AllLetters;
-        }
-
-        // Live feedback: how much of the current buffer this rule would load.
-        if (dst_ok && prefix_ok) {
-            std::size_t matched = 0;
-            for (const Letter& letter : office.outbound_letters)
-                if (rule.matches(letter.dst, offices[letter.dst].postal_code, add_dst))
-                    ++matched;
-            ImGui::TextDisabled("This rule currently matches %zu of %zu outbound letters.",
-                                matched, office.outbound_letters.size());
-        }
-
-        const bool duplicate = dst_ok && std::any_of(
-            office.outbound_schedules.begin(), office.outbound_schedules.end(),
-            [&](const TruckSchedule& s) { return s.dst == add_dst && s.rule == rule; });
-
-        ImGui::BeginDisabled(!dst_ok || !prefix_ok || duplicate);
-        if (ImGui::Button("Add schedule"))
-            world.add_schedule(selected, add_dst, period, start_offset, rule);
-        ImGui::EndDisabled();
-        if (dst_ok && duplicate)
-            ImGui::TextColored(kColorErrorText,
-                               "An identical schedule already exists.");
+        ImGui::EndTable();
     }
 
+    // The fully configured rule, used for the live match count, the
+    // duplicate check and the World call.
+    RoutingRule rule;
+    if (add_rule_type == 1) {
+        rule.type = RoutingRuleType::PostalPrefix;
+        rule.prefixes = add_prefixes;
+    } else if (add_rule_type == 2) {
+        rule.type = RoutingRuleType::AllLetters;
+    }
+
+    // Live feedback: how much of the current buffer this rule would load.
+    // Creating a schedule is free; each truck is paid for as it departs.
+    ImGui::Spacing();
+    if (dst_ok && prefix_ok) {
+        std::size_t matched = 0;
+        for (const Letter& letter : office.outbound_letters)
+            if (rule.matches(letter.dst, offices[letter.dst].postal_code, add_dst))
+                ++matched;
+        ImGui::TextDisabled("Matches %zu of %zu waiting letters right now.", matched, office.outbound_letters.size());
+    }
+    ImGui::TextDisabled("Each truck costs $%d when it departs and carries up to %zu letters.",
+                        kTruckDepartureCost, kTruckCapacity);
+
+    const bool duplicate = dst_ok && std::any_of(
+        office.outbound_schedules.begin(), office.outbound_schedules.end(),
+        [&](const TruckSchedule& s) { return s.dst == add_dst && s.rule == rule; });
+
+    ImGui::BeginDisabled(!dst_ok || !prefix_ok || duplicate);
+    if (theme::PrimaryButton("Add schedule"))
+        world.add_schedule(selected, add_dst, add_period, add_start, rule);
+    ImGui::EndDisabled();
+    if (dst_ok && duplicate) {
+        ImGui::SameLine();
+        ImGui::TextColored(kColorErrorText, "An identical schedule already exists.");
+    }
+}
+
+// A post office: header, outbound letters, statistics and schedule editing.
+static void DrawOfficePanel(World& world, PostOfficeId selected) {
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    const PostOffice& office = offices[selected];
+
+    DrawOfficeHeader(offices, selected);
+
+    // An unbuilt office has no letters or schedules yet: offer to build it.
+    if (!office.built) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::Text("Once built, this office takes in about %zu letters per day and holds up to %zu "
+                    "outbound letters.", office.letters_per_day, office.max_outbound_letters);
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        const bool affordable = world.get_money() >= office.build_cost;
+        ImGui::BeginDisabled(!affordable);
+        char build_label[64];
+        std::snprintf(build_label, sizeof(build_label), "Build post office  -  $%d", office.build_cost);
+        if (theme::PrimaryButton(build_label, ImVec2(-FLT_MIN, ImGui::GetFrameHeight() * 1.3f)))
+            world.build_office(selected);
+        ImGui::EndDisabled();
+        if (!affordable)
+            ImGui::TextColored(kColorErrorText, "You only have $%d.", world.get_money());
+    } else {
+        DrawCapacityBar(office);
+        ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
+            DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
+
+        if (ImGui::CollapsingHeader("Statistics"))
+            ui::DrawOfficeStats(world, selected);
+
+        if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
+            DrawScheduleTable(world, selected);
+            DrawAddScheduleForm(world, selected);
+        }
+    }
+
+    // Postal code, editable. InputText needs a mutable buffer, so keep one
+    // static buffer that is reloaded whenever the selection changes, and
+    // commit every keystroke to the World — the map label updates live.
+    if (ImGui::CollapsingHeader("Settings")) {
+        static char postal_buf[128];
+        static PostOfficeId postal_buf_owner = kNoPostOffice;
+        if (postal_buf_owner != selected) {
+            std::snprintf(postal_buf, sizeof(postal_buf), "%s", office.postal_code.c_str());
+            postal_buf_owner = selected;
+        }
+        if (ImGui::InputText("Postal code", postal_buf, sizeof(postal_buf)))
+            world.set_postal_code(selected, postal_buf);
+    }
 }
 
 // Road-building controls, shown under either panel.
 static void DrawRoadBuildSection(const World& world) {
     const std::vector<PostOffice>& offices = world.get_post_offices();
 
-    // ----- Build road -----
-    ImGui::SeparatorText("Build road");
+    theme::SectionHeading("Roads");
 
     if (g_road_build_state == RoadBuildState::Idle) {
-        if (ImGui::Button("Enter road-building mode")) {
+        if (ImGui::Button("Build a road...")) {
             g_road_build_state = RoadBuildState::SelectSource;
             g_road_builder = RoadBuilder{};
         }
-    } else {
-        ImGui::TextColored(kColorErrorText, "Road-building mode active");
-
-        if (g_road_builder.src != kNoPostOffice)
-            ImGui::Text("Source: %s", offices[g_road_builder.src].name.c_str());
-        else
-            ImGui::Text("Source: (click an office on the map)");
-
-        ImGui::Text("Vertices placed: %zu", g_road_builder.vertices.empty() ? 0
-                    : g_road_builder.vertices.size() - 1);  // exclude source office vertex
-
-        if (g_road_build_state == RoadBuildState::PlacingVertices) {
-            const double built_len = polyline_length(g_road_builder.vertices);
-            ImGui::TextDisabled("Path length: %.0f units", built_len);
-        }
-
-        if (ImGui::Button("Cancel road")) {
-            g_road_build_state = RoadBuildState::Idle;
-            g_road_builder = RoadBuilder{};
-        }
-        ImGui::TextDisabled("Right-click on the map or press Esc to cancel.");
+        ImGui::SameLine();
+        ImGui::TextDisabled("Click a road on the map to remove it.");
+        return;
     }
+
+    // Road-building mode: a warn-tinted banner walking through the steps.
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Rgb(214, 158, 46, 45));
+    ImGui::BeginChild("road_banner", ImVec2(-FLT_MIN, 0.0f),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushFont(nullptr, theme::kFontSmall);
+    ImGui::TextColored(theme::kWarnText, "ROAD-BUILDING MODE");
+    ImGui::PopFont();
+
+    if (g_road_build_state == RoadBuildState::SelectSource) {
+        ImGui::TextUnformatted("1. Click the office the road starts from.");
+    } else {
+        ImGui::Text("2. From %s: click to place bends, then click the office it ends at.",
+                    g_road_builder.src != kNoPostOffice ? offices[g_road_builder.src].name.c_str() : "?");
+        const std::size_t bends = g_road_builder.vertices.empty() ? 0
+                                : g_road_builder.vertices.size() - 1;  // exclude source office vertex
+        ImGui::TextDisabled("%zu bends placed, %.0f units so far.", bends,
+                            polyline_length(g_road_builder.vertices));
+    }
+
+    if (ImGui::Button("Cancel  (Esc)")) {
+        g_road_build_state = RoadBuildState::Idle;
+        g_road_builder = RoadBuilder{};
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("or right-click the map");
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
 }
 
 void DrawInspector(World& world) {
@@ -1684,13 +1984,17 @@ void DrawInspector(World& world) {
 
     // Pinned into the left dock node: re-docked every frame, and its node
     // can't be dragged out, docked over, or undocked via the window menu.
+    // The lone tab is hidden too: the panel draws its own header.
     ImGuiWindowClass inspector_class;
     inspector_class.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoUndocking |
                                                (int)ImGuiDockNodeFlags_NoWindowMenuButton |
-                                               (int)ImGuiDockNodeFlags_NoDockingOverMe;
+                                               (int)ImGuiDockNodeFlags_NoDockingOverMe |
+                                               (int)ImGuiDockNodeFlags_AutoHideTabBar;
     ImGui::SetNextWindowClass(&inspector_class);
     ImGui::SetNextWindowDockID(g_inspector_dock_id, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
     ImGui::Begin(truck != nullptr ? "Truck###Inspector" : "Post office###Inspector");
+    ImGui::PopStyleVar();
     if (truck != nullptr)
         DrawTruckPanel(world, *truck);
     else

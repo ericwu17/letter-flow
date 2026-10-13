@@ -23,7 +23,8 @@ void DrawWorld(World& world);
 // from the display size each frame, so it survives window resizes.
 void DrawTransportBar(World& world);
 
-// Status window: money and delivery stats.
+// Status card pinned to the top-right of the map: money, delivery counts and
+// the statistics button. Also toggles the ImGui / ImPlot demo windows (F1 / F2).
 void DrawHUD(const World& world);
 
 // Inspector for the current selection, docked on the left: for a post
