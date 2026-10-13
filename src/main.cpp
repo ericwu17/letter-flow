@@ -23,6 +23,7 @@
 #include "app_icon.h"
 #include "game_types.h"
 #include "save_library.h"
+#include "tutorial.h"
 #include "world.h"
 #include "ui.h"
 #include "ui_theme.h"
@@ -164,9 +165,12 @@ int main(int, char**)
     // Our state: the whole game lives here once the player launches a save
     // from the menu (empty until then). The UI layer reads/mutates it, and
     // the frame loop below steps it forward at a fixed tick rate. Quitting
-    // writes it back into the save it came from.
+    // writes it back into the save it came from. The tutorial runs in a world
+    // of its own with no save behind it (save_id empty): it is never written
+    // anywhere, and leaving it drops everything and returns to the menu.
     std::optional<World> world;
-    SaveId save_id = 0;
+    std::optional<SaveId> save_id;
+    std::optional<Tutorial> tutorial;
     float tick_accumulator = 0.0f;
     const ImVec4 clear_color = ui::theme::kMap;  // the map's parchment background
 
@@ -204,10 +208,19 @@ int main(int, char**)
             DrawHUD(*world);
             DrawInspector(*world);
             DrawStatsWindow(*world);
-        } else if (const std::optional<SaveId> launched = DrawMainMenu(library, world)) {
-            // 2-3. No game yet: the main menu, until the player launches a save.
-            save_id = *launched;
-            printf("Loaded save %u\n", static_cast<unsigned>(save_id));
+            if (tutorial && DrawTutorial(*tutorial, *world)) {
+                world.reset();
+                tutorial.reset();
+                tick_accumulator = 0.0f;
+            }
+        } else if (const std::optional<MenuLaunch> launched = DrawMainMenu(library, world)) {
+            // 2-3. No game yet: the main menu, until the player launches a
+            // save or the tutorial.
+            save_id = launched->save;
+            if (save_id)
+                printf("Loaded save %u\n", static_cast<unsigned>(*save_id));
+            else
+                tutorial.emplace();
         }
 
         // 4. Rendering
@@ -222,9 +235,10 @@ int main(int, char**)
     }
 
     // Autosave on quit into the save that was launched, so the next launch
-    // can continue it. Quitting from the menu has nothing to save.
-    if (world) {
-        if (library.store(save_id, *world))
+    // can continue it. Quitting from the menu or the tutorial has nothing to
+    // save.
+    if (world && save_id) {
+        if (library.store(*save_id, *world))
             printf("Saved game to %ssaves.json\n", pref_dir.c_str());
         else
             printf("Warning: failed to save game to %ssaves.json\n", pref_dir.c_str());

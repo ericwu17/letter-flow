@@ -57,8 +57,8 @@ LIBS  = -lmingw32 $(shell sdl2-config --libs) -lgdi32 -lopengl32 -limm32
 
 # Simulation layer: pure logic, no SDL/imgui/OpenGL — the headless tests link
 # against exactly these objects. Keep presentation code out of this list.
-SIM_SOURCES  = src/road.cpp src/stats.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/serialization.cpp src/save_library.cpp
-APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/ui_menu.cpp src/ui_stats.cpp src/ui_theme.cpp src/main.cpp src/app_icon.cpp
+SIM_SOURCES  = src/road.cpp src/stats.cpp src/truck.cpp src/world.cpp src/scenario.cpp src/tutorial.cpp src/serialization.cpp src/save_library.cpp
+APP_SOURCES  = $(SIM_SOURCES) src/ui.cpp src/ui_menu.cpp src/ui_stats.cpp src/ui_tutorial.cpp src/ui_theme.cpp src/main.cpp src/app_icon.cpp
 # One headless test binary per tests/test_*.cpp file (see the test rules below).
 TEST_SOURCES := $(wildcard tests/*.cpp)
 TEST_EXES    := $(patsubst tests/%.cpp,$(BUILD_DIR)/%,$(TEST_SOURCES))

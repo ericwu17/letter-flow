@@ -2,12 +2,13 @@
 // page and the save list (new, rename, copy, delete, play). Drawn as one
 // fullscreen window over the map's parchment clear color, with each screen
 // on a paper card. Once a save is launched, main.cpp never calls
-// DrawMainMenu again.
+// DrawMainMenu again; leaving the tutorial comes back here.
 #include "ui.h"
 #include "ui_internal.h"
 #include "ui_theme.h"
 
 #include "save_library.h"
+#include "scenario.h"
 #include "world.h"
 #include "imgui.h"
 
@@ -102,7 +103,8 @@ void EndCard() {
     ImGui::PopStyleColor();
 }
 
-void DrawMainScreen() {
+// Draws the title card. Returns true when the player starts the tutorial.
+bool DrawMainScreen() {
     const float em = ImGui::GetFontSize();
     BeginCard("main_card", em * 18.0f, ImGui::GetContentRegionAvail().y * 0.28f, 0.0f);
     ImGui::Dummy(ImVec2(0.0f, em * 0.5f));
@@ -120,10 +122,12 @@ void DrawMainScreen() {
         g_error.clear();
         g_screen = Screen::Saves;
     }
+    const bool tutorial = ImGui::Button("Tutorial", ImVec2(-FLT_MIN, 0.0f));
     if (ImGui::Button("Credits", ImVec2(-FLT_MIN, 0.0f)))
         g_screen = Screen::Credits;
     ImGui::Dummy(ImVec2(0.0f, em * 0.25f));
     EndCard();
+    return tutorial;
 }
 
 void DrawCreditsScreen() {
@@ -329,7 +333,7 @@ std::optional<SaveId> DrawSavesScreen(SaveLibrary& library) {
 
 }  // namespace
 
-std::optional<SaveId> DrawMainMenu(SaveLibrary& library, std::optional<World>& game) {
+std::optional<MenuLaunch> DrawMainMenu(SaveLibrary& library, std::optional<World>& game) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -339,9 +343,10 @@ std::optional<SaveId> DrawMainMenu(SaveLibrary& library, std::optional<World>& g
     ImGui::Begin("##main_menu", nullptr, flags);
 
     std::optional<SaveId> play;
+    bool tutorial = false;
     switch (g_screen) {
     case Screen::Main:
-        DrawMainScreen();
+        tutorial = DrawMainScreen();
         break;
     case Screen::Credits:
         DrawCreditsScreen();
@@ -352,6 +357,11 @@ std::optional<SaveId> DrawMainMenu(SaveLibrary& library, std::optional<World>& g
     }
     ImGui::End();
 
+    if (tutorial) {
+        game = create_tutorial_world();
+        ResetGameUi();
+        return MenuLaunch{};
+    }
     if (!play)
         return std::nullopt;
     std::string name;
@@ -364,5 +374,6 @@ std::optional<SaveId> DrawMainMenu(SaveLibrary& library, std::optional<World>& g
         return std::nullopt;
     }
     game = std::move(world);
-    return play;
+    ResetGameUi();
+    return MenuLaunch{play};
 }

@@ -53,6 +53,15 @@ struct CameraState {
 std::weak_ptr<const Truck> g_selected_truck;
 PostOfficeId g_selected_office = kNoPostOffice;
 CameraState g_camera;
+
+// The office whose inspector forms are loaded: the add-schedule form, the
+// schedule table's edit error and the postal-code buffer each reload their
+// function-local state whenever the inspected office differs from theirs.
+// Kept here so ResetGameUi can make them reload in a new game.
+PostOfficeId g_add_form_owner = kNoPostOffice;
+PostOfficeId g_edit_error_owner = kNoPostOffice;
+PostOfficeId g_postal_buf_owner = kNoPostOffice;
+
 constexpr float kZoomStep = 1.2f;
 constexpr float kPanStep = 5.0f;
 constexpr float kZoomMin = 0.5f;
@@ -391,17 +400,12 @@ ImGuiID MainDockSpaceId() { return ImGui::GetID("MainDockSpace"); }
 ImGuiID g_inspector_dock_id = 0;
 
 TransportLayout ComputeTransportLayout(const World& world) {
-    ImGuiIO& io = ImGui::GetIO();
     TransportLayout l;
 
-    // Anchor the bar to the dockspace's central node — the visible map area,
-    // which excludes the docked inspector panel
-    ImVec2 area_min = {0.0f, 0.0f};
-    ImVec2 area_size = io.DisplaySize;
-    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(MainDockSpaceId())) {
-        area_min = central->Pos;
-        area_size = central->Size;
-    }
+    // Anchor the bar to the visible map area, which excludes the docked
+    // inspector panel
+    ImVec2 area_min, area_size;
+    ui::GetMapArea(area_min, area_size);
 
     const float fh = ImGui::GetFrameHeight();  // follows font size / DPI scaling
     const float button = fh;
@@ -464,6 +468,15 @@ TransportLayout ComputeTransportLayout(const World& world) {
 }
 
 }  // namespace
+
+void ui::GetMapArea(ImVec2& min, ImVec2& size) {
+    min = {0.0f, 0.0f};
+    size = ImGui::GetIO().DisplaySize;
+    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(MainDockSpaceId())) {
+        min = central->Pos;
+        size = central->Size;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Dockspace: a fullscreen docking area over the main viewport.
@@ -1033,6 +1046,7 @@ void DrawTransportBar(World& world) {
 
     // Panel.
     theme::DrawShadowedPanel(draw, l.bar_min, l.bar_max, rounding * 1.5f);
+    ui::NoteAnchor(TutorialAnchor::TransportBar, l.bar_min, l.bar_max);
 
     // Background drawing has no widget behaviour, so the buttons are plain
     // rects hit-tested against the mouse. WantCaptureMouse keeps clicks that
@@ -1157,12 +1171,8 @@ void DrawHUD(const World& world) {
     // central node), like the transport bar, so it follows window resizes
     // and the inspector's width. When the area is too narrow for both side
     // by side, the card drops below the bar.
-    ImVec2 area_min = {0.0f, 0.0f};
-    ImVec2 area_size = io.DisplaySize;
-    if (const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(MainDockSpaceId())) {
-        area_min = central->Pos;
-        area_size = central->Size;
-    }
+    ImVec2 area_min, area_size;
+    ui::GetMapArea(area_min, area_size);
     const float margin = ImGui::GetFrameHeight() * 0.4f;
     const float right = area_min.x + area_size.x - margin;
     const TransportLayout bar = ComputeTransportLayout(world);
@@ -1210,6 +1220,7 @@ void DrawHUD(const World& world) {
     ImGui::Spacing();
     if (theme::PrimaryButton("Statistics  (P)", ImVec2(-FLT_MIN, 0.0f)))
         ui::ToggleStatsWindow();
+    ui::NoteItemAnchor(TutorialAnchor::StatsButton);
     ImGui::End();
 
     if (show_imgui_demo)
@@ -1503,10 +1514,9 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
     // Why the last edit was refused, shown under the table until the next
     // accepted edit or a change of office.
     static std::string edit_error;
-    static PostOfficeId edit_error_owner = kNoPostOffice;
-    if (edit_error_owner != selected) {
+    if (g_edit_error_owner != selected) {
         edit_error.clear();
-        edit_error_owner = selected;
+        g_edit_error_owner = selected;
     }
 
     if (office.outbound_schedules.empty()) {
@@ -1651,6 +1661,7 @@ static void DrawScheduleTable(World& world, PostOfficeId selected) {
         ImGui::EndTable();
     }
     ImGui::EndChild();
+    ui::NoteItemAnchor(TutorialAnchor::ScheduleTable);
 
     if (schedule_to_update.has_value()) {
         const auto& [index, s] = *schedule_to_update;
@@ -1736,13 +1747,12 @@ static void DrawAddScheduleForm(World& world, PostOfficeId selected) {
 
     // Add-route widget state. Statics are reset whenever the inspected
     // office changes (same pattern as the postal-code buffer).
-    static PostOfficeId add_owner = kNoPostOffice;
     static PostOfficeId add_dst = kNoPostOffice;
     static int add_rule_type = 0;  // 0 = exact dst, 1 = postal prefix, 2 = all letters
     static std::vector<std::string> add_prefixes = {""};
     static ImGuiTextFilter dst_filter;
-    if (add_owner != selected) {
-        add_owner = selected;
+    if (g_add_form_owner != selected) {
+        g_add_form_owner = selected;
         add_dst = kNoPostOffice;
         add_rule_type = 0;
         add_prefixes = {""};
@@ -1892,6 +1902,7 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
         std::snprintf(build_label, sizeof(build_label), "Build post office  -  $%d", office.build_cost);
         if (theme::PrimaryButton(build_label, ImVec2(-FLT_MIN, ImGui::GetFrameHeight() * 1.3f)))
             world.build_office(selected);
+        ui::NoteItemAnchor(TutorialAnchor::BuildOfficeButton);
         ImGui::EndDisabled();
         if (!affordable)
             ImGui::TextColored(kColorErrorText, "You only have $%d.", world.get_money());
@@ -1899,30 +1910,38 @@ static void DrawOfficePanel(World& world, PostOfficeId selected) {
         DrawCapacityBar(office);
         ImGui::Spacing();
 
+        ImGui::BeginGroup();  // header and table, as one tutorial anchor
         if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
             DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
+        ImGui::EndGroup();
+        ui::NoteItemAnchor(TutorialAnchor::OutboundLetters);
 
         if (ImGui::CollapsingHeader("Statistics"))
             ui::DrawOfficeStats(world, selected);
 
         if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
             DrawScheduleTable(world, selected);
+            ImGui::BeginGroup();  // the whole form, as one tutorial anchor
             DrawAddScheduleForm(world, selected);
+            ImGui::EndGroup();
+            ui::NoteItemAnchor(TutorialAnchor::AddScheduleForm);
         }
     }
 
     // Postal code, editable. InputText needs a mutable buffer, so keep one
     // static buffer that is reloaded whenever the selection changes, and
     // commit every keystroke to the World — the map label updates live.
-    if (ImGui::CollapsingHeader("Settings")) {
+    const bool settings_open = ImGui::CollapsingHeader("Settings");
+    ui::NoteItemAnchor(TutorialAnchor::SettingsHeader);
+    if (settings_open) {
         static char postal_buf[128];
-        static PostOfficeId postal_buf_owner = kNoPostOffice;
-        if (postal_buf_owner != selected) {
+        if (g_postal_buf_owner != selected) {
             std::snprintf(postal_buf, sizeof(postal_buf), "%s", office.postal_code.c_str());
-            postal_buf_owner = selected;
+            g_postal_buf_owner = selected;
         }
         if (ImGui::InputText("Postal code", postal_buf, sizeof(postal_buf)))
             world.set_postal_code(selected, postal_buf);
+        ui::NoteItemAnchor(TutorialAnchor::PostalCodeInput);
     }
 }
 
@@ -1937,6 +1956,7 @@ static void DrawRoadBuildSection(const World& world) {
             g_road_build_state = RoadBuildState::SelectSource;
             g_road_builder = RoadBuilder{};
         }
+        ui::NoteItemAnchor(TutorialAnchor::BuildRoadButton);
         ImGui::SameLine();
         ImGui::TextDisabled("Click a road on the map to remove it.");
         return;
@@ -2001,4 +2021,33 @@ void DrawInspector(World& world) {
         DrawOfficePanel(world, office);
     DrawRoadBuildSection(world);
     ImGui::End();
+}
+
+// ---------------------------------------------------------------------------
+// State queries for the tutorial, and the reset between games
+// ---------------------------------------------------------------------------
+
+ImVec2 ui::OfficeScreenPos(PostOfficeId office, const World& world) {
+    return WorldToScreen(ComputeViewTransform(), world.get_post_offices()[office].pos);
+}
+
+PostOfficeId ui::SelectedOffice() { return g_selected_office; }
+bool ui::TruckSelected() { return !g_selected_truck.expired(); }
+bool ui::BuildingRoad() { return g_road_build_state != RoadBuildState::Idle; }
+
+void ResetGameUi() {
+    g_selected_truck.reset();
+    g_selected_office = kNoPostOffice;
+    g_camera = CameraState{};
+    g_add_form_owner = kNoPostOffice;
+    g_edit_error_owner = kNoPostOffice;
+    g_postal_buf_owner = kNoPostOffice;
+    g_road_build_state = RoadBuildState::Idle;
+    g_road_builder = RoadBuilder{};
+    g_road_menu_road.reset();
+    g_road_menu_open_requested = false;
+    g_road_menu_confirm = false;
+    g_money_popups.clear();
+    g_highlight_letter.reset();
+    ui::ResetStatsUi();
 }

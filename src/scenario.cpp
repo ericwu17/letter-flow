@@ -5,6 +5,7 @@
 #include "entities.h"
 #include "game_types.h"
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 
@@ -83,5 +84,39 @@ World create_default_world() {
                          class_max_outbound[def.office_class],
                          class_build_cost[def.office_class]);
 
+    return world;
+}
+
+World create_tutorial_world() {
+    World world;
+
+    struct OfficeDef {
+        PostOfficeId id;  // the tutorial_map id add_office must hand out
+        const char* name;
+        const char* postal_code;
+        Position pos;
+        std::size_t letters_per_day;
+        int build_cost;
+    };
+    // Several times the starter map's mail rates, so letters show up within
+    // seconds of building an office.
+    const OfficeDef defs[] = {
+        {tutorial_map::kCentral,   "Central",   "CITY/Central",    {1000, 600}, 120, 2000},
+        {tutorial_map::kAshford,   "Ashford",   "NORTH/Ashford",   { 750, 350},  80, 1000},
+        {tutorial_map::kBrookside, "Brookside", "NORTH/Brookside", {1250, 350},  80, 1000},
+        {tutorial_map::kDunmore,   "Dunmore",   "SOUTH/Dunmore",   {1000, 900},  80, 1000},
+        {tutorial_map::kElmwood,   "Elmwood",   "ELM-01",          {1300, 900},  80, 1000},
+    };
+    for (const OfficeDef& def : defs) {
+        [[maybe_unused]] const PostOfficeId id =
+            world.add_office(def.name, def.postal_code, def.pos, def.letters_per_day,
+                             /*max_outbound_letters=*/40, def.build_cost);
+        assert(id == def.id);
+    }
+
+    // Every office and road the tutorial asks for costs about $12,500; the
+    // rest leaves room for mistakes and truck departures.
+    world.set_money(20000);
+    world.set_paused(true);  // one of the first steps is pressing play
     return world;
 }

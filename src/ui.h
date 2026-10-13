@@ -5,16 +5,29 @@
 #pragma once
 
 #include "save_library.h"  // SaveId, SaveSummary
+#include "tutorial.h"
 #include "world.h"
 
 #include <optional>
+
+// What the main menu launched: a save, or (no save) the tutorial, which is
+// never stored anywhere.
+struct MenuLaunch {
+    std::optional<SaveId> save;
+};
 
 // The screens before a game starts (ui_menu.cpp): the main menu, the credits
 // page and the save list, drawn fullscreen. The save list creates, renames,
 // copies and deletes saves in `library`. When the player launches one, its
 // world is loaded into `game` and its id returned; a save that fails to load
-// stays on the list with an error instead.
-std::optional<SaveId> DrawMainMenu(SaveLibrary& library, std::optional<World>& game);
+// stays on the list with an error instead. The Tutorial button loads the
+// tutorial world (create_tutorial_world) into `game` instead.
+std::optional<MenuLaunch> DrawMainMenu(SaveLibrary& library, std::optional<World>& game);
+
+// Forgets the UI state that belongs to one game (selection, camera, road
+// building, form inputs, the statistics window), so the next game starts
+// clean. DrawMainMenu calls it whenever it launches a game.
+void ResetGameUi();
 
 // Fullscreen dockspace over the main viewport, hosting the dockable windows.
 // The central node is passthrough (transparent and click-through) so the map
@@ -47,3 +60,9 @@ void DrawInspector(World& world);
 // per-office and per-schedule charts over a chosen time range, and the
 // journeys of recently delivered letters.
 void DrawStatsWindow(const World& world);
+
+// The tutorial's cards (ui_tutorial.cpp), drawn over everything else: the
+// current step's text with Next / Skip / Exit, and a pulsing spotlight on
+// what it asks the player to use. Advances `tutorial` from the World and the
+// UI's state. Returns true when the player leaves the tutorial.
+bool DrawTutorial(Tutorial& tutorial, const World& world);

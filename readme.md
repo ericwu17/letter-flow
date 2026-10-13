@@ -72,7 +72,12 @@ mingw32-make && ./letter-flow.exe
 - **Main menu and saves**: the game opens on a main menu. *Play* lists
   your saves (most recently played first): start a new game, or rename,
   copy, delete or play an existing save (double-clicking a row plays it
-  too). *Credits* is a placeholder page for now.
+  too). *Tutorial* opens a small five-town practice map, where pop-up
+  cards walk you through building offices and roads, creating and editing
+  schedules, hub-and-spoke forwarding and postal-code routing. Most cards
+  continue once you've done what they ask; any can be skipped. The tutorial
+  is never saved: leaving it, or quitting during it, discards it. *Credits*
+  is a placeholder page for now.
 - **Saving**: every save lives in one JSON file, `saves.json`, in SDL's
   per-user app-data directory (`SDL_GetPrefPath`):
   `~/Library/Application Support/LetterFlow/LetterFlow/saves.json` on macOS,
@@ -99,15 +104,17 @@ src/entities.h        data entities: Letter (+ trail), RoutingRule, TruckSchedul
 src/stats.*           StatSeries: multi-resolution ring buffers behind every statistic
 src/truck.*           Truck: deterministic point-to-point motion
 src/world.*           World: owns all state, advances the sim in fixed 60 Hz ticks
-src/scenario.*        create_default_world() starter map
+src/scenario.*        create_default_world() starter map, create_tutorial_world() practice map
+src/tutorial.*        Tutorial: the tutorial's steps, their completion checks and progress
 src/world_json.h      WorldJson: World <-> JSON, for the persistence code only (keeps nlohmann out of world.h)
 src/serialization.cpp JSON conversion of the whole simulation state: implements WorldJson
 src/save_library.*    SaveLibrary: every save in one JSON file (create, copy, rename, delete, load, store)
 src/ui.*              Dear ImGui presentation layer (ui*.cpp are the only places ImGui exists)
 src/ui_menu.cpp       main menu, credits page and save list (the screens before a game starts)
+src/ui_tutorial.cpp   tutorial cards and spotlights
 src/ui_stats.cpp      statistics window, stat widgets and letter-trail tooltips (ImPlot)
 src/ui_theme.*        the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets
-src/ui_internal.h     helpers shared between ui.cpp and ui_stats.cpp
+src/ui_internal.h     helpers shared between the ui*.cpp files
 src/main.cpp          SDL2 + OpenGL3 bootstrap and frame loop (all platforms)
 src/app_icon.*        window/Dock icon from assets/logo.png (embedded at build time)
 src/platform_macos.*  macOS-only startup tweaks (the sole Objective-C++ file)
@@ -117,6 +124,7 @@ tests/test_serialization.cpp  headless World <-> JSON round-trip tests (make tes
 tests/test_save_library.cpp   headless saves-file tests: slots, corruption, legacy import (make test)
 tests/test_simulation.cpp     headless simulation-rule tests (make test)
 tests/test_stats.cpp          headless StatSeries ring-buffer tests (make test)
+tests/test_tutorial.cpp       headless tutorial play-through on the practice map (make test)
 implot/                       ImPlot v1.0 (git submodule), charts
 third_party/nlohmann/json.hpp vendored single-header JSON library (only
                               the persistence code includes it, via world_json.h)

@@ -1003,6 +1003,15 @@ namespace ui {
 
 void ToggleStatsWindow() { g_show_stats = !g_show_stats; }
 
+bool StatsWindowOpen() { return g_show_stats; }
+
+// The time range is a viewing preference and carries over between games.
+void ResetStatsUi() {
+    g_show_stats = false;
+    g_stats_office = kNoPostOffice;
+    g_stats_schedule = kNoSchedule;
+}
+
 void DrawOfficeStats(const World& world, PostOfficeId id) {
     const PostOffice& office = world.get_post_offices()[id];
     const OfficeStats& s = office.stats;
