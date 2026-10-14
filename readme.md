@@ -70,6 +70,10 @@ mingw32-make && ./letter-flow.exe
   highlights its route, its truck and its destination.
 - **Mouse wheel / WASD**: zoom and pan the map
 - **Transport bar**: play/pause, x4 fast-forward, day/time readout
+- **Pause menu (Esc, or the HUD's Menu button)**: Resume / Save / Main menu /
+  Quit, over the frozen game; Esc again resumes. When Esc has something else
+  to cancel (road building, an open popup, a text field), it does that first.
+  In the tutorial, Save is disabled.
 - **F1 / F2**: Dear ImGui / ImPlot demo windows (widget reference while developing)
 - **Main menu and saves**: the game opens on a main menu. *Play* lists
   your saves (most recently played first): start a new game, or rename,
@@ -89,8 +93,9 @@ mingw32-make && ./letter-flow.exe
   digits turned into `_` (`Bob's Game #2` → `bob_s_game_2.json`); the real
   name is kept inside the file. Saves whose names give the same filename are
   numbered (`game_1.json`, `game_1-2.json`, ...), and renaming a save moves
-  it to a file named after its new name. Quitting during a game saves it
-  back into the save you launched. A file in the folder that can't be read
+  it to a file named after its new name. A game is saved back into the save
+  you launched at the start of every game day, when you return to the main
+  menu, when you quit, and whenever you pick Save in the pause menu. A file in the folder that can't be read
   is skipped (and left as it is), and the menu says so.
   The single `saves.json` (and the older `save.json`) of earlier versions is
   no longer read.
@@ -130,7 +135,7 @@ src/ui/                  Dear ImGui presentation layer (the only place ImGui exi
   ui_map.cpp             the map: camera, offices, roads, trucks, selection, road building
   ui_hud.cpp             transport bar (play/pause, speed, clock) and the HUD card
   ui_inspector.cpp       inspector: office panel (letters, schedules, new-schedule form), truck panel
-  ui_menu.cpp            main menu, credits page and save list (the screens before a game starts)
+  ui_menu.cpp            main menu, credits page and save list (the screens before a game starts), pause menu
   ui_tutorial.cpp        tutorial cards and spotlights
   ui_stats.cpp           statistics window, stat widgets and letter-trail tooltips (ImPlot)
   ui_theme.*             the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets

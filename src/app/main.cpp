@@ -66,6 +66,18 @@ static void step_world(World& world, float delta_time, float& tick_accumulator)
     }
 }
 
+// Writes the game back into the save it was launched from. `why` (quit,
+// new day, ...) only goes into the log line.
+static bool save_game(SaveLibrary& library, SaveId id, const World& world, const std::string& dir, const char* why)
+{
+    const bool saved = library.store(id, world);
+    if (saved)
+        printf("Saved game (%s) to %s\n", why, dir.c_str());
+    else
+        printf("Warning: failed to save game (%s) to %s\n", why, dir.c_str());
+    return saved;
+}
+
 // The game takes no command-line arguments, but main keeps this signature:
 // on Windows SDL_main.h renames main to SDL_main(int, char*[]), which
 // SDL2main calls, so a parameterless main would not build there.
@@ -164,15 +176,27 @@ int main(int, char**)
 
     // Our state: the whole game lives here once the player launches a save
     // from the menu (empty until then). The UI layer reads/mutates it, and
-    // the frame loop below steps it forward at a fixed tick rate. Quitting
-    // writes it back into the save it came from. The tutorial runs in a world
-    // of its own with no save behind it (save_id empty): it is never written
-    // anywhere, and leaving it drops everything and returns to the menu.
+    // the frame loop below steps it forward at a fixed tick rate (frozen
+    // while the pause menu is open). It is written back into the save it came
+    // from at the start of every game day, when the player returns to the
+    // main menu, and on quit. The tutorial runs in a world of its own with no
+    // save behind it (save_id empty): it is never written anywhere, and
+    // leaving it drops everything and returns to the menu.
     std::optional<World> world;
     std::optional<SaveId> save_id;
     std::optional<Tutorial> tutorial;
+    Tick autosaved_day = 0;  // the game day last autosaved (or launched on)
     float tick_accumulator = 0.0f;
     const ImVec4 clear_color = ui::theme::kMap;  // the map's parchment background
+
+    // Back to the main menu: the game (or the tutorial) is dropped. Callers
+    // save first.
+    auto leave_game = [&]() {
+        world.reset();
+        save_id.reset();
+        tutorial.reset();
+        tick_accumulator = 0.0f;
+    };
 
     // Main loop
     bool done = false;
@@ -195,28 +219,49 @@ int main(int, char**)
         ImGui::NewFrame();
 
         if (world) {
-            // 2. Advance the simulation (fixed timestep, see step_world).
-            step_world(*world, io.DeltaTime, tick_accumulator);
+            // 2. Advance the simulation (fixed timestep, see step_world),
+            //    unless the pause menu is open, and autosave once each time
+            //    the clock enters a new day.
+            if (PauseMenuOpen())
+                tick_accumulator = 0.0f;
+            else
+                step_world(*world, io.DeltaTime, tick_accumulator);
+            const Tick day = world->get_tick() / kTicksPerDay;
+            if (save_id && day != autosaved_day) {
+                save_game(library, *save_id, *world, saves_dir, "new day");
+                autosaved_day = day;
+            }
 
             // 3. Build this frame's UI. Order matters: the dockspace hosts the
             //    windows, the map goes into the background draw list (under the
             //    windows), the transport bar is drawn on top of the map, then
-            //    the HUD/inspector windows.
+            //    the HUD/inspector windows, and the pause menu over it all.
             DrawDockspace();
             DrawWorld(*world);
             DrawTransportBar(*world);
             DrawHUD(*world);
             DrawInspector(*world);
             DrawStatsWindow(*world);
-            if (tutorial && DrawTutorial(*tutorial, *world)) {
-                world.reset();
-                tutorial.reset();
-                tick_accumulator = 0.0f;
+            const bool left_tutorial = tutorial && DrawTutorial(*tutorial, *world);
+            switch (DrawPauseMenu(*world, library, save_id)) {
+            case PauseAction::None:
+                if (left_tutorial)
+                    leave_game();
+                break;
+            case PauseAction::MainMenu:
+                if (save_id)
+                    save_game(library, *save_id, *world, saves_dir, "main menu");
+                leave_game();
+                break;
+            case PauseAction::Quit:
+                done = true;  // saved below, after the loop
+                break;
             }
         } else if (const std::optional<MenuLaunch> launched = DrawMainMenu(library, world)) {
             // 2-3. No game yet: the main menu, until the player launches a
             // save or the tutorial.
             save_id = launched->save;
+            autosaved_day = world->get_tick() / kTicksPerDay;
             if (save_id)
                 printf("Loaded save %u\n", static_cast<unsigned>(*save_id));
             else
@@ -234,15 +279,11 @@ int main(int, char**)
         SDL_GL_SwapWindow(window);
     }
 
-    // Autosave on quit into the save that was launched, so the next launch
-    // can continue it. Quitting from the menu or the tutorial has nothing to
-    // save.
-    if (world && save_id) {
-        if (library.store(*save_id, *world))
-            printf("Saved game to %s\n", saves_dir.c_str());
-        else
-            printf("Warning: failed to save game to %s\n", saves_dir.c_str());
-    }
+    // Autosave on quit (the window's close button or the pause menu's Quit)
+    // into the save that was launched, so the next launch can continue it.
+    // Quitting from the menu or the tutorial has nothing to save.
+    if (world && save_id)
+        save_game(library, *save_id, *world, saves_dir, "quit");
 
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();

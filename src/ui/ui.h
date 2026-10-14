@@ -24,6 +24,20 @@ struct MenuLaunch {
 // tutorial world (create_tutorial_world) into `game` instead.
 std::optional<MenuLaunch> DrawMainMenu(SaveLibrary& library, std::optional<World>& game);
 
+// What the player chose in the pause menu.
+enum class PauseAction { None, MainMenu, Quit };
+
+// The in-game pause menu (ui_menu.cpp): a modal over the game, opened with
+// Esc (unless Esc has something else to cancel, such as road building, an
+// open popup or a text field) or the HUD's Menu button, and closed with Esc
+// or Resume. Save stores `world` into `save` right away and says how that
+// went; it is disabled in the tutorial (no save). Main menu and Quit are
+// left to the caller, which autosaves before doing either.
+PauseAction DrawPauseMenu(const World& world, SaveLibrary& library, std::optional<SaveId> save);
+
+// Whether the pause menu is open; the game is frozen while it is.
+bool PauseMenuOpen();
+
 // Forgets the UI state that belongs to one game (selection, camera, road
 // building, form inputs, the statistics window), so the next game starts
 // clean. DrawMainMenu calls it whenever it launches a game.
@@ -47,7 +61,8 @@ void DrawWorld(World& world);
 void DrawTransportBar(World& world);
 
 // Status card pinned to the top-right of the map: money, delivery counts and
-// the statistics button. Also toggles the ImGui / ImPlot demo windows (F1 / F2).
+// the statistics and pause-menu buttons. Also toggles the ImGui / ImPlot demo
+// windows (F1 / F2).
 void DrawHUD(const World& world);
 
 // Inspector for the current selection, docked on the left: for a post

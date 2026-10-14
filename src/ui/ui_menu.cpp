@@ -1,8 +1,9 @@
-// ui_menu.cpp — the screens before a game starts: the main menu, the credits
-// page and the save list (new, rename, copy, delete, play). Drawn as one
-// fullscreen window over the map's parchment clear color, with each screen
-// on a paper card. Once a save is launched, main.cpp never calls
-// DrawMainMenu again; leaving the tutorial comes back here.
+// ui_menu.cpp — the menus: the screens before a game starts (the main menu,
+// the credits page and the save list: new, rename, copy, delete, play),
+// drawn as one fullscreen window over the map's parchment clear color with
+// each screen on a paper card, and the in-game pause menu. main.cpp calls
+// DrawMainMenu while no game is running: before the first launch, and after
+// the player leaves a game or the tutorial, which lands on the title card.
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
@@ -46,6 +47,12 @@ char g_name_buf[64] = "";
 bool g_delete_popup_requested = false;
 SaveId g_delete_target = 0;
 std::string g_delete_name;
+
+// Whether an Esc pressed this frame may open the pause menu. Decided at the
+// end of the previous frame, because Dear ImGui handles Esc inside NewFrame
+// (closing a popup, leaving a text field) and the map cancels road building
+// on it before DrawPauseMenu runs: by then whatever Esc cancelled is gone.
+bool g_esc_opens_menu = false;
 
 std::string Trimmed(const char* text) {
     std::string s = text;
@@ -357,6 +364,11 @@ std::optional<MenuLaunch> DrawMainMenu(SaveLibrary& library, std::optional<World
     }
     ImGui::End();
 
+    // Leaving the game comes back to the title card.
+    if (tutorial || play) {
+        g_screen = Screen::Main;
+        g_error.clear();
+    }
     if (tutorial) {
         game = create_tutorial_world();
         ResetGameUi();
@@ -370,6 +382,7 @@ std::optional<MenuLaunch> DrawMainMenu(SaveLibrary& library, std::optional<World
             name = save.name;
     std::optional<World> world = library.load(*play);
     if (!world) {
+        g_screen = Screen::Saves;
         g_error = "Couldn't load \"" + name + "\": the save is damaged or from an incompatible version.";
         return std::nullopt;
     }
@@ -377,3 +390,77 @@ std::optional<MenuLaunch> DrawMainMenu(SaveLibrary& library, std::optional<World
     ResetGameUi();
     return MenuLaunch{play};
 }
+
+PauseAction DrawPauseMenu(const World& world, SaveLibrary& library, std::optional<SaveId> save) {
+    ui::GameUiState& game = ui::g_game;
+    if (!game.pause_menu_open && g_esc_opens_menu && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        game.pause_menu_open = true;
+
+    PauseAction action = PauseAction::None;
+    if (game.pause_menu_open) {
+        // OpenPopup needs a current window, so the popup is hosted in an
+        // invisible, input-transparent one (like the tutorial's modal card).
+        ImGui::Begin("##pause_menu_host", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDocking |
+                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
+        if (!ImGui::IsPopupOpen("##pause_menu")) {
+            ImGui::OpenPopup("##pause_menu");
+            game.pause_menu_status.clear();
+        }
+
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 18.0f));
+        const bool open = ImGui::BeginPopupModal("##pause_menu", nullptr,
+                                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+                                                     ImGuiWindowFlags_AlwaysAutoResize |
+                                                     ImGuiWindowFlags_NoSavedSettings);
+        ImGui::PopStyleVar();
+        if (open) {
+            const float em = ImGui::GetFontSize();
+            const ImVec2 button_size(em * 14.0f, 0.0f);
+            theme::SectionHeading("Paused");
+
+            // The Esc that opened the menu must not close it again.
+            bool resume = theme::PrimaryButton("Resume", button_size);
+            if (!ImGui::IsWindowAppearing() && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+                resume = true;
+
+            ImGui::BeginDisabled(!save);
+            if (ImGui::Button("Save", button_size) && save) {
+                char when[64];
+                ui::FormatDayTime(world.get_tick(), when, sizeof(when));
+                game.pause_menu_status_failed = !library.store(*save, world);
+                game.pause_menu_status = game.pause_menu_status_failed
+                                             ? "Couldn't save: the save file could not be written."
+                                             : std::string("Saved (") + when + ")";
+            }
+            ImGui::EndDisabled();
+            if (ImGui::Button("Main menu", button_size))
+                action = PauseAction::MainMenu;
+            if (ImGui::Button("Quit", button_size))
+                action = PauseAction::Quit;
+
+            ImGui::Spacing();
+            ImGui::PushFont(nullptr, theme::kFontSmall);
+            if (!game.pause_menu_status.empty())
+                ImGui::TextColored(game.pause_menu_status_failed ? theme::kBad : theme::kGood, "%s",
+                                   game.pause_menu_status.c_str());
+
+            ImGui::PopFont();
+
+            if (resume || action != PauseAction::None) {
+                game.pause_menu_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::End();
+    }
+
+    g_esc_opens_menu = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::IsAnyItemActive() &&
+                       game.road_build_state == ui::RoadBuildState::Idle;
+    return action;
+}
+
+bool PauseMenuOpen() { return ui::g_game.pause_menu_open; }

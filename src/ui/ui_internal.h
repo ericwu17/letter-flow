@@ -104,6 +104,12 @@ struct GameUiState {
     bool stats_open = false;
     PostOfficeId stats_office = kNoPostOffice;  // picked in the Offices tab
     ScheduleId stats_schedule = kNoSchedule;    // picked in the Schedules tab
+
+    // The pause menu (ui_menu.cpp), opened with Esc or the HUD's Menu button.
+    bool pause_menu_open = false;
+    // How the menu's last Save went, shown under its buttons until it closes.
+    std::string pause_menu_status;
+    bool pause_menu_status_failed = false;
 };
 
 extern GameUiState g_game;  // defined in ui.cpp

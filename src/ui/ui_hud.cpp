@@ -1,5 +1,6 @@
 // ui_hud.cpp — the overlays on the map: the transport bar (play/pause,
-// speed, day/time) and the HUD card (money, deliveries, statistics button).
+// speed, day/time) and the HUD card (money, deliveries, statistics and menu
+// buttons).
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
@@ -365,6 +366,8 @@ void DrawHUD(const World& world) {
     if (theme::PrimaryButton("Statistics  (P)", ImVec2(-FLT_MIN, 0.0f)))
         g_game.stats_open = !g_game.stats_open;
     ui::NoteItemAnchor(TutorialAnchor::StatsButton);
+    if (ImGui::Button("Menu  (Esc)", ImVec2(-FLT_MIN, 0.0f)))
+        g_game.pause_menu_open = true;
     ImGui::End();
 
     if (show_imgui_demo)
