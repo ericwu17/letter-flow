@@ -322,7 +322,25 @@ constexpr float kPopupDuration = 1.6f;
 constexpr float kPopupRise = 55.0f;
 
 void DrawMoneyPopups(ImDrawList* draw, const ViewTransform& view, World& world) {
-    for (const MoneyEvent& e : world.take_money_events())
+    std::vector<MoneyEvent> events = world.take_money_events();
+    // we first accumulate the events, by postoffice ID.
+    size_t num_events_saved = 0;
+    for (size_t i = 0; i < events.size(); i++) {
+        bool found_dup = false;
+        for (size_t j = 0; j < num_events_saved; j++) {
+            if (events[j].office == events[i].office) {
+                events[j].amount += events[i].amount;
+                found_dup = true;
+                break;
+            }
+        }
+        if (!found_dup) {
+            events[num_events_saved] = events[i];
+            num_events_saved++;
+        }
+    }
+    events.resize(num_events_saved);
+    for (const MoneyEvent& e : events)
         g_game.money_popups.push_back({e.office, e.amount, 0.0f});
 
     const float dt = ImGui::GetIO().DeltaTime;
