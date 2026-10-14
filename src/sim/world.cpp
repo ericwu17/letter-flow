@@ -7,7 +7,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,11 +24,8 @@ Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
     return start_offset + ((now - start_offset) / period + 1) * period;
 }
 
-// validate_schedule()'s `ignore_index` for a schedule that is not in the list yet.
-constexpr std::size_t kNoScheduleIndex = std::numeric_limits<std::size_t>::max();
-
-// Only PostalPrefix rules carry prefixes, so equality (and the duplicate
-// check in validate_schedule) compares like with like.
+// Only PostalPrefix rules carry prefixes, so equality (e.g. update_schedule's
+// "did the rule change" check) compares like with like.
 RoutingRule normalized(RoutingRule rule) {
     if (rule.type != RoutingRuleType::PostalPrefix)
         rule.prefixes.clear();
@@ -318,8 +314,7 @@ void World::deliver(Truck& truck) {
 }
 
 ScheduleError World::validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
-                                       const RoutingRule& normalized_rule,
-                                       std::size_t ignore_index) const {
+                                       const RoutingRule& normalized_rule) const {
     if (src >= post_offices.size() || dst >= post_offices.size())
         return ScheduleError::UnknownOffice;
     if (src == dst)
@@ -332,18 +327,12 @@ ScheduleError World::validate_schedule(PostOfficeId src, PostOfficeId dst, Tick 
     // Road constraint: a schedule requires a road connecting the two offices.
     if (!has_road(src, dst))
         return ScheduleError::NoRoad;
-
-    const std::vector<TruckSchedule>& schedules = post_offices[src].outbound_schedules;
-    for (std::size_t i = 0; i < schedules.size(); ++i) {
-        if (i != ignore_index && schedules[i].dst == dst && schedules[i].rule == normalized_rule)
-            return ScheduleError::Duplicate;  // identical schedule already exists
-    }
     return ScheduleError::None;
 }
 
 ScheduleError World::check_add_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
                                         const RoutingRule& rule) const {
-    return validate_schedule(src, dst, period, normalized(rule), kNoScheduleIndex);
+    return validate_schedule(src, dst, period, normalized(rule));
 }
 
 ScheduleError World::check_update_schedule(PostOfficeId src, std::size_t schedule_index, Tick period,
@@ -351,13 +340,13 @@ ScheduleError World::check_update_schedule(PostOfficeId src, std::size_t schedul
     if (src >= post_offices.size() || schedule_index >= post_offices[src].outbound_schedules.size())
         return ScheduleError::UnknownOffice;
     const PostOfficeId dst = post_offices[src].outbound_schedules[schedule_index].dst;
-    return validate_schedule(src, dst, period, normalized(rule), schedule_index);
+    return validate_schedule(src, dst, period, normalized(rule));
 }
 
 bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
                          const RoutingRule& rule) {
     RoutingRule normalized_rule = normalized(rule);
-    if (validate_schedule(src, dst, period, normalized_rule, kNoScheduleIndex) != ScheduleError::None)
+    if (validate_schedule(src, dst, period, normalized_rule) != ScheduleError::None)
         return false;
 
     TruckSchedule schedule;

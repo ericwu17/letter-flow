@@ -65,10 +65,6 @@ struct InspectorForms {
     // Why the last schedule-table edit was refused, shown under the table
     // until the next accepted edit.
     std::string edit_error;
-    // The "New schedule" form.
-    PostOfficeId add_dst = kNoPostOffice;
-    RoutingRuleType add_rule_type = RoutingRuleType::ExactDestination;
-    std::vector<std::string> add_prefixes = {""};
     // The postal-code field: InputText needs a mutable buffer. Every
     // keystroke is committed to the World, so the map label updates live.
     char postal_code[128] = "";
@@ -102,11 +98,6 @@ struct GameUiState {
     std::optional<Letter> highlight_letter;
 
     InspectorForms forms;
-    // The "New schedule" form's frequency and offset, in ticks (edited as
-    // HH:MM). Kept when switching offices; the defaults spell out the
-    // canonical example: every 3 hours starting at 00:30.
-    Tick add_period = hours_minutes_to_ticks(3, 0);
-    Tick add_start = hours_minutes_to_ticks(0, 30);
 
     // The statistics window (ui_stats.cpp). Its time range is a viewing
     // preference that carries over between games, so it is not kept here.

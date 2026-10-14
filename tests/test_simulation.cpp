@@ -99,8 +99,8 @@ void routing_rule_matches() {
     assert(!empty_element.matches(5, "NJ/Mercer", 9));
 }
 
-// add_schedule's rejection matrix, free schedule creation, and duplicate
-// detection (including prefix normalization).
+// add_schedule's rejection matrix, free schedule creation, and identical
+// schedules being allowed (each its own schedule, with its own id).
 void schedule_validation_and_pricing() {
     World w = make_line_world(3, 0);
     add_underpass_road(w, 0, 2);  // for the distinct-dst schedule below
@@ -123,12 +123,18 @@ void schedule_validation_and_pricing() {
     assert(w.add_schedule(0, 1, 3 * kTicksPerHour, 0, exact));
     assert(w.get_money() == money0);
 
-    // Duplicates compare (dst, rule) only — period and offset may differ —
-    // and a stale prefix on a non-prefix rule is normalized away first.
-    assert(!w.add_schedule(0, 1, kTicksPerHour, 7, exact));
+    // The same (dst, rule) again is just another schedule, with its own id;
+    // a stale prefix on a non-prefix rule is normalized away.
+    assert(w.add_schedule(0, 1, kTicksPerHour, 7, exact));
     const RoutingRule dirty_exact{RoutingRuleType::ExactDestination, {"junk"}};
-    assert(!w.add_schedule(0, 1, kTicksPerHour, 0, dirty_exact));
-    // A different rule or a different dst is a distinct product, though.
+    assert(w.add_schedule(0, 1, kTicksPerHour, 0, dirty_exact));
+    {
+        const std::vector<TruckSchedule>& schedules = w.get_post_offices()[0].outbound_schedules;
+        assert(schedules.size() == 3);
+        assert(schedules[2].rule == exact);
+        assert(schedules[0].id != schedules[1].id && schedules[1].id != schedules[2].id &&
+               schedules[0].id != schedules[2].id);
+    }
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
     assert(w.add_schedule(0, 1, kTicksPerHour, 0, all));
     assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
@@ -144,9 +150,8 @@ void schedule_validation_and_pricing() {
 }
 
 // update_schedule() edits a schedule's rule and timing in place: same
-// rejection rules as add_schedule (the duplicate check skipping the schedule
-// itself), destination and list position kept, and the next departure
-// re-anchored only when the timing changes.
+// rejection rules as add_schedule, destination and list position kept, and
+// the next departure re-anchored only when the timing changes.
 void schedule_editing() {
     World w = make_line_world(2, 0);
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
@@ -163,10 +168,9 @@ void schedule_editing() {
     assert(!w.update_schedule(0, 0, 0, 100, exact));              // zero period
     assert(!w.update_schedule(0, 0, kTicksPerHour, 100,
                               {RoutingRuleType::PostalPrefix, {}}));  // empty prefix
-    assert(!w.update_schedule(0, 0, kTicksPerHour, 100, all));    // duplicates #2
     assert(schedules() == before);
 
-    // Re-submitting a schedule's own values is not a duplicate of itself.
+    // Re-submitting a schedule's own values changes nothing (no edit logged).
     assert(w.update_schedule(0, 0, kTicksPerHour, 100, exact));
     assert(schedules() == before);
 
@@ -177,8 +181,10 @@ void schedule_editing() {
     assert(schedules()[0].next_departure == before[0].next_departure);
     assert(schedules()[1] == before[1]);
     assert(schedules()[0].edits == std::vector<Tick>{0});  // logged once, at tick 0
-    // A stale prefix on a non-prefix rule is normalized away, as in add_schedule.
-    assert(!w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::AllLetters, {"junk"}}));  // == #2
+    // A stale prefix on a non-prefix rule is normalized away, as in
+    // add_schedule, even when that makes the rule identical to #2's.
+    assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::AllLetters, {"junk"}}));
+    assert(schedules()[0].rule == all);
     assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::ExactDestination, {"junk"}}));
     assert(schedules()[0].rule == exact);
 
@@ -208,19 +214,18 @@ void schedule_errors() {
     assert(w.check_add_schedule(0, 2, h, exact) == ScheduleError::NoRoad);
     assert(w.check_add_schedule(0, 1, h, exact) == ScheduleError::None);
     assert(w.add_schedule(0, 1, h, 0, exact));
-    assert(w.check_add_schedule(0, 1, 2 * h, exact) == ScheduleError::Duplicate);
-    assert(w.check_add_schedule(0, 1, h, {RoutingRuleType::ExactDestination, {"junk"}}) ==
-           ScheduleError::Duplicate);  // normalized before comparing
-    assert(!w.add_schedule(0, 1, 2 * h, 0, exact));
+    // An identical schedule is no reason to refuse.
+    assert(w.check_add_schedule(0, 1, 2 * h, exact) == ScheduleError::None);
+    assert(w.check_add_schedule(0, 1, h, {RoutingRuleType::ExactDestination, {"junk"}}) == ScheduleError::None);
     assert(w.add_schedule(0, 1, h, 0, all));
 
     assert(w.check_update_schedule(0, 9, h, exact) == ScheduleError::UnknownOffice);  // no such schedule
     assert(w.check_update_schedule(9, 0, h, exact) == ScheduleError::UnknownOffice);
     assert(w.check_update_schedule(0, 0, 0, exact) == ScheduleError::ZeroPeriod);
     assert(w.check_update_schedule(0, 0, h, bad_prefix) == ScheduleError::MalformedRule);
-    assert(w.check_update_schedule(0, 0, h, all) == ScheduleError::Duplicate);  // == #2
-    assert(w.check_update_schedule(0, 0, 3 * h, exact) == ScheduleError::None);  // not a duplicate of itself
-    assert(!w.update_schedule(0, 0, h, 0, all));
+    assert(w.check_update_schedule(0, 0, h, all) == ScheduleError::None);  // == #2, allowed
+    assert(w.check_update_schedule(0, 0, 3 * h, exact) == ScheduleError::None);
+    assert(w.update_schedule(0, 0, h, 0, all));
     assert(w.update_schedule(0, 0, 3 * h, 0, exact));
 
     // Removing the road takes the schedules with it; a new one is refused.
@@ -348,6 +353,16 @@ void first_matching_schedule_wins_contested_letters() {
     assert(w2.get_trucks()[0]->get_num_letters() > 0);
     assert(w2.get_trucks()[1]->get_dst() == 1);
     assert(w2.get_trucks()[1]->get_num_letters() == 0);
+
+    // Identical schedules follow the same order: the first fills up, the
+    // second takes what is left.
+    World w3 = make_line_world(2, kTruckCapacity + 2);
+    assert(w3.add_schedule(0, 1, huge, 1, all));
+    assert(w3.add_schedule(0, 1, huge, 1, all));
+    w3.advance_tick();
+    assert(w3.get_trucks().size() == 2);
+    assert(w3.get_trucks()[0]->get_num_letters() == kTruckCapacity);
+    assert(w3.get_trucks()[1]->get_num_letters() > 0);
 }
 
 // Trucks depart on schedule even with an empty buffer — they just carry

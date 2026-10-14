@@ -108,13 +108,13 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "Create a schedule",
-        .body = "A truck schedule sends trucks on a regular timetable. In Ashford's \"New "
-                "schedule\" form, set To: Central, Picks up: Destination, Every: 01:00, then "
-                "press \"Add schedule\".\n\n"
+        .body = "A truck schedule sends trucks on a regular timetable. Under Ashford's schedule "
+                "table, click \"+ New schedule\" and choose Central. New schedules pick up mail "
+                "for their destination and leave every 6 hours, starting at midnight.\n\n"
                 "Schedules are free, but every truck costs $15 when it leaves and carries at "
                 "most 5 letters.",
         .office = kAshford,
-        .anchor = TutorialAnchor::AddScheduleForm,
+        .anchor = TutorialAnchor::AddScheduleButton,
         .done = [](const World& w, const TutorialUiFacts&) { return has_schedule(w, kAshford, kCentral); },
     },
     {
@@ -130,14 +130,14 @@ const TutorialStep kSteps[] = {
     {
         .title = "Inspect a truck",
         .body = "Click a truck on the road while it is driving to see its route, its arrival "
-                "time and the letters it carries. Trucks leave Ashford every hour.",
+                "time and the letters it carries. Trucks leave Ashford every 6 hours.",
         .done = [](const World&, const TutorialUiFacts& f) { return f.truck_selected; },
     },
     {
         .title = "Update a schedule",
-        .body = "Schedules can be changed at any time. Select Ashford and, in its schedule "
-                "table, drag the \"Every\" or \"Starting at\" fields (or double-click to type) to "
-                "run trucks more or less often.\n\n"
+        .body = "Six hours is a long wait for a busy office, and schedules can be changed at any "
+                "time. Select Ashford and, in its schedule table, set \"Every\" to 01:00: drag "
+                "the field, or double-click it to type.\n\n"
                 "Busy routes need more trucks; quiet ones waste $15 per empty run.",
         .office = kAshford,
         .anchor = TutorialAnchor::ScheduleTable,
@@ -197,11 +197,12 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "Prefix routing",
-        .body = "Now send the south's mail from Central in one truck. Select Central and add a "
-                "schedule To: Dunmore that picks up \"Postal prefixes\" with the prefix SOUTH/.\n\n"
+        .body = "Now send the south's mail from Central in one truck. Select Central, add a "
+                "schedule to Dunmore with \"+ New schedule\", then change its \"Picks up\" to "
+                "\"Postal prefix\" and enter SOUTH/.\n\n"
                 "It collects letters for both Dunmore and Elmwood.",
         .office = kCentral,
-        .anchor = TutorialAnchor::AddScheduleForm,
+        .anchor = TutorialAnchor::AddScheduleButton,
         .done = [](const World& w, const TutorialUiFacts&) {
             const std::vector<PostOffice>& offices = w.get_post_offices();
             return has_schedule(w, kCentral, kDunmore, [&](const TruckSchedule& s) {
@@ -215,7 +216,7 @@ const TutorialStep kSteps[] = {
         .body = "Elmwood's letters now wait at Dunmore. Select Dunmore and add a schedule to "
                 "Elmwood to carry them the rest of the way.",
         .office = kDunmore,
-        .anchor = TutorialAnchor::AddScheduleForm,
+        .anchor = TutorialAnchor::AddScheduleButton,
         .done = [](const World& w, const TutorialUiFacts&) { return has_schedule(w, kDunmore, kElmwood); },
     },
     {

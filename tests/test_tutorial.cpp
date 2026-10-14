@@ -125,7 +125,7 @@ void following_the_steps_finishes_the_tutorial() {
     tick_until_step_done(w, t, facts);
 
     expect_step(t, "Create a schedule");
-    assert(w.add_schedule(kAshford, kCentral, hours_minutes_to_ticks(1, 0), 0, RoutingRule{}));
+    assert(w.add_schedule(kAshford, kCentral, hours_minutes_to_ticks(6, 0), 0, RoutingRule{}));  // the UI's defaults
     t.update(w, facts);
 
     expect_step(t, "First delivery");

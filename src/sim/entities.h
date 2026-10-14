@@ -177,7 +177,6 @@ enum class ScheduleError {
     ZeroPeriod,     // period == 0
     MalformedRule,  // RoutingRule::is_well_formed() is false
     NoRoad,         // no road connects src and dst
-    Duplicate,      // src already has a schedule with the same dst and rule
 };
 
 // One departure of a schedule, for its utilization log.

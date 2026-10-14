@@ -56,11 +56,9 @@ private:
     TruckSchedule* find_schedule(PostOfficeId office, ScheduleId id);
     // Shared validation for add_schedule() / update_schedule() and their
     // check_* queries: why a schedule src -> dst with this period and
-    // (normalized) rule is refused, given that it would replace the one at
-    // `ignore_index` (no schedule, for a new one) in the duplicate check.
+    // (normalized) rule is refused.
     ScheduleError validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
-                                    const RoutingRule& normalized_rule,
-                                    std::size_t ignore_index) const;
+                                    const RoutingRule& normalized_rule) const;
 
 public:
     // Advances the simulation by one tick: probabilistic letter spawning,
@@ -92,25 +90,24 @@ public:
     // Creating a schedule is free; each departure costs kTruckDepartureCost.
     // Returns false and changes nothing if the route is invalid (bad ids,
     // zero period, a PostalPrefix rule with no, an empty or a repeated
-    // prefix), an identical (dst, rule) schedule already exists, or no road
-    // connects src and dst.
-    // Schedules to the same dst with different rules are allowed; on a tick
-    // where both depart, the earlier one in the list takes contested letters.
+    // prefix) or no road connects src and dst.
+    // Any number of schedules may share a dst, identical ones included; on a
+    // tick where several depart, the earlier one in the list takes contested
+    // letters.
     bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
                       const RoutingRule& rule);
     // Edits the timing and rule of the schedule at `schedule_index` in place
     // (the inspector's schedule table), keeping its destination and list
-    // position. Same validation as add_schedule, except the duplicate check
-    // skips the schedule itself. Changing period or start_offset re-anchors
-    // the next departure on the new grid (first slot strictly after now);
-    // changing only the rule keeps the next departure as is. Returns false
-    // and changes nothing on an invalid index or schedule.
+    // position. Same validation as add_schedule. Changing period or
+    // start_offset re-anchors the next departure on the new grid (first slot
+    // strictly after now); changing only the rule keeps the next departure as
+    // is. Returns false and changes nothing on an invalid index or schedule.
     bool update_schedule(PostOfficeId src, std::size_t schedule_index,
                          Tick period, Tick start_offset, const RoutingRule& rule);
     // Why add_schedule() / update_schedule() with these arguments would
     // return false right now, or ScheduleError::None if it would succeed
     // (start_offset is never a reason, so it is left out). The UI uses these
-    // to explain a refused edit and to validate its form as the player types.
+    // to explain a refused schedule-table edit.
     ScheduleError check_add_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
                                      const RoutingRule& rule) const;
     ScheduleError check_update_schedule(PostOfficeId src, std::size_t schedule_index, Tick period,

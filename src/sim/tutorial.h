@@ -34,7 +34,7 @@ enum class TutorialAnchor {
     TransportBar,       // play/pause and speed
     OutboundLetters,    // a built office's outbound letter list
     ScheduleTable,      // a built office's schedule table
-    AddScheduleForm,    // the "New schedule" form
+    AddScheduleButton,  // the "+ New schedule" button
     SettingsHeader,     // the office's collapsed "Settings" section...
     PostalCodeInput,    // ...and the postal-code field inside it
     StatsButton,        // the HUD's statistics button

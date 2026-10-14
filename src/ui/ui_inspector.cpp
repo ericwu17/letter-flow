@@ -1,6 +1,7 @@
 // ui_inspector.cpp — the inspector docked on the left: the selected post
-// office (letters, statistics, schedule table, "New schedule" form, postal
-// code) or truck (route, timing, cargo), and the road-building controls.
+// office (letters, statistics, schedule table and its "+ New schedule"
+// button, postal code) or truck (route, timing, cargo), and the road-building
+// controls.
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
@@ -34,6 +35,11 @@ using ui::SelectOffice;
 namespace theme = ui::theme;
 
 constexpr ImVec4 kColorErrorText = theme::kBad;  // red inline messages
+
+// What "+ New schedule" creates; the player tunes it in the schedule table.
+// The rule is ExactDestination: it picks up mail for the chosen office.
+constexpr Tick kNewSchedulePeriod = hours_minutes_to_ticks(6, 0);
+constexpr Tick kNewScheduleStart = hours_minutes_to_ticks(0, 0);
 
 // Every '/'-delimited prefix of every office's postal code ("NJ",
 // "NJ/Mercer", "NJ/Mercer/Princeton", ...), sorted and deduplicated — the
@@ -310,7 +316,7 @@ bool EditPrefixList(const char* id, std::vector<std::string>& prefixes,
     return changed;
 }
 
-// Why a schedule edit or the "New schedule" form was refused, for the player.
+// Why a schedule-table edit was refused, for the player.
 const char* ScheduleErrorText(ScheduleError error) {
     switch (error) {
     case ScheduleError::None:          return "";
@@ -319,7 +325,16 @@ const char* ScheduleErrorText(ScheduleError error) {
     case ScheduleError::ZeroPeriod:    return "Trucks need time between departures.";
     case ScheduleError::MalformedRule: return "Every prefix must be non-empty and listed once.";
     case ScheduleError::NoRoad:        return "No road connects these offices.";
-    case ScheduleError::Duplicate:     return "Another schedule already goes there with that rule.";
+    }
+    return "";
+}
+
+// What a rule type picks up, for the table's "Picks up" dropdown.
+std::string RuleHelp(RoutingRuleType type, const std::string& dst_name) {
+    switch (type) {
+    case RoutingRuleType::ExactDestination: return "Only letters addressed to " + dst_name + ".";
+    case RoutingRuleType::PostalPrefix:     return "Letters whose postal code starts with any of the listed prefixes.";
+    case RoutingRuleType::AllLetters:       return "Every letter; the rest forward onward from the destination.";
     }
     return "";
 }
@@ -356,7 +371,7 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
     std::string& edit_error = g_game.forms.edit_error;
 
     if (office.outbound_schedules.empty()) {
-        ImGui::TextDisabled("No schedules yet. Add one below.");
+        ImGui::TextDisabled("No schedules yet.");
         return;
     }
     ImGui::TextDisabled("Drag a row's grip to reorder.");
@@ -438,7 +453,9 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
             if (ImGui::BeginCombo("##rule", is_prefix ? "Prefix" : rule_label(schedule.rule.type).c_str())) {
                 for (const RoutingRuleType type : ui::kRuleTypes) {
                     const bool current = type == schedule.rule.type;
-                    if (ImGui::Selectable(rule_label(type).c_str(), current) && !current) {
+                    const bool clicked = ImGui::Selectable(rule_label(type).c_str(), current);
+                    ImGui::SetItemTooltip("%s", RuleHelp(type, offices[schedule.dst].name).c_str());
+                    if (clicked && !current) {
                         edited.rule.type = type;
                         // A new prefix rule starts from the destination's own
                         // postal code, the most likely thing to collect.
@@ -562,154 +579,63 @@ void DrawCapacityBar(const PostOffice& office) {
     ImGui::TextDisabled("About %zu new letters posted per day.", office.letters_per_day);
 }
 
-// A label cell of the add-route form, aligned with the widget beside it.
-void FormLabel(const char* label) {
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%s", label);
-    ImGui::TableSetColumnIndex(1);
-}
-
-// The "New schedule" form under the schedule table.
-void DrawAddScheduleForm(World& world, PostOfficeId selected) {
+// The "+ New schedule" button under the schedule table: it opens a list of
+// the offices this one reaches by road, narrowed as you type (by name or
+// postal code), and picking one adds a schedule there with the defaults
+// above, to be tuned in the table.
+void DrawAddScheduleButton(World& world, PostOfficeId selected) {
     const std::vector<PostOffice>& offices = world.get_post_offices();
-    const PostOffice& office = offices[selected];
+    bool any_reachable = false;
+    for (PostOfficeId id = 0; id < offices.size() && !any_reachable; ++id)
+        any_reachable = id != selected && world.has_road(selected, id);
 
-    theme::SectionHeading("New schedule");
-
-    // The form's fields (see ui::InspectorForms and ui::GameUiState).
-    ui::InspectorForms& forms = g_game.forms;
-    PostOfficeId& add_dst = forms.add_dst;
-    RoutingRuleType& add_rule_type = forms.add_rule_type;
-    std::vector<std::string>& add_prefixes = forms.add_prefixes;
-    // The destination search box. Widget scratch rather than game state: it
-    // is cleared whenever the dropdown opens. (Not part of InspectorForms
-    // either: ImGuiTextFilter cannot be copy-assigned outside imgui.cpp.)
-    static ImGuiTextFilter dst_filter;
-    Tick& add_period = g_game.add_period;
-    Tick& add_start = g_game.add_start;
-
-    const bool dst_ok = add_dst != kNoPostOffice && add_dst < offices.size() && world.has_road(selected, add_dst);
-    bool prefix_ok = true;
-
-    if (ImGui::BeginTable("add_schedule_form", 2, ImGuiTableFlags_SizingFixedFit)) {
-        ImGui::TableSetupColumn("label", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("field", ImGuiTableColumnFlags_WidthStretch);
-
-        // Destination: a dropdown that narrows as you type, matching both
-        // office names and postal codes.
-        FormLabel("To");
-        const char* dst_preview = dst_ok ? offices[add_dst].name.c_str() : "Choose a destination...";
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        if (ImGui::BeginCombo("##add_dst", dst_preview, ImGuiComboFlags_HeightLarge)) {
-            if (ImGui::IsWindowAppearing()) {
-                dst_filter.Clear();
-                ImGui::SetKeyboardFocusHere();  // typing filters immediately
-            }
-            dst_filter.Draw("##add_dst_filter", -FLT_MIN);
-            bool any = false;
-            for (PostOfficeId id = 0; id < offices.size(); ++id) {
-                if (id == selected || !world.has_road(selected, id))
-                    continue;
-                const PostOffice& other = offices[id];
-                if (!dst_filter.PassFilter(other.name.c_str()) &&
-                    !dst_filter.PassFilter(other.postal_code.c_str()))
-                    continue;
-                any = true;
-                ImGui::PushID(static_cast<int>(id));
-                if (ImGui::Selectable(other.name.c_str(), id == add_dst))
-                    add_dst = id;
-                if (id == add_dst)
-                    ImGui::SetItemDefaultFocus();
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", other.postal_code.c_str());
-                ImGui::PopID();
-            }
-            if (!any)
-                ImGui::TextDisabled("No office reachable by road matches.");
-            ImGui::EndCombo();
-        }
-
-        // Routing rule: which of this office's letters each departure takes.
-        FormLabel("Picks up");
-        for (const RoutingRuleType type : ui::kRuleTypes) {
-            if (type != ui::kRuleTypes[0])
-                ImGui::SameLine(0.0f, 2.0f);
-            const char* name = type == RoutingRuleType::ExactDestination ? "Destination"
-                             : type == RoutingRuleType::PostalPrefix     ? "Postal prefixes"
-                                                                         : "All mail";
-            if (theme::SegmentedButton(name, add_rule_type == type))
-                add_rule_type = type;
-        }
-        char rule_help[160];
-        switch (add_rule_type) {
-        case RoutingRuleType::ExactDestination:
-            std::snprintf(rule_help, sizeof(rule_help), "Only letters addressed to %s.",
-                          dst_ok ? offices[add_dst].name.c_str() : "the destination");
-            break;
-        case RoutingRuleType::PostalPrefix:
-            std::snprintf(rule_help, sizeof(rule_help), "Letters addressed to any of these postal-code prefixes.");
-            break;
-        case RoutingRuleType::AllLetters:
-            std::snprintf(rule_help, sizeof(rule_help), "Every letter; the rest forward onward from the destination.");
-            break;
-        }
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("%s", rule_help);
-        ImGui::PopTextWrapPos();
-        if (add_rule_type == RoutingRuleType::PostalPrefix) {
-            EditPrefixList("##add_prefixes", add_prefixes, offices, std::min(300.0f, ImGui::GetContentRegionAvail().x));
-            prefix_ok = RoutingRule{RoutingRuleType::PostalPrefix, add_prefixes}.is_well_formed();
-            if (!prefix_ok)
-                ImGui::TextColored(kColorErrorText, "Every prefix must be non-empty and listed once.");
-        }
-
-        FormLabel("Every");
-        if (EditHoursMinutes("add_every", add_period, 24))
-            add_period = std::clamp(add_period, kMinSchedulePeriod, kTicksPerDay);
-        ImGui::SameLine();
-        ImGui::TextDisabled("hh:mm");
-
-        FormLabel("Starting at");
-        EditHoursMinutes("add_start", add_start, 23);
-        ImGui::SameLine();
-        ImGui::TextDisabled("hh:mm");
-
-        ImGui::EndTable();
-    }
-
-    // The fully configured rule, used for the live match count, the
-    // duplicate check and the World call.
-    RoutingRule rule{add_rule_type, {}};
-    if (add_rule_type == RoutingRuleType::PostalPrefix)
-        rule.prefixes = add_prefixes;
-
-    // Live feedback: how much of the current buffer this rule would load.
-    // Creating a schedule is free; each truck is paid for as it departs.
-    ImGui::Spacing();
-    if (dst_ok && prefix_ok) {
-        std::size_t matched = 0;
-        for (const Letter& letter : office.outbound_letters)
-            if (rule.matches(letter.dst, offices[letter.dst].postal_code, add_dst))
-                ++matched;
-        ImGui::TextDisabled("Matches %zu of %zu waiting letters right now.", matched, office.outbound_letters.size());
-    }
-    ImGui::TextDisabled("Each truck costs $%d when it departs and carries up to %zu letters.",
-                        kTruckDepartureCost, kTruckCapacity);
-
-    // Without a destination there is nothing to check yet (the "To" field
-    // says so); a bad prefix is already flagged under the prefix fields.
-    const ScheduleError error = dst_ok ? world.check_add_schedule(selected, add_dst, add_period, rule)
-                                       : ScheduleError::NoRoad;
-    ImGui::BeginDisabled(error != ScheduleError::None);
-    if (theme::PrimaryButton("Add schedule"))
-        world.add_schedule(selected, add_dst, add_period, add_start, rule);
+    ImGui::BeginDisabled(!any_reachable);
+    if (ImGui::Button("+ New schedule"))
+        ImGui::OpenPopup("new_schedule_dst");
+    ImGui::SetItemTooltip("Each truck costs $%d when it departs and carries up to %zu letters.",
+                          kTruckDepartureCost, kTruckCapacity);
     ImGui::EndDisabled();
-    if (dst_ok && error != ScheduleError::None && error != ScheduleError::MalformedRule) {
+    ui::NoteItemAnchor(TutorialAnchor::AddScheduleButton);
+    if (!any_reachable) {
         ImGui::SameLine();
-        ImGui::TextColored(kColorErrorText, "%s", ScheduleErrorText(error));
+        ImGui::TextDisabled("Build a road from this office first.");
     }
+
+    // The search box. Widget scratch rather than game state: it is cleared
+    // whenever the list opens. (Not part of InspectorForms either:
+    // ImGuiTextFilter cannot be copy-assigned outside imgui.cpp.)
+    static ImGuiTextFilter dst_filter;
+    std::optional<PostOfficeId> picked;  // added after the loop over `offices`
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, ImGui::GetFontSize() * 20.0f));
+    if (ImGui::BeginPopup("new_schedule_dst")) {
+        if (ImGui::IsWindowAppearing()) {
+            dst_filter.Clear();
+            ImGui::SetKeyboardFocusHere();  // typing filters immediately
+        }
+        dst_filter.Draw("##new_schedule_filter", ImGui::GetFontSize() * 14.0f);
+        bool any = false;
+        for (PostOfficeId id = 0; id < offices.size(); ++id) {
+            if (id == selected || !world.has_road(selected, id))
+                continue;
+            const PostOffice& other = offices[id];
+            if (!dst_filter.PassFilter(other.name.c_str()) &&
+                !dst_filter.PassFilter(other.postal_code.c_str()))
+                continue;
+            any = true;
+            ImGui::PushID(static_cast<int>(id));
+            if (ImGui::Selectable(other.name.c_str()))  // also closes the popup
+                picked = id;
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", other.postal_code.c_str());
+            ImGui::PopID();
+        }
+        if (!any)
+            ImGui::TextDisabled("No office reachable by road matches.");
+        ImGui::EndPopup();
+    }
+    if (picked.has_value())
+        world.add_schedule(selected, *picked, kNewSchedulePeriod, kNewScheduleStart,
+                           RoutingRule{RoutingRuleType::ExactDestination, {}});
 }
 
 // A post office: header, outbound letters, statistics and schedule editing.
@@ -759,10 +685,7 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
 
         if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
             DrawScheduleTable(world, selected);
-            ImGui::BeginGroup();  // the whole form, as one tutorial anchor
-            DrawAddScheduleForm(world, selected);
-            ImGui::EndGroup();
-            ui::NoteItemAnchor(TutorialAnchor::AddScheduleForm);
+            DrawAddScheduleButton(world, selected);
         }
     }
 
