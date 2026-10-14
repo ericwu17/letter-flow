@@ -171,9 +171,9 @@ void DrawNamePopup(SaveLibrary& library) {
         g_error.clear();
         if (create) {
             if (!library.create(name))
-                g_error = "Couldn't create the save: the saves file could not be written.";
+                g_error = "Couldn't create the save: the save file could not be written.";
         } else if (!library.rename(g_name_target, name)) {
-            g_error = "Couldn't rename the save: the saves file could not be written.";
+            g_error = "Couldn't rename the save: the save file could not be written.";
         }
         ImGui::CloseCurrentPopup();
     } else if (cancelled) {
@@ -198,7 +198,7 @@ void DrawDeletePopup(SaveLibrary& library) {
     if (theme::PrimaryButton("Delete")) {
         g_error.clear();
         if (!library.remove(g_delete_target))
-            g_error = "Couldn't delete the save: the saves file could not be written.";
+            g_error = "Couldn't delete the save: the save file could not be removed.";
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -322,7 +322,7 @@ std::optional<SaveId> DrawSavesScreen(SaveLibrary& library) {
     if (copy) {
         g_error.clear();
         if (!library.copy(copy->first, copy->second))
-            g_error = "Couldn't copy the save: the saves file could not be read or written.";
+            g_error = "Couldn't copy the save: the save file could not be read or written.";
     }
 
     DrawNamePopup(library);

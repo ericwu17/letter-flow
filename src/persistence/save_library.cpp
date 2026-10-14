@@ -1,5 +1,5 @@
-// save_library.cpp — implements SaveLibrary (save_library.h): the saves file
-// as a list of named JSON worlds.
+// save_library.cpp — implements SaveLibrary (save_library.h): a directory of
+// saves, one JSON file each.
 // Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
 #include "persistence/save_library.h"
 
@@ -9,11 +9,11 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -23,20 +23,17 @@ namespace {
 namespace fs = std::filesystem;
 using nlohmann::json;
 
-// Bump whenever the library's own layout (not the worlds inside it) changes
-// incompatibly. The embedded worlds carry their own format_version.
-constexpr int kLibraryFormatVersion = 1;
+// Bump whenever a save file's own layout (not the world inside it) changes
+// incompatibly. The embedded world carries its own format_version.
+constexpr int kSaveFormatVersion = 1;
+
+// Longest filename stem save_file_stem() produces (before any "-N").
+constexpr std::size_t kMaxStemLength = 40;
 
 std::int64_t now_unix_seconds() {
     using namespace std::chrono;
     return static_cast<std::int64_t>(
         duration_cast<seconds>(system_clock::now().time_since_epoch()).count());
-}
-
-json empty_library() {
-    return json{{"format_version", kLibraryFormatVersion},
-                {"next_save_id", SaveId{0}},
-                {"saves", json::array()}};
 }
 
 // nullopt if the file is missing, unreadable or not JSON.
@@ -60,8 +57,8 @@ bool write_json_file(const std::string& path, const json& j) {
         std::ofstream out(tmp_path);
         if (!out)
             return false;
-        // Compact, not indented: the library holds every save's whole world
-        // (statistics included), and indenting nearly doubles its size.
+        // Compact, not indented: a save holds its whole world (statistics
+        // included), and indenting nearly doubles its size.
         out << j.dump() << '\n';
         out.flush();
         if (!out) {
@@ -77,248 +74,270 @@ bool write_json_file(const std::string& path, const json& j) {
     return true;
 }
 
-// The library's own structure: version, id counter, and well-formed entries
-// with unique ids below the counter. The worlds are only checked to be JSON
-// objects — a broken world is that one save's problem (load() reports it),
-// not the whole library's.
-bool library_is_valid(const json& doc) {
+json make_save(const std::string& name, json world) {
+    return json{{"format_version", kSaveFormatVersion},
+                {"name", name},
+                {"last_played", now_unix_seconds()},
+                {"world", std::move(world)}};
+}
+
+// The save file's own structure. The world is only checked to be a JSON
+// object — a broken world is reported by load(), and the save still lists.
+bool save_is_valid(const json& doc) {
     if (!doc.is_object())
         return false;
     const auto version = doc.find("format_version");
-    if (version == doc.end() || !version->is_number_integer() ||
-        version->get<int>() != kLibraryFormatVersion)
-        return false;
-    const auto next_id = doc.find("next_save_id");
-    const auto saves = doc.find("saves");
-    if (next_id == doc.end() || !next_id->is_number_unsigned() ||
-        saves == doc.end() || !saves->is_array())
-        return false;
-
-    std::set<SaveId> ids;
-    for (const json& entry : *saves) {
-        if (!entry.is_object())
-            return false;
-        const auto id = entry.find("id");
-        const auto name = entry.find("name");
-        const auto last_played = entry.find("last_played");
-        const auto world = entry.find("world");
-        if (id == entry.end() || !id->is_number_unsigned() ||
-            name == entry.end() || !name->is_string() ||
-            last_played == entry.end() || !last_played->is_number_integer() ||
-            world == entry.end() || !world->is_object())
-            return false;
-        if (id->get<std::uint64_t>() >= next_id->get<std::uint64_t>() ||
-            !ids.insert(id->get<SaveId>()).second)
-            return false;
-    }
-    return true;
+    const auto name = doc.find("name");
+    const auto last_played = doc.find("last_played");
+    const auto world = doc.find("world");
+    return version != doc.end() && version->is_number_integer() &&
+           version->get<int>() == kSaveFormatVersion &&
+           name != doc.end() && name->is_string() &&
+           last_played != doc.end() && last_played->is_number_integer() &&
+           world != doc.end() && world->is_object();
 }
 
-// The library at `path`: an empty one if the file doesn't exist yet, nullopt
-// if it exists but can't be used.
-std::optional<json> read_library(const std::string& path) {
-    std::error_code ec;
-    if (!fs::exists(path, ec))
-        return empty_library();
+// The save at `path`, or nullopt if it is missing or not a usable save file.
+std::optional<json> read_save(const std::string& path) {
     std::optional<json> doc = read_json_file(path);
-    if (!doc || !library_is_valid(*doc))
+    if (!doc || !save_is_valid(*doc))
         return std::nullopt;
     return doc;
 }
 
-std::vector<SaveSummary> summarize(const json& doc) {
-    std::vector<SaveSummary> summaries;
-    for (const json& entry : doc.at("saves")) {
-        SaveSummary summary;
-        summary.id = entry.at("id").get<SaveId>();
-        summary.name = entry.at("name").get<std::string>();
-        summary.last_played = entry.at("last_played").get<std::int64_t>();
-        // Best effort: a world missing these still lists (as day 1, $0).
-        const json& world = entry.at("world");
-        if (const auto tick = world.find("current_tick"); tick != world.end() && tick->is_number_unsigned())
-            summary.tick = tick->get<Tick>();
-        if (const auto money = world.find("money"); money != world.end() && money->is_number_integer())
-            summary.money = money->get<int>();
-        summaries.push_back(std::move(summary));
+SaveSummary summarize(const json& save) {
+    SaveSummary summary;
+    summary.name = save.at("name").get<std::string>();
+    summary.last_played = save.at("last_played").get<std::int64_t>();
+    // Best effort: a world missing these still lists (as day 1, $0).
+    const json& world = save.at("world");
+    if (const auto tick = world.find("current_tick"); tick != world.end() && tick->is_number_unsigned())
+        summary.tick = tick->get<Tick>();
+    if (const auto money = world.find("money"); money != world.end() && money->is_number_integer())
+        summary.money = money->get<int>();
+    return summary;
+}
+
+bool is_windows_reserved(const std::string& stem) {
+    static const std::array<const char*, 4> kDevices = {"con", "prn", "aux", "nul"};
+    if (std::find(kDevices.begin(), kDevices.end(), stem) != kDevices.end())
+        return true;
+    return stem.size() == 4 && (stem.starts_with("com") || stem.starts_with("lpt")) &&
+           stem[3] >= '1' && stem[3] <= '9';
+}
+
+// Whether the file at `path` is named for `stem`: "<stem>.json" or one of
+// its numbered variants "<stem>-N.json".
+bool named_for_stem(const fs::path& path, const std::string& stem) {
+    const std::string file_stem = path.stem().string();
+    if (file_stem == stem)
+        return true;
+    if (!file_stem.starts_with(stem + "-") || file_stem.size() == stem.size() + 1)
+        return false;
+    return std::all_of(file_stem.begin() + static_cast<std::ptrdiff_t>(stem.size() + 1), file_stem.end(),
+                       [](char c) { return c >= '0' && c <= '9'; });
+}
+
+// "<stem>.json" in `dir`, or else the first "<stem>-N.json" (N = 2, 3, ...)
+// that doesn't exist yet. nullopt if the directory can't be checked.
+std::optional<fs::path> unique_save_path(const fs::path& dir, const std::string& stem) {
+    for (int n = 1;; ++n) {
+        const fs::path candidate = dir / (n == 1 ? stem + ".json" : stem + "-" + std::to_string(n) + ".json");
+        std::error_code ec;
+        const bool taken = fs::exists(candidate, ec);
+        if (ec)
+            return std::nullopt;
+        if (!taken)
+            return candidate;
     }
+}
+
+// Writes a new save file for `name` holding `world` into `dir` (created if
+// need be). Returns its path and contents, or nullopt if it couldn't be written.
+std::optional<std::pair<std::string, json>> write_new_save(const std::string& dir, const std::string& name,
+                                                           json world) {
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec)
+        return std::nullopt;
+    const std::optional<fs::path> path = unique_save_path(dir, save_file_stem(name));
+    if (!path)
+        return std::nullopt;
+    json save = make_save(name, std::move(world));
+    if (!write_json_file(path->string(), save))
+        return std::nullopt;
+    return std::make_pair(path->string(), std::move(save));
+}
+
+}  // namespace
+
+std::string save_file_stem(const std::string& name) {
+    std::string stem;
+    for (const char c : name) {
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+            stem += c;
+        else if (c >= 'A' && c <= 'Z')
+            stem += static_cast<char>(c - 'A' + 'a');
+        else if (!stem.empty() && stem.back() != '_')
+            stem += '_';  // never leading, never doubled
+    }
+    if (stem.size() > kMaxStemLength)
+        stem.resize(kMaxStemLength);
+    while (!stem.empty() && stem.back() == '_')
+        stem.pop_back();
+    if (stem.empty())
+        return "save";
+    if (is_windows_reserved(stem))
+        return "save_" + stem;
+    return stem;
+}
+
+SaveLibrary::SaveLibrary(std::string dir) : save_dir(std::move(dir)) {
+    // Sorted, so ids follow the filenames rather than the directory's order.
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (fs::directory_iterator it(save_dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+        if (std::error_code file_ec; it->path().extension() == ".json" && it->is_regular_file(file_ec))
+            files.push_back(it->path());
+    std::sort(files.begin(), files.end());
+
+    if (std::error_code exists_ec; ec && fs::exists(save_dir, exists_ec)) {
+        warning_text = "Your saves folder " + save_dir + " could not be read.";
+        std::cerr << warning_text << std::endl;
+        return;
+    }
+
+    std::string skipped;
+    for (const fs::path& file : files) {
+        const std::optional<json> save = read_save(file.string());
+        if (!save) {
+            // Left where it is: new saves never take an existing filename,
+            // so nothing will overwrite it.
+            skipped += (skipped.empty() ? "" : ", ") + file.filename().string();
+            continue;
+        }
+        set_summary(next_id++, file.string(), summarize(*save));
+    }
+    if (!skipped.empty()) {
+        warning_text = "Some save files in " + save_dir + " could not be read and were skipped "
+                       "(they were left as they are): " + skipped;
+        std::cerr << warning_text << std::endl;
+    }
+}
+
+void SaveLibrary::set_summary(SaveId id, const std::string& path, SaveSummary summary) {
+    summary.id = id;
+    paths[id] = path;
+    const auto existing = std::find_if(summaries.begin(), summaries.end(),
+                                       [&](const SaveSummary& s) { return s.id == id; });
+    if (existing != summaries.end())
+        *existing = std::move(summary);
+    else
+        summaries.push_back(std::move(summary));
     std::sort(summaries.begin(), summaries.end(), [](const SaveSummary& a, const SaveSummary& b) {
         if (a.last_played != b.last_played)
             return a.last_played > b.last_played;
         return a.id > b.id;
     });
-    return summaries;
-}
-
-json* find_entry(json& doc, SaveId id) {
-    for (json& entry : doc.at("saves"))
-        if (entry.at("id").get<SaveId>() == id)
-            return &entry;
-    return nullptr;
-}
-
-// Appends a new save holding `world_json` and returns its id.
-SaveId add_entry(json& doc, const std::string& name, json world_json) {
-    const SaveId id = doc.at("next_save_id").get<SaveId>();
-    doc["next_save_id"] = id + 1;
-    doc.at("saves").push_back(json{{"id", id},
-                                   {"name", name},
-                                   {"last_played", now_unix_seconds()},
-                                   {"world", std::move(world_json)}});
-    return id;
-}
-
-// Read-modify-write: reads the library, lets `change` edit it (returning
-// false to abort without writing), then writes it back. Returns the written
-// document, or nullopt if anything failed — the file is then untouched.
-template <class Change>
-std::optional<json> modify_library(const std::string& path, Change&& change) {
-    std::optional<json> doc = read_library(path);
-    if (!doc || !change(*doc) || !write_json_file(path, *doc))
-        return std::nullopt;
-    return doc;
-}
-
-}  // namespace
-
-SaveLibrary::SaveLibrary(std::string path) : library_path(std::move(path)) {
-    if (const std::optional<json> doc = read_library(library_path)) {
-        summaries = summarize(*doc);
-        return;
-    }
-
-    // Unusable: move it aside so no later write can overwrite it.
-    const fs::path original(library_path);
-    const fs::path aside = original.parent_path() /
-        (original.stem().string() + ".corrupt-" + std::to_string(now_unix_seconds()) +
-         original.extension().string());
-    std::error_code ec;
-    fs::rename(original, aside, ec);
-    if (ec) {
-        // Still in place, and still unreadable, so every operation will fail
-        // its read and leave it alone.
-        warning_text = "Your saves file " + library_path + " could not be read or moved aside. "
-                       "Nothing can be saved until it is fixed or removed.";
-    } else {
-        warning_text = "Your saves file could not be read. It was moved to " + aside.string() +
-                       " and a new one was started.";
-    }
-    std::cerr << warning_text << std::endl;
-}
-
-void SaveLibrary::import_legacy_save(const std::string& legacy_path) {
-    std::error_code ec;
-    if (fs::exists(library_path, ec) || !fs::exists(legacy_path, ec))
-        return;
-    const std::optional<json> legacy = read_json_file(legacy_path);
-    if (!legacy)
-        return;
-    const std::optional<World> world = WorldJson::from_json(*legacy);
-    if (!world)
-        return;
-    const auto doc = modify_library(library_path, [&](json& d) {
-        add_entry(d, "Imported game", WorldJson::to_json(*world));
-        return true;
-    });
-    if (doc) {
-        summaries = summarize(*doc);
-        std::cout << "Imported " << legacy_path << " into " << library_path << std::endl;
-    }
 }
 
 std::optional<SaveId> SaveLibrary::create(const std::string& name) {
     if (name.empty())
         return std::nullopt;
-    SaveId id = 0;
-    const auto doc = modify_library(library_path, [&](json& d) {
-        id = add_entry(d, name, WorldJson::to_json(create_default_world()));
-        return true;
-    });
-    if (!doc)
+    const auto written = write_new_save(save_dir, name, WorldJson::to_json(create_default_world()));
+    if (!written)
         return std::nullopt;
-    summaries = summarize(*doc);
+    const SaveId id = next_id++;
+    set_summary(id, written->first, summarize(written->second));
     return id;
 }
 
 std::optional<SaveId> SaveLibrary::copy(SaveId id, const std::string& name) {
-    if (name.empty())
+    const auto source_path = paths.find(id);
+    if (name.empty() || source_path == paths.end())
         return std::nullopt;
-    SaveId new_id = 0;
-    const auto doc = modify_library(library_path, [&](json& d) {
-        const json* source = find_entry(d, id);
-        if (!source)
-            return false;
-        new_id = add_entry(d, name, source->at("world"));
-        return true;
-    });
-    if (!doc)
+    const std::optional<json> source = read_save(source_path->second);
+    if (!source)
         return std::nullopt;
-    summaries = summarize(*doc);
+    const auto written = write_new_save(save_dir, name, source->at("world"));
+    if (!written)
+        return std::nullopt;
+    const SaveId new_id = next_id++;
+    set_summary(new_id, written->first, summarize(written->second));
     return new_id;
 }
 
 bool SaveLibrary::rename(SaveId id, const std::string& name) {
-    if (name.empty())
+    const auto path_it = paths.find(id);
+    if (name.empty() || path_it == paths.end())
         return false;
-    const auto doc = modify_library(library_path, [&](json& d) {
-        json* entry = find_entry(d, id);
-        if (!entry)
-            return false;
-        (*entry)["name"] = name;
-        return true;
-    });
-    if (!doc)
+    std::string path = path_it->second;
+    std::optional<json> save = read_save(path);
+    if (!save)
         return false;
-    summaries = summarize(*doc);
+    (*save)["name"] = name;
+    if (!write_json_file(path, *save))
+        return false;
+
+    // Then move it to a file named for the new name. Not fatal if this
+    // fails: the save is renamed either way, its filename just lags behind.
+    const std::string stem = save_file_stem(name);
+    if (!named_for_stem(path, stem)) {
+        if (const std::optional<fs::path> target = unique_save_path(save_dir, stem)) {
+            std::error_code ec;
+            fs::rename(path, *target, ec);
+            if (!ec)
+                path = target->string();
+        }
+    }
+    set_summary(id, path, summarize(*save));
     return true;
 }
 
 bool SaveLibrary::remove(SaveId id) {
-    const auto doc = modify_library(library_path, [&](json& d) {
-        json& saves = d.at("saves");
-        const auto it = std::find_if(saves.begin(), saves.end(), [&](const json& entry) {
-            return entry.at("id").get<SaveId>() == id;
-        });
-        if (it == saves.end())
-            return false;
-        saves.erase(it);
-        return true;
-    });
-    if (!doc)
+    const auto path = paths.find(id);
+    if (path == paths.end())
         return false;
-    summaries = summarize(*doc);
+    // Already gone from disk counts as removed.
+    std::error_code ec;
+    fs::remove(path->second, ec);
+    if (ec)
+        return false;
+    paths.erase(path);
+    std::erase_if(summaries, [&](const SaveSummary& s) { return s.id == id; });
     return true;
 }
 
 std::optional<World> SaveLibrary::load(SaveId id) {
-    std::optional<json> doc = read_library(library_path);
-    if (!doc)
+    const auto path = paths.find(id);
+    if (path == paths.end())
         return std::nullopt;
-    json* entry = find_entry(*doc, id);
-    if (!entry)
+    std::optional<json> save = read_save(path->second);
+    if (!save)
         return std::nullopt;
-    std::optional<World> world = WorldJson::from_json(entry->at("world"));
+    std::optional<World> world = WorldJson::from_json(save->at("world"));
     if (!world)
         return std::nullopt;
 
     // Mark it as just played. Not fatal if this write fails: the game still
     // starts (and store() will try again on quit).
-    (*entry)["last_played"] = now_unix_seconds();
-    if (write_json_file(library_path, *doc))
-        summaries = summarize(*doc);
+    (*save)["last_played"] = now_unix_seconds();
+    if (write_json_file(path->second, *save))
+        set_summary(id, path->second, summarize(*save));
     return world;
 }
 
 bool SaveLibrary::store(SaveId id, const World& world) {
-    const auto doc = modify_library(library_path, [&](json& d) {
-        json* entry = find_entry(d, id);
-        if (!entry)
-            return false;
-        (*entry)["world"] = WorldJson::to_json(world);
-        (*entry)["last_played"] = now_unix_seconds();
-        return true;
-    });
-    if (!doc)
+    const auto path = paths.find(id);
+    if (path == paths.end())
         return false;
-    summaries = summarize(*doc);
+    std::optional<json> save = read_save(path->second);
+    if (!save)
+        return false;
+    (*save)["world"] = WorldJson::to_json(world);
+    (*save)["last_played"] = now_unix_seconds();
+    if (!write_json_file(path->second, *save))
+        return false;
+    set_summary(id, path->second, summarize(*save));
     return true;
 }

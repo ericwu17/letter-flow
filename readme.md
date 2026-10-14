@@ -80,16 +80,20 @@ mingw32-make && ./letter-flow.exe
   continue once you've done what they ask; any can be skipped. The tutorial
   is never saved: leaving it, or quitting during it, discards it. *Credits*
   is a placeholder page for now.
-- **Saving**: every save lives in one JSON file, `saves.json`, in SDL's
-  per-user app-data directory (`SDL_GetPrefPath`):
-  `~/Library/Application Support/LetterFlow/LetterFlow/saves.json` on macOS,
-  `~/.local/share/LetterFlow/LetterFlow/saves.json` on Linux,
-  `%APPDATA%\LetterFlow\LetterFlow\saves.json` on Windows.
-  Quitting during a game saves it back into the save you launched. The
-  single `save.json` of earlier versions is imported once, as "Imported
-  game", the first time the menu runs (the old file is left in place). If
-  `saves.json` can't be read, it is renamed to `saves.corrupt-<time>.json`
-  rather than overwritten, and the menu says so.
+- **Saving**: each save is a JSON file of its own in `persistent_saves/`,
+  inside SDL's per-user app-data directory (`SDL_GetPrefPath`):
+  `~/Library/Application Support/LetterFlow/LetterFlow/persistent_saves/` on macOS,
+  `~/.local/share/LetterFlow/LetterFlow/persistent_saves/` on Linux,
+  `%APPDATA%\LetterFlow\LetterFlow\persistent_saves\` on Windows.
+  A save's filename is its name, lowercased with anything but letters and
+  digits turned into `_` (`Bob's Game #2` → `bob_s_game_2.json`); the real
+  name is kept inside the file. Saves whose names give the same filename are
+  numbered (`game_1.json`, `game_1-2.json`, ...), and renaming a save moves
+  it to a file named after its new name. Quitting during a game saves it
+  back into the save you launched. A file in the folder that can't be read
+  is skipped (and left as it is), and the menu says so.
+  The single `saves.json` (and the older `save.json`) of earlier versions is
+  no longer read.
   Each save also holds the statistics history and letter trails (saves from
   before statistics existed still load, with empty history).
   The save includes the RNG's internal state, so a loaded game continues the
@@ -119,7 +123,7 @@ src/sim/                 the game rules: pure logic, deterministic, no SDL/ImGui
 src/persistence/         saving and loading (the only code that knows nlohmann/json)
   world_json.h           WorldJson: World <-> JSON (keeps nlohmann out of world.h)
   serialization.cpp      JSON conversion of the whole simulation state: implements WorldJson
-  save_library.*         SaveLibrary: every save in one JSON file (create, copy, rename, delete, load, store)
+  save_library.*         SaveLibrary: one JSON file per save (create, copy, rename, delete, load, store)
 src/ui/                  Dear ImGui presentation layer (the only place ImGui exists)
   ui.*                   public entry points; shared UI state and its reset, formatting, the dockspace
   ui_internal.h          the per-game UI state (GameUiState) and helpers shared between the ui*.cpp files
@@ -138,7 +142,7 @@ src/app/                 the application shell
 tests/test_geometry.cpp       headless exact road-geometry and truck-motion tests (make test)
 tests/test_road_builder.cpp   headless road-drawing tests: snapping, committing, validity (make test)
 tests/test_serialization.cpp  headless World <-> JSON round-trip tests (make test)
-tests/test_save_library.cpp   headless saves-file tests: slots, corruption, legacy import (make test)
+tests/test_save_library.cpp   headless save-file tests: filenames, duplicates, corruption (make test)
 tests/test_simulation.cpp     headless simulation-rule tests (make test)
 tests/test_stats.cpp          headless StatSeries ring-buffer tests (make test)
 tests/test_tutorial.cpp       headless tutorial play-through on the practice map (make test)

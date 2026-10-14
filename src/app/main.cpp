@@ -157,10 +157,10 @@ int main(int, char**)
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init(nullptr);
 
-    // Every saved game lives in one file (save_library.h). The single
-    // save.json of earlier versions is imported into it on first run.
-    SaveLibrary library(pref_dir + "saves.json");
-    library.import_legacy_save(pref_dir + "save.json");
+    // Every saved game is a file of its own in persistent_saves/
+    // (save_library.h).
+    const std::string saves_dir = pref_dir + "persistent_saves";
+    SaveLibrary library(saves_dir);
 
     // Our state: the whole game lives here once the player launches a save
     // from the menu (empty until then). The UI layer reads/mutates it, and
@@ -239,9 +239,9 @@ int main(int, char**)
     // save.
     if (world && save_id) {
         if (library.store(*save_id, *world))
-            printf("Saved game to %ssaves.json\n", pref_dir.c_str());
+            printf("Saved game to %s\n", saves_dir.c_str());
         else
-            printf("Warning: failed to save game to %ssaves.json\n", pref_dir.c_str());
+            printf("Warning: failed to save game to %s\n", saves_dir.c_str());
     }
 
     // Cleanup
