@@ -567,18 +567,14 @@ void stats_and_trails_follow_a_hub_route() {
     assert(leg1 != leg2);
 
     // Global flows. Spawns are counted per office too, trickle included.
-    assert(g[GlobalStat::LettersSpawned].total == offices[a].stats[OfficeStat::Spawned].total);
-    assert(g[GlobalStat::LettersSpawned].total >= static_cast<int64_t>(kTruckCapacity));
-    assert(g[GlobalStat::LettersLost].total == 0);
+    assert(g[GlobalStat::Spawned].total == offices[a].stats[OfficeStat::Spawned].total);
+    assert(g[GlobalStat::Spawned].total >= static_cast<int64_t>(kTruckCapacity));
+    assert(g[GlobalStat::Lost].total == 0);
     assert(g[GlobalStat::DeliveredOnTime].total == static_cast<int64_t>(kTruckCapacity));
     assert(g[GlobalStat::DeliveredLate].total == 0);
     assert(g[GlobalStat::SpentRoads].total == road_spend);
     assert(g[GlobalStat::SpentTrucks].total == 2 * kTruckDepartureCost);
     assert(g[GlobalStat::SpentOffices].total == 0);  // they were free
-    // Seeded at tick 0; B-mail arrives at 51 after 50 ticks on the road,
-    // C-mail at 110 after 100.
-    assert(g[GlobalStat::DeliveryTicks].total == 51 * to_b + 110 * to_c);
-    assert(g[GlobalStat::TransitTicks].total == 50 * to_b + 100 * to_c);
 
     // Income adds up three ways: globally, per delivering office, per log entry.
     int64_t logged = 0;
@@ -589,26 +585,20 @@ void stats_and_trails_follow_a_hub_route() {
     assert(income == offices[b].stats[OfficeStat::Income].total + offices[c].stats[OfficeStat::Income].total);
     assert(w.get_money() == kStartingMoney - road_spend - 2 * kTruckDepartureCost + income);
 
-    // Offices: B delivers its own mail and forwards C's; each letter waited
-    // 1 tick at A (seeded at 0, left at 1) and C-mail 9 at B (51 -> 60).
+    // Offices: B delivers its own mail and forwards C's.
     assert(offices[b].stats[OfficeStat::Delivered].total == to_b);
     assert(offices[b].stats[OfficeStat::Forwarded].total == to_c);
     assert(offices[c].stats[OfficeStat::Delivered].total == to_c);
-    assert(offices[a].stats[OfficeStat::LettersDeparted].total == static_cast<int64_t>(kTruckCapacity));
-    assert(offices[a].stats[OfficeStat::WaitTicks].total == static_cast<int64_t>(kTruckCapacity));
-    assert(offices[b].stats[OfficeStat::WaitTicks].total == 9 * to_c);
+    assert(offices[a].stats[OfficeStat::Loaded].total == static_cast<int64_t>(kTruckCapacity));
     assert(offices[a].stats[OfficeStat::Departures].total == 1);
 
-    // Schedules: leg 1 took everything; income is credited to the schedule
-    // that carried each letter on its final leg.
+    // Schedules: leg 1 took everything.
     const TruckSchedule& s1 = offices[a].outbound_schedules[0];
     const TruckSchedule& s2 = offices[b].outbound_schedules[0];
     assert(s1.stats[ScheduleStat::Departures].total == 1);
-    assert(s1.stats[ScheduleStat::LettersLoaded].total == static_cast<int64_t>(kTruckCapacity));
+    assert(s1.stats[ScheduleStat::Loaded].total == static_cast<int64_t>(kTruckCapacity));
     assert(s1.stats[ScheduleStat::LeftBehind].total == 0);
-    assert(s2.stats[ScheduleStat::LettersLoaded].total == to_c);
-    assert(s2.stats[ScheduleStat::EmptyDepartures].total == (to_c == 0 ? 1 : 0));
-    assert(s1.stats[ScheduleStat::Income].total + s2.stats[ScheduleStat::Income].total == income);
+    assert(s2.stats[ScheduleStat::Loaded].total == to_c);
     assert(s1.departure_log == (std::vector<DepartureRecord>{{1, static_cast<std::uint32_t>(kTruckCapacity), 0}}));
 
     // Trails, from the recent-deliveries log.
@@ -642,14 +632,13 @@ void lost_letters_are_counted() {
     const int64_t lost = stats[OfficeStat::Lost].total;
     assert(spawned == 2);
     assert(lost >= 98);  // plus any refused trickle spawn on the tick
-    assert(w.get_stats()[GlobalStat::LettersLost].total == lost);
+    assert(w.get_stats()[GlobalStat::Lost].total == lost);
     assert(stats[OfficeStat::Backlog].total == 2);
-    assert(w.get_stats()[GlobalStat::LettersWaiting].total == 2);
+    assert(w.get_stats()[GlobalStat::Backlog].total == 2);
 }
 
-// An unaffordable departure is counted as skipped on the schedule and
-// globally, and a truck whose schedule is removed mid-trip still scores its
-// letters globally (there is just no schedule left to credit).
+// An unaffordable departure does not happen, and a truck whose schedule is
+// removed mid-trip still scores its letters globally.
 void skipped_departures_and_orphaned_trucks() {
     World w = make_line_world(2, 5);
     assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
@@ -657,8 +646,6 @@ void skipped_departures_and_orphaned_trucks() {
     w.set_money(0);
     w.advance_tick();  // tick 1: due, unaffordable
     assert(w.get_trucks().empty());
-    assert(w.get_stats()[GlobalStat::DeparturesSkipped].total == 1);
-    assert(w.get_post_offices()[0].outbound_schedules[0].stats[ScheduleStat::Skipped].total == 1);
 
     w.set_money(money);
     while (w.get_trucks().empty())

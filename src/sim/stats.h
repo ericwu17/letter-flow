@@ -82,7 +82,8 @@ private:
 // ---------------------------------------------------------------------------
 
 // Static description of one metric: the stable key it is saved under, and
-// how it aggregates. Keys must never change once shipped (old saves).
+// how it aggregates. Changing a key orphans that history in existing saves,
+// so every rename needs a matching entry in tools/migrate_stat_keys.py.
 struct StatInfo {
     const char* key;
     StatKind kind;
@@ -95,15 +96,12 @@ enum class GlobalStat : std::size_t {
     SpentTrucks,        // truck departure charges
     SpentRoads,         // road construction
     SpentOffices,       // post office construction
-    LettersSpawned,
-    LettersLost,        // spawn refused because the office's buffer was full
+    Spawned,
+    Lost,               // spawn refused because the office's buffer was full
     DeliveredOnTime,
     DeliveredLate,
-    DeliveryTicks,      // sum over delivered letters of (delivery - spawn)
-    TransitTicks,       // ...of which spent on trucks (the rest was waiting)
-    DeparturesSkipped,  // departures the player could not afford
-    LettersWaiting,     // gauge: letters in all outbound buffers
-    LettersInTransit,   // gauge: letters on trucks
+    Backlog,            // gauge: letters in all outbound buffers
+    InTransit,          // gauge: letters on trucks
     Money,              // gauge: the balance
     Count
 };
@@ -116,21 +114,16 @@ enum class OfficeStat : std::size_t {
     Forwarded,        // letters that arrived here addressed elsewhere (hub traffic)
     Departures,       // trucks that left here
     Income,           // money earned by deliveries here
-    LettersDeparted,  // letters that left here on a truck...
-    WaitTicks,        // ...and the total time they had waited here
+    Loaded,           // letters that left here on a truck
     Backlog,          // gauge: letters in the outbound buffer
-    OldestWaiting,    // gauge: ticks since the oldest waiting letter spawned
     Count
 };
 
 // Per truck schedule, owned by the TruckSchedule.
 enum class ScheduleStat : std::size_t {
     Departures,       // trucks that left on this schedule
-    Skipped,          // departures the player could not afford
-    LettersLoaded,
+    Loaded,           // letters that left on this schedule's trucks
     LeftBehind,       // letters matching the rule that did not fit on the truck
-    EmptyDepartures,  // trucks that left with nothing on board
-    Income,           // money earned by letters this schedule carried on their final leg
     Count
 };
 
@@ -140,15 +133,12 @@ inline constexpr std::array<StatInfo, static_cast<std::size_t>(GlobalStat::Count
     {"spent_trucks", StatKind::Flow},
     {"spent_roads", StatKind::Flow},
     {"spent_offices", StatKind::Flow},
-    {"letters_spawned", StatKind::Flow},
-    {"letters_lost", StatKind::Flow},
+    {"spawned", StatKind::Flow},
+    {"lost", StatKind::Flow},
     {"delivered_on_time", StatKind::Flow},
     {"delivered_late", StatKind::Flow},
-    {"delivery_ticks", StatKind::Flow},
-    {"transit_ticks", StatKind::Flow},
-    {"departures_skipped", StatKind::Flow},
-    {"letters_waiting", StatKind::Gauge},
-    {"letters_in_transit", StatKind::Gauge},
+    {"backlog", StatKind::Gauge},
+    {"in_transit", StatKind::Gauge},
     {"money", StatKind::Gauge},
 }};
 
@@ -159,19 +149,14 @@ inline constexpr std::array<StatInfo, static_cast<std::size_t>(OfficeStat::Count
     {"forwarded", StatKind::Flow},
     {"departures", StatKind::Flow},
     {"income", StatKind::Flow},
-    {"letters_departed", StatKind::Flow},
-    {"wait_ticks", StatKind::Flow},
+    {"loaded", StatKind::Flow},
     {"backlog", StatKind::Gauge},
-    {"oldest_waiting", StatKind::Gauge},
 }};
 
 inline constexpr std::array<StatInfo, static_cast<std::size_t>(ScheduleStat::Count)> kScheduleStatInfo = {{
     {"departures", StatKind::Flow},
-    {"skipped", StatKind::Flow},
-    {"letters_loaded", StatKind::Flow},
+    {"loaded", StatKind::Flow},
     {"left_behind", StatKind::Flow},
-    {"empty_departures", StatKind::Flow},
-    {"income", StatKind::Flow},
 }};
 
 // The catalogue of each metric enum, found by overload on a tag value

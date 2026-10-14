@@ -100,12 +100,6 @@ void FormatValue(Unit unit, double v, char* buf, std::size_t len) {
     }
 }
 
-// "H:MM" for a duration given in fractional hours.
-void FormatHours(double hours, char* buf, std::size_t len) {
-    ui::FormatDuration(static_cast<Tick>(std::llround(std::max(hours, 0.0) * static_cast<double>(kTicksPerHour))),
-                       buf, len);
-}
-
 // ---------------------------------------------------------------------------
 // Time charts
 // ---------------------------------------------------------------------------
@@ -398,8 +392,7 @@ void DrawGlobalTab(const World& world) {
     const int64_t on_time = total(GlobalStat::DeliveredOnTime);
     const int64_t late = total(GlobalStat::DeliveredLate);
     const int64_t delivered = on_time + late;
-    const int64_t lost = total(GlobalStat::LettersLost);
-    const int64_t skipped = total(GlobalStat::DeparturesSkipped);
+    const int64_t lost = total(GlobalStat::Lost);
 
     // Summary for the range: one tile per headline number.
     if (ImGui::BeginTable("summary", 4, ImGuiTableFlags_SizingStretchSame)) {
@@ -439,18 +432,6 @@ void DrawGlobalTab(const World& world) {
         ImGui::EndTable();
     }
     ImGui::Spacing();
-    if (delivered > 0) {
-        const double avg_total = TicksToHours(static_cast<Tick>(total(GlobalStat::DeliveryTicks))) / static_cast<double>(delivered);
-        const double avg_transit = TicksToHours(static_cast<Tick>(total(GlobalStat::TransitTicks))) / static_cast<double>(delivered);
-        char total_text[16], transit_text[16];
-        FormatHours(avg_total, total_text, sizeof(total_text));
-        FormatHours(avg_transit, transit_text, sizeof(transit_text));
-        ImGui::Text("Average delivery takes %s, of which %s on trucks and %.0f%% waiting in offices.",
-                    total_text, transit_text, avg_total > 0.0 ? 100.0 * (1.0 - avg_transit / avg_total) : 0.0);
-    }
-    if (skipped > 0)
-        ImGui::TextColored(kBad, "%lld departures skipped: not enough money to send the truck.",
-                           static_cast<long long>(skipped));
 
     // Charts, two per row.
     const float chart_h = 190.0f;
@@ -467,27 +448,16 @@ void DrawGlobalTab(const World& world) {
     }
     ImGui::TableNextColumn();
     if (BeginTimeChart("Letters", now, "per hour", chart_h)) {
-        PlotRate("Posted", {&g[GlobalStat::LettersSpawned]}, now, Unit::PerHour, kNeutral);
+        PlotRate("Posted", {&g[GlobalStat::Spawned]}, now, Unit::PerHour, kNeutral);
         PlotRate("On time", {&g[GlobalStat::DeliveredOnTime]}, now, Unit::PerHour, kGood);
         PlotRate("Late", {&g[GlobalStat::DeliveredLate]}, now, Unit::PerHour, kWarn);
-        PlotRate("Lost", {&g[GlobalStat::LettersLost]}, now, Unit::PerHour, kBad);
+        PlotRate("Lost", {&g[GlobalStat::Lost]}, now, Unit::PerHour, kBad);
         EndTimeChart();
     }
     ImGui::TableNextColumn();
     if (BeginTimeChart("Letters in the network", now, "letters", chart_h)) {
-        PlotLevel("Waiting in offices", g[GlobalStat::LettersWaiting], now, Unit::Count, 1.0, kWarn);
-        PlotLevel("On trucks", g[GlobalStat::LettersInTransit], now, Unit::Count, 1.0, kNeutral);
-        EndTimeChart();
-    }
-    ImGui::TableNextColumn();
-    if (BeginTimeChart("Delivery time", now, "hours", chart_h)) {
-        const double ticks_to_hours = 1.0 / static_cast<double>(kTicksPerHour);
-        PlotAverage("Total", g[GlobalStat::DeliveryTicks],
-                    {&g[GlobalStat::DeliveredOnTime], &g[GlobalStat::DeliveredLate]}, now, Unit::Hours,
-                    ticks_to_hours, kWarn);
-        PlotAverage("On trucks", g[GlobalStat::TransitTicks],
-                    {&g[GlobalStat::DeliveredOnTime], &g[GlobalStat::DeliveredLate]}, now, Unit::Hours,
-                    ticks_to_hours, kNeutral);
+        PlotLevel("Waiting in offices", g[GlobalStat::Backlog], now, Unit::Count, 1.0, kWarn);
+        PlotLevel("On trucks", g[GlobalStat::InTransit], now, Unit::Count, 1.0, kNeutral);
         EndTimeChart();
     }
     ImGui::TableNextColumn();
@@ -502,13 +472,13 @@ void DrawGlobalTab(const World& world) {
 // Offices
 // ---------------------------------------------------------------------------
 
-// Charts for one office: its mail flows, its backlog against capacity, and
-// how long letters wait there. Stacked, or side by side in three columns.
+// Charts for one office: its mail flows and its backlog against capacity.
+// Stacked, or side by side in two columns.
 void DrawOfficeCharts(const World& world, PostOfficeId id, float height, bool side_by_side) {
     const PostOffice& office = world.get_post_offices()[id];
     const OfficeStats& s = office.stats;
     const Tick now = world.get_tick();
-    if (side_by_side && !ImGui::BeginTable("office_charts", 3, ImGuiTableFlags_SizingStretchSame))
+    if (side_by_side && !ImGui::BeginTable("office_charts", 2, ImGuiTableFlags_SizingStretchSame))
         return;
     auto next_cell = [&] {
         if (side_by_side)
@@ -532,14 +502,6 @@ void DrawOfficeCharts(const World& world, PostOfficeId id, float height, bool si
         ImPlot::PlotInfLines("Capacity", &capacity, 1, cap_spec);
         EndTimeChart();
     }
-    next_cell();
-    if (BeginTimeChart("Waiting time", now, "hours", height)) {
-        PlotAverage("Average wait", s[OfficeStat::WaitTicks], {&s[OfficeStat::LettersDeparted]},
-                    now, Unit::Hours, 1.0 / static_cast<double>(kTicksPerHour), kNeutral);
-        PlotLevel("Oldest letter", s[OfficeStat::OldestWaiting], now, Unit::Hours,
-                  1.0 / static_cast<double>(kTicksPerHour), kWarn);
-        EndTimeChart();
-    }
     if (side_by_side)
         ImGui::EndTable();
 }
@@ -551,22 +513,17 @@ void DrawOfficesTab(const World& world) {
     struct Row {
         PostOfficeId id;
         int64_t spawned, lost, delivered, forwarded, peak_backlog;
-        double avg_wait_hours;  // NaN if nothing departed
-        double fill;            // peak backlog / capacity
+        double fill;  // peak backlog / capacity
     };
     std::vector<Row> rows;
     for (PostOfficeId id = 0; id < offices.size(); ++id) {
         const PostOffice& o = offices[id];
         if (!o.built)
             continue;
-        const int64_t departed = RangeSum(o.stats[OfficeStat::LettersDeparted], now);
         const int64_t peak = RangePeak(o.stats[OfficeStat::Backlog], now);
         rows.push_back({id, RangeSum(o.stats[OfficeStat::Spawned], now), RangeSum(o.stats[OfficeStat::Lost], now),
                         RangeSum(o.stats[OfficeStat::Delivered], now), RangeSum(o.stats[OfficeStat::Forwarded], now),
                         peak,
-                        departed > 0 ? TicksToHours(static_cast<Tick>(RangeSum(o.stats[OfficeStat::WaitTicks], now)))
-                                           / static_cast<double>(departed)
-                                     : std::numeric_limits<double>::quiet_NaN(),
                         o.max_outbound_letters > 0 ? static_cast<double>(peak) / static_cast<double>(o.max_outbound_letters) : 0.0});
     }
     if (rows.empty()) {
@@ -577,14 +534,13 @@ void DrawOfficesTab(const World& world) {
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable |
                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
     const float table_h = std::min(260.0f, ImGui::GetTextLineHeightWithSpacing() * static_cast<float>(rows.size() + 2) + 8.0f);
-    if (ImGui::BeginTable("offices", 8, flags, ImVec2(0.0f, table_h))) {
+    if (ImGui::BeginTable("offices", 7, flags, ImVec2(0.0f, table_h))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Office", ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort);
         ImGui::TableSetupColumn("Posted");
         ImGui::TableSetupColumn("Lost");
         ImGui::TableSetupColumn("Delivered");
         ImGui::TableSetupColumn("Forwarded");
-        ImGui::TableSetupColumn("Avg wait");
         ImGui::TableSetupColumn("Peak backlog");
         ImGui::TableSetupColumn("Backlog", ImGuiTableColumnFlags_NoSort, 120.0f);
         ImGui::TableHeadersRow();
@@ -595,8 +551,7 @@ void DrawOfficesTab(const World& world) {
             case 2: return static_cast<double>(r.lost);
             case 3: return static_cast<double>(r.delivered);
             case 4: return static_cast<double>(r.forwarded);
-            case 5: return std::isnan(r.avg_wait_hours) ? -1.0 : r.avg_wait_hours;
-            case 6: return r.fill;
+            case 5: return r.fill;
             default: return 0.0;
             }
         });
@@ -621,14 +576,6 @@ void DrawOfficesTab(const World& world) {
             ImGui::Text("%lld", static_cast<long long>(r.delivered));
             ImGui::TableNextColumn();
             ImGui::Text("%lld", static_cast<long long>(r.forwarded));
-            ImGui::TableNextColumn();
-            if (std::isnan(r.avg_wait_hours)) {
-                ImGui::TextDisabled("-");
-            } else {
-                char wait[16];
-                FormatHours(r.avg_wait_hours, wait, sizeof(wait));
-                ImGui::TextUnformatted(wait);
-            }
             ImGui::TableNextColumn();
             ImGui::TextColored(r.fill >= 1.0 ? kBad : r.fill >= ui::theme::kWarnFraction ? kWarnText : ImGui::GetStyleColorVec4(ImGuiCol_Text),
                                "%lld / %zu", static_cast<long long>(r.peak_backlog), o.max_outbound_letters);
@@ -656,20 +603,16 @@ void DrawOfficesTab(const World& world) {
 
 // A schedule's utilization over the current range.
 struct Utilization {
-    int64_t departures = 0, loaded = 0, left_behind = 0, empty = 0, skipped = 0, income = 0;
+    int64_t departures = 0, loaded = 0, left_behind = 0;
     double load = 0.0;  // average fraction of kTruckCapacity used per departure
-    int64_t net() const { return income - departures * kTruckDepartureCost; }
 };
 
 Utilization UtilizationOf(const TruckSchedule& schedule, Tick now) {
     const ScheduleStats& s = schedule.stats;
     Utilization u;
     u.departures = RangeSum(s[ScheduleStat::Departures], now);
-    u.loaded = RangeSum(s[ScheduleStat::LettersLoaded], now);
+    u.loaded = RangeSum(s[ScheduleStat::Loaded], now);
     u.left_behind = RangeSum(s[ScheduleStat::LeftBehind], now);
-    u.empty = RangeSum(s[ScheduleStat::EmptyDepartures], now);
-    u.skipped = RangeSum(s[ScheduleStat::Skipped], now);
-    u.income = RangeSum(s[ScheduleStat::Income], now);
     if (u.departures > 0)
         u.load = static_cast<double>(u.loaded) / static_cast<double>(u.departures * static_cast<int64_t>(kTruckCapacity));
     return u;
@@ -680,10 +623,6 @@ void UtilizationTooltipBody(const Utilization& u) {
     ImGui::Text("%lld departures, %.0f%% full on average", static_cast<long long>(u.departures), 100.0 * u.load);
     ImGui::Text("%lld letters carried, %lld left behind (no room)", static_cast<long long>(u.loaded),
                 static_cast<long long>(u.left_behind));
-    ImGui::Text("%lld left empty, %lld skipped (no money)", static_cast<long long>(u.empty),
-                static_cast<long long>(u.skipped));
-    ImGui::Text("Earned $%lld on final legs, net $%lld after truck costs", static_cast<long long>(u.income),
-                static_cast<long long>(u.net()));
 }
 
 // The departure log as bars: letters loaded, with the letters left behind
@@ -752,17 +691,13 @@ void DrawSchedulesTab(const World& world) {
     const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable |
                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
     const float table_h = std::min(280.0f, ImGui::GetTextLineHeightWithSpacing() * static_cast<float>(rows.size() + 2) + 8.0f);
-    if (ImGui::BeginTable("schedules_stats", 10, flags, ImVec2(0.0f, table_h))) {
+    if (ImGui::BeginTable("schedules_stats", 6, flags, ImVec2(0.0f, table_h))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Route", ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 1.6f);
         ImGui::TableSetupColumn("Picks up", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Departures");
         ImGui::TableSetupColumn("Load");
         ImGui::TableSetupColumn("Left behind");
-        ImGui::TableSetupColumn("Empty");
-        ImGui::TableSetupColumn("Skipped");
-        ImGui::TableSetupColumn("Income");
-        ImGui::TableSetupColumn("Net");
         ImGui::TableSetupColumn("Recent loads", ImGuiTableColumnFlags_NoSort, 110.0f);
         ImGui::TableHeadersRow();
         SortRows(rows, [](const Row& r, int column) -> double {
@@ -771,10 +706,6 @@ void DrawSchedulesTab(const World& world) {
             case 2: return static_cast<double>(r.u.departures);
             case 3: return r.u.load;
             case 4: return static_cast<double>(r.u.left_behind);
-            case 5: return static_cast<double>(r.u.empty);
-            case 6: return static_cast<double>(r.u.skipped);
-            case 7: return static_cast<double>(r.u.income);
-            case 8: return static_cast<double>(r.u.net());
             default: return 0.0;
             }
         });
@@ -805,18 +736,6 @@ void DrawSchedulesTab(const World& world) {
                 ImGui::TextColored(kWarnText, "%lld", static_cast<long long>(r.u.left_behind));
             else
                 ImGui::TextDisabled("0");
-            ImGui::TableNextColumn();
-            ImGui::Text("%lld", static_cast<long long>(r.u.empty));
-            ImGui::TableNextColumn();
-            if (r.u.skipped > 0)
-                ImGui::TextColored(kBad, "%lld", static_cast<long long>(r.u.skipped));
-            else
-                ImGui::TextDisabled("0");
-            ImGui::TableNextColumn();
-            ImGui::Text("$%lld", static_cast<long long>(r.u.income));
-            ImGui::TableNextColumn();
-            ImGui::TextColored(r.u.net() >= 0 ? kGood : kBad, "%s$%lld", r.u.net() < 0 ? "-" : "",
-                               static_cast<long long>(std::llabs(r.u.net())));
             ImGui::TableNextColumn();
             std::vector<double> loads;
             for (const DepartureRecord& d : s.departure_log)
@@ -851,7 +770,7 @@ void DrawSchedulesTab(const World& world) {
         ImGui::TableNextColumn();
         const ScheduleStats& s = picked->stats;
         if (BeginTimeChart("Load over time", now, "% of capacity", 210.0f)) {
-            PlotAverage("Load", s[ScheduleStat::LettersLoaded], {&s[ScheduleStat::Departures]}, now,
+            PlotAverage("Load", s[ScheduleStat::Loaded], {&s[ScheduleStat::Departures]}, now,
                         Unit::Percent, 100.0 / static_cast<double>(kTruckCapacity), kNeutral);
             PlotAverage("Left behind", s[ScheduleStat::LeftBehind], {&s[ScheduleStat::Departures]}, now,
                         Unit::Percent, 100.0 / static_cast<double>(kTruckCapacity), kBad);
