@@ -82,10 +82,6 @@ void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
                             const std::vector<PostOffice>& offices, Tick now) {
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH |
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-    if (letters.empty()) {
-        ImGui::TextDisabled("No letters.");
-        return;
-    }
     if (ImGui::BeginTable(table_id, 5, flags, ImVec2(0.0f, 200.0f))) {
         ImGui::TableSetupScrollFreeze(0, 1);  // keep the header visible while scrolling
         ImGui::TableSetupColumn("To");
