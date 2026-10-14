@@ -13,15 +13,21 @@
 
 namespace {
 
-// First departure tick strictly after `now` for a schedule anchored at
-// `start_offset` with departures every `period` ticks. The departure grid is
-// start_offset + k * period for k = 0, 1, 2, ... — e.g. "every 3 hours
-// starting at 00:30" fires at 00:30, 03:30, 06:30, ... and keeps that phase
-// across day boundaries.
+// First departure tick strictly after `now` for a schedule that departs at
+// time of day `start_offset` and then every `period` ticks until midnight.
+// The grid restarts every day: departures fall on
+// day_start + start_offset + k * period for k = 0, 1, 2, ... while that stays
+// within the day. e.g. "every 5 hours starting at 00:30" fires at 00:30,
+// 05:30, 10:30, 15:30, 20:30, then 00:30 again the next day.
 Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
-    if (now < start_offset)
-        return start_offset;
-    return start_offset + ((now - start_offset) / period + 1) * period;
+    const Tick time_of_day = now % kTicksPerDay;
+    const Tick day_start = now - time_of_day;
+    if (time_of_day < start_offset)
+        return day_start + start_offset;
+    const Tick next = start_offset + ((time_of_day - start_offset) / period + 1) * period;
+    if (next < kTicksPerDay)
+        return day_start + next;
+    return day_start + kTicksPerDay + start_offset;  // first departure after is the first departure of the next day.
 }
 
 // Only PostalPrefix rules carry prefixes, so equality (e.g. update_schedule's
@@ -74,21 +80,17 @@ void World::advance_tick() {
     for (PostOfficeId id = 0; id < post_offices.size(); ++id)
         maybe_spawn_letter(id);
 
-    // 2. Departures: fire every schedule that has come due. A single pass is
-    //    safe: spawn_truck() only touches the office's letters buffer and the
-    //    trucks vector — never the schedules vector being iterated here — and
-    //    post_offices itself does not grow during a tick.
+    // 2. Departures: fire every schedule that has come due.
     //    Schedules fire in list order (the order shown in the inspector) and
     //    spawn_truck() MOVES picked-up letters out of the buffer, so when
     //    several schedules of one office depart on the same tick and their
     //    rules both match a letter, the first schedule in the list wins it.
     for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
         for (TruckSchedule& schedule : post_offices[id].outbound_schedules) {
-            if (schedule.period == 0 || current_tick < schedule.next_departure)
-                continue;
-            spawn_truck(id, schedule);  // at most one truck per schedule per tick...
-            while (current_tick >= schedule.next_departure)
-                schedule.next_departure += schedule.period;  // ...missed departures are skipped
+            if (schedule.period != 0 && current_tick >= schedule.next_departure) {
+                spawn_truck(id, schedule);
+                schedule.next_departure = first_departure_after(schedule.start_offset, schedule.period, current_tick);
+            }
         }
     }
 

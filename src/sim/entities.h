@@ -197,9 +197,10 @@ struct TruckSchedule {
     PostOfficeId dst = kNoPostOffice;  // src is implicitly the office that owns this schedule
     RoutingRule rule;                  // which outbound letters the truck picks up
     Tick period = 0;                   // one departure every `period` ticks (must be > 0)
-    Tick start_offset = 0;             // time of day of the first possible departure, in ticks
-                                       // since midnight; departures fall on the grid
-                                       // start_offset + k * period (k = 0, 1, 2, ...)
+    Tick start_offset = 0;             // time of day of the first departure, in ticks since
+                                       // midnight; each day, departures fall on the grid
+                                       // start_offset + k * period (k = 0, 1, 2, ...) up
+                                       // to midnight, then restart at start_offset
     Tick next_departure = 0;           // absolute tick of the next departure
 
     // Utilization history. Kept across update_schedule() edits (it is the same

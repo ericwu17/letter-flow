@@ -83,9 +83,10 @@ public:
     // hence schedules). Returns false and changes nothing if the id is
     // invalid, the office is already built, or the player cannot afford it.
     bool build_office(PostOfficeId office);
-    // Creates a truck schedule on the src -> dst route: departures fall on the
-    // grid start_offset + k * period (both in ticks; start_offset is a time of
-    // day, i.e. ticks since midnight of day one). The routing rule decides
+    // Creates a truck schedule on the src -> dst route: each day, departures
+    // fall on the grid start_offset + k * period up to midnight, restarting at
+    // start_offset the next day (both in ticks; start_offset is a time of day,
+    // i.e. ticks since midnight). The routing rule decides
     // which outbound letters each departure picks up (at most kTruckCapacity).
     // Creating a schedule is free; each departure costs kTruckDepartureCost.
     // Returns false and changes nothing if the route is invalid (bad ids,

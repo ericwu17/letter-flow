@@ -295,7 +295,7 @@ void trucks_carry_at_most_capacity() {
 // (the grid point strictly after creation).
 void departures_follow_the_offset_grid() {
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
-    const Tick huge = 100 * kTicksPerDay;  // one departure, ever
+    const Tick huge = 100 * kTicksPerDay;  // one departure a day, at the start offset
 
     World w = make_line_world(2, 5);  // cargo waiting at office 0, all addressed to 1
     assert(w.add_schedule(0, 1, huge, 1000, all));
@@ -317,6 +317,29 @@ void departures_follow_the_offset_grid() {
     assert(w2.get_trucks().empty());
     w2.advance_tick();  // tick 700
     assert(w2.get_trucks().size() == 1);
+}
+
+// The offset grid restarts every day: "every 5 hours from 00:30" departs at
+// 00:30, 05:30, 10:30, 15:30, 20:30 and then 00:30 again — not 01:30, which
+// is where a grid running on from tick 0 would land.
+void departures_restart_each_day() {
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
+    const Tick half_hour = kTicksPerHour / 2;
+
+    World w = make_line_world(2, 0);
+    assert(w.add_schedule(0, 1, 5 * kTicksPerHour, half_hour, all));
+    std::vector<Tick> departures;
+    while (w.get_tick() < 2 * kTicksPerDay) {
+        const Tick due = w.get_post_offices()[0].outbound_schedules[0].next_departure;
+        w.advance_tick();
+        if (w.get_tick() == due)
+            departures.push_back(due);
+    }
+    std::vector<Tick> expected;
+    for (Tick day = 0; day < 2; ++day)
+        for (Tick k = 0; k < 5; ++k)
+            expected.push_back(day * kTicksPerDay + half_hour + k * 5 * kTicksPerHour);
+    assert(departures == expected);
 }
 
 // List order is pick-up priority: when two schedules depart on the same tick
@@ -451,7 +474,7 @@ void observed_truck_expires_on_arrival() {
 // removed road), in-flight trucks still deliver, and the road can be rebuilt.
 void road_removal() {
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
-    const Tick huge = 100 * kTicksPerDay;  // one departure, ever
+    const Tick huge = 100 * kTicksPerDay;  // one departure a day, at the start offset
 
     // --- removal, validation and no refund --------------------------------
     World w = make_line_world(3, 5);  // roads: 0-1, 1-2
@@ -739,6 +762,8 @@ int main() {
     printf("PASS trucks_carry_at_most_capacity\n");
     departures_follow_the_offset_grid();
     printf("PASS departures_follow_the_offset_grid\n");
+    departures_restart_each_day();
+    printf("PASS departures_restart_each_day\n");
     first_matching_schedule_wins_contested_letters();
     printf("PASS first_matching_schedule_wins_contested_letters\n");
     empty_buffer_still_spawns_a_truck();
