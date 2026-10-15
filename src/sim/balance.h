@@ -77,6 +77,19 @@ constexpr OfficeClass kOfficeClasses[] = {
     {30, 60, 3.0},   // city
     {50, 100, 1.0},  // major city
 };
+constexpr std::size_t kNumOfficeClasses = sizeof(kOfficeClasses) / sizeof(kOfficeClasses[0]);
+
+// Which kOfficeClasses entry an office with this mail rate belongs to (offices
+// keep only the numbers): the largest class whose letters_per_day it reaches,
+// or the smallest class if it reaches none.
+constexpr std::size_t office_class_of(std::size_t letters_per_day) {
+    std::size_t index = 0;
+    for (std::size_t i = 1; i < kNumOfficeClasses; ++i) {
+        if (letters_per_day >= kOfficeClasses[i].letters_per_day)
+            index = i;
+    }
+    return index;
+}
 
 // Where a new office may appear: at least kOfficeSpawnMargin inside the
 // world's edges, kOfficeMinSpacing from every other office and

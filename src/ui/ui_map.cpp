@@ -590,6 +590,86 @@ void DrawChip(ImDrawList* draw, ImVec2 center, const char* text, ImU32 text_colo
     draw->AddText({min.x + pad_x, min.y + pad_y}, text_color, text);
 }
 
+// Each office class (kOfficeClasses) has its own shape, so they tell apart at
+// a glance: a circle for a small town, a triangle for a city and a square for
+// a major city.
+enum class OfficeShape { Circle, Triangle, Square };
+
+OfficeShape OfficeShapeOf(const PostOffice& office) {
+    static_assert(kNumOfficeClasses == 3, "one shape per office class");
+    constexpr OfficeShape kShapes[] = {OfficeShape::Circle, OfficeShape::Triangle, OfficeShape::Square};
+    return kShapes[office_class_of(office.letters_per_day)];
+}
+
+// How far an office's shape reaches from its center, for a circle of radius
+// `r`: the triangle and square are sized to look about as heavy as it.
+float OfficeShapeExtent(OfficeShape shape, float r) {
+    switch (shape) {
+    case OfficeShape::Triangle: return r * 1.35f;               // circumradius
+    case OfficeShape::Square:   return r * 0.88f * std::sqrt(2.0f);  // half-diagonal
+    case OfficeShape::Circle:   break;
+    }
+    return r;
+}
+
+// An office's outline around `c`, clockwise (screen y points down) from the
+// point straight above `c`, so the clock-style fill can sweep along it from
+// 12 o'clock. The triangle is centered on its centroid.
+std::vector<ImVec2> OfficeOutline(OfficeShape shape, ImVec2 c, float r) {
+    switch (shape) {
+    case OfficeShape::Triangle: {
+        const float R = OfficeShapeExtent(shape, r);
+        const float half_side = R * std::sqrt(3.0f) * 0.5f;
+        return {{c.x, c.y - R}, {c.x + half_side, c.y + R * 0.5f}, {c.x - half_side, c.y + R * 0.5f}};
+    }
+    case OfficeShape::Square: {
+        const float h = r * 0.88f;
+        return {{c.x, c.y - h}, {c.x + h, c.y - h}, {c.x + h, c.y + h}, {c.x - h, c.y + h}, {c.x - h, c.y - h}};
+    }
+    case OfficeShape::Circle:
+        break;
+    }
+    constexpr int kSegments = 48;
+    std::vector<ImVec2> points;
+    for (int i = 0; i < kSegments; ++i) {
+        const float a = 2.0f * IM_PI * static_cast<float>(i) / static_cast<float>(kSegments);
+        points.emplace_back(c.x + r * std::sin(a), c.y - r * std::cos(a));
+    }
+    return points;
+}
+
+// The angle of `p` around `c`, clockwise from 12 o'clock, in [0, 2pi).
+float ClockAngle(ImVec2 c, ImVec2 p) {
+    const float a = std::atan2(p.x - c.x, c.y - p.y);
+    return a < 0.0f ? a + 2.0f * IM_PI : a;
+}
+
+// Fills the wedge of `outline` (as OfficeOutline makes it) that sweeps
+// clockwise from 12 o'clock through `fraction` of a full turn around `c`.
+void FillOutlineWedge(ImDrawList* draw, ImVec2 c, const std::vector<ImVec2>& outline, float fraction,
+                      ImU32 color) {
+    const float sweep = 2.0f * IM_PI * fraction;
+    const ImVec2 dir(std::sin(sweep), -std::cos(sweep));
+    auto cross = [](ImVec2 u, ImVec2 v) { return u.x * v.y - u.y * v.x; };
+    draw->PathLineTo(c);
+    for (std::size_t i = 0; i < outline.size(); ++i) {
+        const ImVec2 a = outline[i];
+        const ImVec2 b = outline[(i + 1) % outline.size()];
+        draw->PathLineTo(a);
+        const float b_angle = i + 1 == outline.size() ? 2.0f * IM_PI : ClockAngle(c, b);
+        if (b_angle < sweep)
+            continue;
+        // The sweep ends on this edge: where the ray from c at `sweep` meets it.
+        const ImVec2 ab(b.x - a.x, b.y - a.y);
+        const float denom = cross(dir, ab);
+        const float t = denom == 0.0f ? 1.0f
+            : std::clamp(-cross(dir, ImVec2(a.x - c.x, a.y - c.y)) / denom, 0.0f, 1.0f);
+        draw->PathLineTo({a.x + ab.x * t, a.y + ab.y * t});
+        break;
+    }
+    draw->PathFillConcave(color);
+}
+
 }  // namespace
 
 void ui::HighlightLetter(const Letter& letter) {
@@ -672,13 +752,17 @@ void DrawWorld(World& world) {
         const PostOffice& office = offices[id];
         const ImVec2 c = WorldToScreen(view, office.pos);
         const bool full = office.outbound_letters.size() >= office.max_outbound_letters;
+        // Its class's shape; the rings around it clear the shape's corners.
+        const OfficeShape shape = OfficeShapeOf(office);
+        const float extent = OfficeShapeExtent(shape, office_radius);
         if (selected_truck == nullptr && id == g_game.selected_office) {
-            draw->AddCircleFilled(c, office_radius + 9.0f, kColorSelectionHalo);
-            draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 3.0f);
+            draw->AddCircleFilled(c, extent + 9.0f, kColorSelectionHalo);
+            draw->AddCircle(c, extent + 5.0f, kColorSelection, 0, 3.0f);
         }
         if (full)
-            draw->AddCircleFilled(c, office_radius + 8.0f + 5.0f * flash, U32(theme::kBad, 0.15f + 0.35f * flash));
-        draw->AddCircleFilled({c.x, c.y + 2.0f}, office_radius + 1.0f, kColorShadow);
+            draw->AddCircleFilled(c, extent + 8.0f + 5.0f * flash, U32(theme::kBad, 0.15f + 0.35f * flash));
+        const std::vector<ImVec2> shadow = OfficeOutline(shape, {c.x, c.y + 2.0f}, office_radius + 1.0f);
+        draw->AddConvexPolyFilled(shadow.data(), static_cast<int>(shadow.size()), kColorShadow);
 
         // Clock-style fill: a wedge sweeping clockwise from 12 o'clock
         // shows how full the outbound buffer is, turning warn then bad
@@ -687,16 +771,14 @@ void DrawWorld(World& world) {
             : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
                                  / static_cast<float>(office.max_outbound_letters));
         const ImU32 fill_color = U32(theme::FillColor(fill));
-        draw->AddCircleFilled(c, office_radius, kColorOfficeBody);
-        if (fill >= 1.0f) {
-            draw->AddCircleFilled(c, office_radius, fill_color);
-        } else if (fill > 0.0f) {
-            const float start = -IM_PI * 0.5f;
-            draw->PathLineTo(c);
-            draw->PathArcTo(c, office_radius, start, start + 2.0f * IM_PI * fill);
-            draw->PathFillConcave(fill_color);
-        }
-        draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 2.0f);
+        const std::vector<ImVec2> outline = OfficeOutline(shape, c, office_radius);
+        const int outline_size = static_cast<int>(outline.size());
+        draw->AddConvexPolyFilled(outline.data(), outline_size, kColorOfficeBody);
+        if (fill >= 1.0f)
+            draw->AddConvexPolyFilled(outline.data(), outline_size, fill_color);
+        else if (fill > 0.0f)
+            FillOutlineWedge(draw, c, outline, fill, fill_color);
+        draw->AddPolyline(outline.data(), outline_size, kColorOfficeRing, ImDrawFlags_Closed, 2.0f);
 
         // The overflow timer, just outside the rim: an arc sweeping clockwise
         // from 12 o'clock while the office is full and shrinking back once it
@@ -704,7 +786,7 @@ void DrawWorld(World& world) {
         if (office.overflow_ticks > 0) {
             const float timer = std::min(1.0f, static_cast<float>(office.overflow_ticks)
                                                    / static_cast<float>(kOverflowLimit));
-            const float timer_radius = office_radius + 4.5f;
+            const float timer_radius = extent + 4.5f;
             const float start = -IM_PI * 0.5f;
             draw->AddCircle(c, timer_radius, kColorOverflowTrack, 0, 3.0f);
             draw->PathArcTo(c, timer_radius, start, start + 2.0f * IM_PI * timer);
@@ -712,7 +794,8 @@ void DrawWorld(World& world) {
         }
 
         const ImVec2 name_size = ImGui::CalcTextSize(office.name.c_str());
-        const ImVec2 name_pos(c.x - name_size.x * 0.5f, c.y - office_radius - name_size.y - 7.0f);
+        const float top = std::max(office_radius, c.y - outline.front().y);  // the triangle's tip pokes up
+        const ImVec2 name_pos(c.x - name_size.x * 0.5f, c.y - top - name_size.y - 7.0f);
         theme::DrawHaloText(draw, name_pos, full ? kColorOverflow : kColorText, kColorHalo,
                             office.name.c_str());
 

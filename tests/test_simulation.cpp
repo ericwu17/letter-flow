@@ -811,6 +811,28 @@ void spawn_placement_and_names() {
     assert(named_out == before);
 }
 
+// Offices keep only their numbers; office_class_of() recovers the class
+// they were spawned from (the map draws each class with its own shape).
+void office_classes_are_recoverable() {
+    for (std::size_t i = 0; i < kNumOfficeClasses; ++i)
+        assert(office_class_of(kOfficeClasses[i].letters_per_day) == i);
+    assert(office_class_of(0) == 0);
+    assert(office_class_of(kOfficeClasses[kNumOfficeClasses - 1].letters_per_day * 2) == kNumOfficeClasses - 1);
+
+    World w;
+    std::set<std::size_t> seen;
+    for (int i = 0; i < 30; ++i) {
+        const std::optional<PostOfficeId> id = w.spawn_random_office();
+        assert(id.has_value());
+        const PostOffice& office = w.get_post_offices()[*id];
+        const OfficeClass& office_class = kOfficeClasses[office_class_of(office.letters_per_day)];
+        assert(office.letters_per_day == office_class.letters_per_day);
+        assert(office.max_outbound_letters == office_class.max_outbound_letters);
+        seen.insert(office_class_of(office.letters_per_day));
+    }
+    assert(seen.size() == kNumOfficeClasses);
+}
+
 // A full office runs down its overflow timer; one that runs out ends the
 // game and freezes it.
 void overflow_ends_the_game() {
@@ -1012,6 +1034,8 @@ int main() {
     printf("PASS offices_appear_over_time\n");
     spawn_placement_and_names();
     printf("PASS spawn_placement_and_names\n");
+    office_classes_are_recoverable();
+    printf("PASS office_classes_are_recoverable\n");
     overflow_ends_the_game();
     printf("PASS overflow_ends_the_game\n");
     overflow_timer_drains();
