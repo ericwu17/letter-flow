@@ -72,6 +72,11 @@ struct InspectorForms {
     // Why the last schedule-table edit was refused, shown under the table
     // until the next accepted edit.
     std::string edit_error;
+    // The schedule clicked in the schedule table (by id, so it survives
+    // reorders), and the one under the mouse last frame: the outbound letters
+    // the hovered one's rule matches are highlighted, else the selected one's.
+    ScheduleId selected_schedule = kNoSchedule;
+    ScheduleId hovered_schedule = kNoSchedule;
     // The postal-code field: InputText needs a mutable buffer. Every
     // keystroke is committed to the World, so the map label updates live.
     char postal_code[128] = "";

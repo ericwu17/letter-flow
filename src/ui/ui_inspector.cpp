@@ -15,7 +15,8 @@
 #include "sim/truck.h"
 #include "sim/world.h"
 #include "imgui.h"
-#include "imgui_internal.h"  // GetActiveID (EditPrefixList), dock node flags
+#include "imgui_internal.h"  // active ID and table row position (EditPrefixList, DrawScheduleTable),
+                             // dock node flags
 
 #include <algorithm>
 #include <cfloat>
@@ -36,6 +37,8 @@ using ui::SelectOffice;
 namespace theme = ui::theme;
 
 constexpr ImVec4 kColorErrorText = theme::kBad;  // red inline messages
+// Row tint for the selected schedule and the outbound letters it matches.
+constexpr ImU32 kColorScheduleMatch = theme::U32(theme::kNavy, 0.18f);
 
 // What "+ New schedule" creates; the player tunes it in the schedule table.
 // The rule is ExactDestination: it picks up mail for the chosen office.
@@ -78,9 +81,11 @@ void TextRightAligned(const char* text, ImVec4 color = theme::kInk) {
 // Letters as a To / Here for / Deadline / Value / Max bonus table; overdue
 // deadlines get a red LATE tag. "Here for" is the time since the letter got where it is
 // (this office, or this truck). Hovering a row shows the letter's trail and
-// highlights its journey on the map.
+// highlights its journey on the map. Rows whose letter `matching`'s rule would
+// pick up (if a schedule is given) are tinted.
 void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
-                            const std::vector<PostOffice>& offices, Tick now) {
+                            const std::vector<PostOffice>& offices, Tick now,
+                            const TruckSchedule* matching = nullptr) {
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH |
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
     if (ImGui::BeginTable(table_id, 5, flags, ImVec2(0.0f, 200.0f))) {
@@ -95,6 +100,9 @@ void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
             const Letter& letter = letters[i];
             ImGui::PushID(static_cast<int>(i));
             ImGui::TableNextRow();
+            if (matching != nullptr &&
+                matching->rule.matches(letter.dst, offices[letter.dst].postal_code, matching->dst))
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, kColorScheduleMatch);
             ImGui::TableSetColumnIndex(0);
             // Event mail stands out in the warn color (the tooltip says why).
             if (letter.event)
@@ -388,6 +396,7 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
     std::optional<std::pair<std::size_t, TruckSchedule>> schedule_to_update;
     std::optional<std::size_t> schedule_to_remove;
     std::optional<std::pair<std::size_t, std::size_t>> schedule_to_move;  // from, to
+    std::vector<float> row_tops;  // screen y where each row starts, to find the one under the mouse
 
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH |
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
@@ -418,6 +427,9 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
 
             ImGui::PushID(static_cast<int>(i));
             ImGui::TableNextRow();
+            row_tops.push_back(ImGui::GetCurrentTable()->RowPosY1);
+            if (g_game.forms.selected_schedule == schedule.id)
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, kColorScheduleMatch);
 
             // #: the drag handle. Dropping it on another row reorders the
             // schedule to that position.
@@ -512,6 +524,27 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
             ImGui::PopID();
         }
         ImGui::EndTable();
+
+        // The row under the mouse, found once the table's extent is known.
+        // Hovering a row highlights the letters it matches; a click anywhere
+        // on it selects it, and a second click deselects it unless it went
+        // into one of the row's fields (or its grip or buttons).
+        const ImVec2 mouse = ImGui::GetMousePos();
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()) &&
+            !row_tops.empty() && mouse.y >= row_tops.front()) {
+            const auto row = std::upper_bound(row_tops.begin(), row_tops.end(), mouse.y) - row_tops.begin() - 1;
+            const ScheduleId id = office.outbound_schedules[static_cast<std::size_t>(row)].id;
+            g_game.forms.hovered_schedule = id;
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                // The click activated a widget in the row (one submitted this
+                // frame, not one elsewhere that is still active).
+                const ImGuiContext& ctx = *ImGui::GetCurrentContext();
+                const bool entered_field = ctx.ActiveId != 0 && ctx.ActiveIdIsAlive == ctx.ActiveId;
+                ScheduleId& selected_id = g_game.forms.selected_schedule;
+                selected_id = entered_field || selected_id != id ? id : kNoSchedule;
+            }
+        }
     }
     ImGui::EndChild();
     ui::NoteItemAnchor(TutorialAnchor::ScheduleTable);
@@ -708,9 +741,20 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
     ImGui::Spacing();
     DrawOfficeEventNote(world, selected);
 
+    // Whose letters to highlight: the schedule hovered in the table below
+    // last frame (cleared here, so the hover lapses once it stops), else the
+    // selected one, if it still exists.
+    const ScheduleId hovered = std::exchange(g_game.forms.hovered_schedule, kNoSchedule);
+    const ScheduleId highlighted = hovered != kNoSchedule ? hovered : g_game.forms.selected_schedule;
+    const TruckSchedule* highlighted_schedule = nullptr;
+    for (const TruckSchedule& schedule : office.outbound_schedules)
+        if (schedule.id == highlighted)
+            highlighted_schedule = &schedule;
+
     ImGui::BeginGroup();  // header and table, as one tutorial anchor
     if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
-        DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
+        DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick(),
+                        highlighted_schedule);
     ImGui::EndGroup();
     ui::NoteItemAnchor(TutorialAnchor::OutboundLetters);
 
