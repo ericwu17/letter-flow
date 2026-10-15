@@ -727,10 +727,14 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
     const bool settings_open = ImGui::CollapsingHeader("Settings");
     ui::NoteItemAnchor(TutorialAnchor::SettingsHeader);
     if (settings_open) {
+        // One ID per office: an edit still active when the selection changes
+        // would otherwise carry its text over to the newly selected office.
+        ImGui::PushID(static_cast<int>(selected));
         char* postal_buf = g_game.forms.postal_code;
         if (ImGui::InputText("Postal code", postal_buf, sizeof(g_game.forms.postal_code)))
             world.set_postal_code(selected, postal_buf);
         ui::NoteItemAnchor(TutorialAnchor::PostalCodeInput);
+        ImGui::PopID();
     }
 }
 
