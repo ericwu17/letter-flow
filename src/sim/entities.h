@@ -56,6 +56,7 @@ struct Letter {
     Tick deadline = 0;  // delivered by this tick -> earn an early bonus on top of value
     int value = 0;      // always earned on delivery, on time or late
     int max_bonus = 0;  // extra earned if delivered instantly; scaled by time left
+    bool event = false; // posted for a NetworkEvent rather than as everyday mail
     // Where the letter has been, oldest first: Spawned, then a Departed /
     // Arrived pair per truck ride. Empty for letters from saves that predate
     // trails. Bounded by the number of hops, i.e. a handful of entries.
@@ -100,6 +101,29 @@ struct DeliveredLetter {
 
 // How many delivered letters the World remembers, newest last.
 inline constexpr std::size_t kRecentDeliveriesSize = 100;
+
+// A burst of extra mail that strains part of the network for a while (see
+// the Events section of balance.h). The World announces it kEventWarning
+// before `start`, then posts its `letters` evenly over [start, end). Event
+// letters are ordinary letters (flagged Letter::event): same deadlines,
+// values, routing and lost-when-full rule.
+enum class EventType {
+    Surge,     // every other office mails `dst`, each in proportion to its size
+    Corridor,  // `src` mails `dst`
+};
+
+struct NetworkEvent {
+    EventType type = EventType::Surge;
+    PostOfficeId src = kNoPostOffice;  // Corridor only
+    PostOfficeId dst = kNoPostOffice;
+    Tick start = 0;           // first tick letters are posted
+    Tick end = 0;             // first tick after the event
+    std::size_t letters = 0;  // how many the event posts in all (lost ones included)
+    std::size_t posted = 0;   // how many it has posted (or tried to) so far
+    std::size_t name = 0;     // which of its type's names it goes by (events.h)
+
+    bool operator==(const NetworkEvent&) const = default;
+};
 
 // A change in money at an office: a truck arrival that paid out (`amount` > 0,
 // the total earned — values plus early bonuses — across every letter finally

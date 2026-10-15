@@ -94,9 +94,9 @@ enum class GlobalStat : std::size_t {
     IncomeValue,        // base letter values paid on delivery
     IncomeBonus,        // early-delivery bonuses
     SpentTrucks,        // truck departure charges
-    SpentRoads,         // road construction
     Spawned,
     Lost,               // spawn refused because the office's buffer was full
+    EventSpawned,       // letters posted for network events (also counted in Spawned)
     DeliveredOnTime,
     DeliveredLate,
     Backlog,            // gauge: letters in all outbound buffers
@@ -109,6 +109,7 @@ enum class GlobalStat : std::size_t {
 enum class OfficeStat : std::size_t {
     Spawned,          // letters created here
     Lost,             // letters refused here because the buffer was full
+    EventSpawned,     // letters posted here for network events (also counted in Spawned)
     Delivered,        // letters that reached this office as their destination
     Forwarded,        // letters that arrived here addressed elsewhere (hub traffic)
     Departures,       // trucks that left here
@@ -130,9 +131,9 @@ inline constexpr std::array<StatInfo, static_cast<std::size_t>(GlobalStat::Count
     {"income_value", StatKind::Flow},
     {"income_bonus", StatKind::Flow},
     {"spent_trucks", StatKind::Flow},
-    {"spent_roads", StatKind::Flow},
     {"spawned", StatKind::Flow},
     {"lost", StatKind::Flow},
+    {"event_spawned", StatKind::Flow},
     {"delivered_on_time", StatKind::Flow},
     {"delivered_late", StatKind::Flow},
     {"backlog", StatKind::Gauge},
@@ -143,6 +144,7 @@ inline constexpr std::array<StatInfo, static_cast<std::size_t>(GlobalStat::Count
 inline constexpr std::array<StatInfo, static_cast<std::size_t>(OfficeStat::Count)> kOfficeStatInfo = {{
     {"spawned", StatKind::Flow},
     {"lost", StatKind::Flow},
+    {"event_spawned", StatKind::Flow},
     {"delivered", StatKind::Flow},
     {"forwarded", StatKind::Flow},
     {"departures", StatKind::Flow},

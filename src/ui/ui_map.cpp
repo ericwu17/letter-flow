@@ -1,7 +1,7 @@
 // ui_map.cpp — the map: the camera, offices, roads and trucks drawn into
 // the background draw list, hover and click-to-select, road building and the
-// road destroy menu, money popups, new offices' pulses, overflow warnings and
-// hovered letters' journeys.
+// road destroy menu, money popups, new offices' pulses, overflow warnings,
+// the network event's markers and hovered letters' journeys.
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
@@ -62,6 +62,8 @@ constexpr ImU32 kColorOfficeRing    = U32(theme::kNavy);
 constexpr ImU32 kColorOverflow      = U32(theme::kBad);          // overflow timer, full office's name
 constexpr ImU32 kColorOverflowTrack = U32(theme::kBad, 0.2f);    // the rest of the timer's circle
 constexpr ImU32 kColorSpawnPulse    = U32(theme::kNavy);         // ring around a new office
+constexpr ImU32 kColorEvent         = U32(theme::kWarn);         // network event markers
+constexpr ImU32 kColorEventOutline  = U32(theme::kWarnText);
 constexpr ImU32 kColorSelection     = U32(theme::kRed);          // selection rings, hovered journey
 constexpr ImU32 kColorSelectionHalo = U32(theme::kRed, 0.22f);
 constexpr ImU32 kColorDestination   = U32(theme::kNavy);         // a hovered letter's destination
@@ -255,7 +257,7 @@ void SelectTruck(const std::shared_ptr<const Truck>& truck) {
 // Road destroy menu: a small ImGui popup anchored at the point where the road
 // was clicked, armed by DrawWorld's click handling. Two-step confirm — the
 // first click on the entry turns it into "Confirm?", the second destroys the
-// road (no refund). Esc or a click elsewhere dismisses it; either way the
+// road. Esc or a click elsewhere dismisses it; either way the
 // state resets so the highlight and the menu never outlive each other.
 // ---------------------------------------------------------------------------
 
@@ -293,7 +295,7 @@ void DrawRoadMenu(World& world) {
 
         // NoAutoClosePopups keeps the first click from closing the popup, so
         // the same entry can serve as the two-step confirm.
-        if (ImGui::Selectable(g_game.road_menu.confirm ? "Confirm? (no refund)" : "Destroy road",
+        if (ImGui::Selectable(g_game.road_menu.confirm ? "Confirm?" : "Destroy road",
                               false, ImGuiSelectableFlags_NoAutoClosePopups)) {
             if (!g_game.road_menu.confirm) {
                 g_game.road_menu.confirm = true;
@@ -398,6 +400,84 @@ void DrawSpawnPulses(ImDrawList* draw, const ViewTransform& view, const World& w
         draw->AddCircle(c, office_radius + 4.0f + kSpawnPulseReach * grow, color, 0, 3.0f);
     }
     std::erase_if(g_game.spawn_pulses, [](const SpawnPulse& p) { return p.age >= kSpawnPulseDuration; });
+}
+
+// The network event's markers under the offices: for a corridor, a dashed
+// arrow straight from one office to the other (roads or not), marching while
+// the event runs; for a running surge, a slow pulsing ring round its target.
+void DrawEventRoute(ImDrawList* draw, const ViewTransform& view, const World& world, float office_radius) {
+    const std::optional<NetworkEvent>& event = world.get_event();
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    if (!event || event->dst >= offices.size())
+        return;
+    const bool running = world.get_tick() >= event->start;
+    const auto time = static_cast<float>(ImGui::GetTime());
+    const ImVec2 b = WorldToScreen(view, offices[event->dst].pos);
+
+    if (event->type == EventType::Surge) {
+        if (running) {
+            const float t = std::fmod(time, 1.6f) / 1.6f;
+            draw->AddCircle(b, office_radius + 8.0f + 14.0f * t, U32(theme::kWarn, 0.8f * (1.0f - t)), 0, 3.0f);
+        }
+        return;
+    }
+    if (event->src >= offices.size())
+        return;
+    const ImVec2 a = WorldToScreen(view, offices[event->src].pos);
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    const float length = std::sqrt(dx * dx + dy * dy);
+    const float from = office_radius + 8.0f;
+    const float to = length - office_radius - 12.0f;  // where the arrowhead's tip is
+    if (to <= from)
+        return;
+    const ImVec2 dir(dx / length, dy / length);
+    auto at = [&](float d) { return ImVec2(a.x + dir.x * d, a.y + dir.y * d); };
+
+    constexpr float kDash = 10.0f;
+    constexpr float kGap = 7.0f;
+    const float shift = running ? std::fmod(time * 30.0f, kDash + kGap) : 0.0f;
+    for (float d = from - (kDash + kGap) + shift; d < to - 10.0f; d += kDash + kGap) {
+        const float d0 = std::max(d, from);
+        const float d1 = std::min(d + kDash, to - 10.0f);
+        if (d1 > d0)
+            draw->AddLine(at(d0), at(d1), kColorEvent, 3.0f);
+    }
+    // The arrowhead.
+    const ImVec2 tip = at(to);
+    const ImVec2 base = at(to - 12.0f);
+    const ImVec2 side(-dir.y * 6.5f, dir.x * 6.5f);
+    draw->AddTriangleFilled(tip, {base.x + side.x, base.y + side.y}, {base.x - side.x, base.y - side.y}, kColorEvent);
+}
+
+// A five-pointed star centered on `c`, `outer` pixels to its tips.
+void DrawStar(ImDrawList* draw, ImVec2 c, float outer, ImU32 fill, ImU32 outline) {
+    ImVec2 points[10];
+    for (int i = 0; i < 10; ++i) {
+        const float angle = -IM_PI * 0.5f + static_cast<float>(i) * IM_PI / 5.0f;
+        const float r = i % 2 == 0 ? outer : outer * 0.45f;
+        points[i] = ImVec2(c.x + r * std::cos(angle), c.y + r * std::sin(angle));
+    }
+    for (const ImVec2& p : points)
+        draw->PathLineTo(p);
+    draw->PathFillConcave(fill);
+    draw->AddPolyline(points, 10, outline, ImDrawFlags_Closed, 1.2f);
+}
+
+// The network event's badges, over the offices: a star on a surge's target,
+// and on both ends of a corridor.
+void DrawEventBadges(ImDrawList* draw, const ViewTransform& view, const World& world, float office_radius) {
+    const std::optional<NetworkEvent>& event = world.get_event();
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    if (!event)
+        return;
+    for (const PostOfficeId id : {event->src, event->dst}) {
+        if (id >= offices.size())
+            continue;  // a surge has no src
+        const ImVec2 c = WorldToScreen(view, offices[id].pos);
+        DrawStar(draw, {c.x + office_radius * 0.85f, c.y - office_radius * 0.85f}, 7.0f, kColorEvent,
+                 kColorEventOutline);
+    }
 }
 
 // A hovered letter's journey on the map: the legs it has travelled, along the
@@ -554,18 +634,18 @@ void DrawWorld(World& world) {
             draw->AddCircleFilled(b, 3.5f, kColorRoadVertex);
         }
 
-        // Show live cost.
-        const double total_len = polyline_length(full_path);
-        const int cost = road_cost(full_path);
-        char cost_text[64];
-        std::snprintf(cost_text, sizeof(cost_text), "$%d (%.0f units)", cost, total_len);
-        const ImVec2 cost_size = ImGui::CalcTextSize(cost_text);
-        DrawChip(draw, {io.MousePos.x + 16.0f + cost_size.x * 0.5f, io.MousePos.y + 2.0f}, cost_text,
+        // Show the live length.
+        char length_text[64];
+        std::snprintf(length_text, sizeof(length_text), "%.0f units", polyline_length(full_path));
+        const ImVec2 length_size = ImGui::CalcTextSize(length_text);
+        DrawChip(draw, {io.MousePos.x + 16.0f + length_size.x * 0.5f, io.MousePos.y + 2.0f}, length_text,
                  g_game.road_builder.is_invalid ? kColorRoadBad : kColorText);
     }
 
-    // Post offices, with the rings announcing new ones underneath.
+    // Post offices, with the rings announcing new ones and the network
+    // event's route underneath.
     DrawSpawnPulses(draw, view, world, office_radius);
+    DrawEventRoute(draw, view, world, office_radius);
     // Full offices flash in real time, so they keep flashing while paused.
     const float flash = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.0f * IM_PI * 1.25f);
     for (PostOfficeId id = 0; id < offices.size(); ++id) {
@@ -627,6 +707,7 @@ void DrawWorld(World& world) {
         }
     }
 
+    DrawEventBadges(draw, view, world, office_radius);
     DrawMoneyPopups(draw, view, world);
 
     // The mouse is "on the map" unless an ImGui window or the transport bar

@@ -8,6 +8,7 @@
 
 #include "sim/balance.h"
 #include "sim/entities.h"
+#include "sim/events.h"
 #include "sim/game_types.h"
 #include "sim/road.h"
 #include "sim/road_builder.h"
@@ -95,7 +96,12 @@ void DrawLetterTable(const char* table_id, const std::vector<Letter>& letters,
             ImGui::PushID(static_cast<int>(i));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
+            // Event mail stands out in the warn color (the tooltip says why).
+            if (letter.event)
+                ImGui::PushStyleColor(ImGuiCol_Text, theme::kWarnText);
             ImGui::Selectable(offices[letter.dst].name.c_str(), false, ImGuiSelectableFlags_SpanAllColumns);
+            if (letter.event)
+                ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {
                 ui::HighlightLetter(letter);
                 ImGui::BeginTooltip();
@@ -586,6 +592,44 @@ void DrawCapacityBar(const PostOffice& office) {
     }
 }
 
+// A line about the network event, if this office is part of it: the
+// target of a surge, or either end of a corridor. (A surge's letters come
+// from every other office, too many to call out one by one.)
+void DrawOfficeEventNote(const World& world, PostOfficeId selected) {
+    const std::optional<NetworkEvent>& event = world.get_event();
+    if (!event)
+        return;
+    const bool is_dst = event->dst == selected;
+    const bool is_src = event->type == EventType::Corridor && event->src == selected;
+    if (!is_dst && !is_src)
+        return;
+
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    const Tick now = world.get_tick();
+    const std::size_t left = event->letters - std::min(event->letters, event->posted);
+    char when[32];
+    FormatDayTime(event->start, when, sizeof(when));
+    const std::string title = event_title(*event, offices);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(theme::kWarnText, "%s", title.c_str());
+    if (is_src) {
+        if (now < event->start)
+            ImGui::Text("About %zu extra letters for %s will be posted here, from %s.", left,
+                        offices[event->dst].name.c_str(), when);
+        else
+            ImGui::Text("Posting extra letters for %s: about %zu still to come.", offices[event->dst].name.c_str(),
+                        left);
+    } else {
+        const char* from = event->type == EventType::Corridor ? offices[event->src].name.c_str() : "all over";
+        if (now < event->start)
+            ImGui::Text("About %zu extra letters will be posted to here from %s, from %s.", left, from, when);
+        else
+            ImGui::Text("Extra letters are being posted to here from %s: about %zu still to come.", from, left);
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+}
+
 // The "+ New schedule" button under the schedule table: it opens a list of
 // the offices this one reaches by road, narrowed as you type (by name or
 // postal code), and picking one adds a schedule there with the defaults
@@ -662,6 +706,7 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
 
     DrawCapacityBar(office);
     ImGui::Spacing();
+    DrawOfficeEventNote(world, selected);
 
     ImGui::BeginGroup();  // header and table, as one tutorial anchor
     if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))

@@ -10,12 +10,16 @@
 #include "sim/truck.h"
 
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <random>
 #include <string>
 #include <utility>
 #include <vector>
+
+// A tick that never comes: "not scheduled".
+inline constexpr Tick kNever = std::numeric_limits<Tick>::max();
 
 class World {
 private:
@@ -46,6 +50,13 @@ private:
     // while the game is still on.
     PostOfficeId game_over_office = kNoPostOffice;
 
+    // Network events (see the Events section of balance.h): the one
+    // announced or running, if any; when the next is announced (kNever until
+    // the map first has kEventMinOffices offices); and how many have ended.
+    std::optional<NetworkEvent> event;
+    Tick next_event_announce = kNever;
+    std::size_t events_so_far = 0;
+
     // Payouts and departure charges since the UI last called
     // take_money_events(). Transient: neither serialized nor compared.
     std::vector<MoneyEvent> money_events;
@@ -54,7 +65,20 @@ private:
 
     // Simulation internals, driven by advance_tick() / seed_letters().
     void maybe_spawn_letter(PostOfficeId office);  // per-tick Bernoulli roll
-    void spawn_letter(PostOfficeId office);        // one letter, buffer permitting
+    // One letter posted at `office`, buffer permitting (else it is counted as
+    // lost). Addressed to `forced_dst` if given, else to a random other
+    // office (see kDestinationDistanceScale); `event` marks event mail.
+    void spawn_letter(PostOfficeId office, std::optional<PostOfficeId> forced_dst = std::nullopt,
+                      bool event = false);
+    // The odds of a letter posted at `src` going to each other office:
+    // fills `candidates` with the other offices and `weights` with their odds.
+    void destination_weights(PostOfficeId src, std::vector<PostOfficeId>& candidates,
+                             std::vector<double>& weights) const;
+    // Network events: schedules, announces, runs and retires them (one step
+    // of advance_tick()).
+    void update_event();
+    void announce_event();
+    void post_event_letters();
     void spawn_truck(PostOfficeId src, TruckSchedule& schedule);
     void deliver(Truck& truck);
     // Runs every office's overflow timer for this tick and ends the game when
@@ -73,9 +97,9 @@ private:
                                     const RoutingRule& normalized_rule) const;
 
 public:
-    // Advances the simulation by one tick: new offices appearing,
-    // probabilistic letter spawning, schedule departures, truck arrivals and
-    // delivery/scoring, and the overflow timers. Does nothing at all once the
+    // Advances the simulation by one tick: new offices appearing, network
+    // events, probabilistic letter spawning, schedule departures, truck
+    // arrivals and delivery/scoring, and the overflow timers. Does nothing at all once the
     // game is over (the clock stops too).
     void advance_tick();
 
@@ -141,6 +165,10 @@ public:
     // Overrides the balance (scenarios, tests and debugging; normal play only
     // earns and spends).
     void set_money(int m) { money = m; }
+    // Moves the next network event's announcement to `tick` (tests and
+    // debugging; normal play schedules events itself). Meant for between
+    // events: one that ends schedules the next itself, overriding this.
+    void schedule_next_event(Tick tick) { next_event_announce = tick; }
 
     // --- Road API ---
 
@@ -152,13 +180,13 @@ public:
     // non-empty and horizontal, vertical, or exactly 45° diagonal; the road
     // must not touch itself, and
     // may touch existing roads only at post offices they share as endpoints.
-    // The player pays road_cost(road) up front. Internally the
+    // Roads are free to build. Internally the
     // road is normalized so src < dst. Returns false and changes nothing on
     // failure.
     bool add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> vertices);
 
     // Destroy the road connecting a and b (undirected; argument order does not
-    // matter). There is NO refund. Truck schedules only ever use the direct
+    // matter). Truck schedules only ever use the direct
     // road (add_schedule checks has_road), and spawn_truck would dereference
     // an empty vertex list once the road is gone, so every schedule between
     // the two endpoints is cascade-deleted on both offices (roads are
@@ -202,6 +230,13 @@ public:
     bool is_game_over() const { return game_over_office != kNoPostOffice; }
     // The office that overflowed and ended the game, or kNoPostOffice.
     PostOfficeId get_game_over_office() const { return game_over_office; }
+    // The network event announced or under way, if any. It is under way once
+    // the clock reaches its start.
+    const std::optional<NetworkEvent>& get_event() const { return event; }
+    // When the next event will be announced, or kNever while events are off.
+    Tick get_next_event_announce() const { return next_event_announce; }
+    // How many events have run their course.
+    std::size_t get_events_so_far() const { return events_so_far; }
     bool is_paused() const { return paused; }
     float get_speed_multiplier() const { return speed_multiplier; }
     int get_money() const { return money; }

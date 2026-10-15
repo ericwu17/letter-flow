@@ -12,12 +12,9 @@
 // Economy
 // ---------------------------------------------------------------------------
 
-// Enough to join the opening offices by road, with some left over for truck
-// departures; the rest has to be earned by delivering mail.
+// Pays for the first truck departures (roads are free); the rest has to be
+// earned by delivering mail.
 constexpr int kStartingMoney = 5000;
-
-// Road construction: cost per world unit of road length (rounded up).
-constexpr float kRoadCostPerUnit = 5.0f;
 
 // ---------------------------------------------------------------------------
 // Trucks
@@ -99,3 +96,29 @@ constexpr int kOfficeSpawnAttempts     = 200;
 // The game is over when any office's timer reaches this (6 in-game hours,
 // about 45 seconds at normal speed).
 constexpr Tick kOverflowLimit = hours_minutes_to_ticks(6, 0);
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+// Now and then a burst of extra mail strains one part of the network for a
+// day (see NetworkEvent in entities.h): a Surge, where every other office
+// mails one city, or a Corridor, where one city mails another. Events stay
+// off until the map has kEventMinOffices offices; the first is announced
+// kFirstEventDelay after that, and each later one starts kEventPeriod after
+// the previous start. Every event is announced kEventWarning before it
+// starts, and runs for kEventDuration.
+constexpr std::size_t kEventMinOffices = 5;
+constexpr Tick kFirstEventDelay = 4 * kTicksPerDay;
+constexpr Tick kEventPeriod     = 7 * kTicksPerDay;
+constexpr Tick kEventWarning    = 12 * kTicksPerHour;
+constexpr Tick kEventDuration   = kTicksPerDay;
+
+// How big an event is, as a share of the mail the whole network posts in a
+// normal day (the sum of every office's letters_per_day) when it is
+// announced; so events keep pace with the network. A Corridor lands on a
+// single office, so it takes a smaller share. On top of that, every event is
+// kEventGrowth (of the base size) bigger than the one before.
+constexpr double kSurgeShare    = 0.5;
+constexpr double kCorridorShare = 0.3;
+constexpr double kEventGrowth   = 0.1;

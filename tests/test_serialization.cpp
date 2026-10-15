@@ -16,6 +16,7 @@
 // corrupt or old-format save, and parsed back. The saves file itself is
 // covered by test_save_library.cpp.
 #include "sim/balance.h"
+#include "sim/office_names.h"
 #include "sim/world.h"
 #include "persistence/world_json.h"
 
@@ -72,6 +73,15 @@ World create_nj_world() {
     World w;
     for (const OfficeDef& def : defs)
         w.add_office(def.name, def.postal_code, def.pos, def.letters_per_day, /*max_outbound_letters=*/1000);
+
+    // Every name new offices could get, taken by an inert office far off the
+    // map: no office appears on its own here. Unserved, a new office would
+    // overflow and end the game a few days in (sooner if an event mails it).
+    int64_t x = -100'000;
+    for (const char* name : office_names()) {
+        w.add_office(name, "", {x, -100'000}, 0, /*max_outbound_letters=*/100'000);
+        x -= 1'000;
+    }
     return w;
 }
 
@@ -96,7 +106,7 @@ World build_fixture_world() {
     World w = create_nj_world();  // offices: names, postal codes, positions and
                                   // spawn rates all non-default
 
-    // The fixture builds far more than a real opening could afford, so
+    // The fixture runs more trucks than a real opening could afford, so
     // fund it directly instead of depending on kStartingMoney.
     w.set_money(100'000);
     w.seed_letters();
@@ -145,10 +155,21 @@ World build_fixture_world() {
     for (const auto& [src, dst] : kLateRoutes)
         assert(w.add_schedule(src, dst, kTicksPerDay, late_start, all_rule));
 
+    // Network events, brought forward (the first would otherwise wait four
+    // days): one runs its course early on, so events_so_far is non-zero, and
+    // a second is still running when the fixture is done, with its letters
+    // in the buffers.
+    w.schedule_next_event(1000);
+
     // Retune one schedule a day in, so its edit log is non-empty too.
     for (Tick t = 0; t < kTicksPerDay; ++t)
         w.advance_tick();
     assert(w.update_schedule(3, 0, 7 * kTicksPerHour, 7, all_rule));
+
+    while (w.get_event().has_value())
+        w.advance_tick();
+    assert(w.get_events_so_far() == 1);                          // default: 0
+    w.schedule_next_event(2 * kTicksPerDay);  // runs from day 2.5 to day 3.5
 
     // Run past the late batch's arrivals (the longest of these routes is
     // in flight for well under 500 ticks).
@@ -182,10 +203,8 @@ World build_fixture_world() {
     assert(!w.get_trucks().empty());                 // default: empty
     assert(!w.get_roads().empty());                  // default: empty
     assert(w.get_next_office_spawn() != kOfficeSpawnIntervalStart);  // default: that
-    // Offices that appeared on their own (no postal code), besides the
-    // twelve NJ ones and the flooded one.
-    assert(w.get_post_offices().size() > 13);
-    assert(w.get_post_offices()[12].postal_code.empty());
+    assert(w.get_event().has_value() && w.get_event()->posted > 0);   // default: none
+    assert(w.get_next_event_announce() != kNever);                     // default: kNever
 
     // Statistics and trails (stats.h, Letter::trail): every kind of stat
     // table has been written to, and every log holds entries.
@@ -193,10 +212,13 @@ World build_fixture_world() {
     assert(!w.get_recent_deliveries().empty());
     bool office_stats = false, schedule_stats = false, departure_log = false, edits = false,
          schedule_ids = false, trails = false, departed_stop = false;
+    bool event_letters = false;
     for (const PostOffice& office : w.get_post_offices()) {
         office_stats |= office.stats != OfficeStats{};
-        for (const Letter& letter : office.outbound_letters)
+        for (const Letter& letter : office.outbound_letters) {
             trails |= !letter.trail.empty();
+            event_letters |= letter.event;
+        }
         for (const TruckSchedule& schedule : office.outbound_schedules) {
             schedule_stats |= schedule.stats != ScheduleStats{};
             departure_log |= !schedule.departure_log.empty();
@@ -212,8 +234,16 @@ World build_fixture_world() {
                 departed_stop |= stop.schedule != kNoSchedule;
     }
     assert(office_stats && schedule_stats && departure_log && edits && schedule_ids);
-    assert(trails && departed_stop && truck_schedule);
+    assert(trails && departed_stop && truck_schedule && event_letters);
     return w;
+}
+
+// The fixture world, built once (it simulates days of a 300-office world)
+// and handed out as a fresh load of its save each time: copying a World
+// would share its trucks between the copies.
+World fixture_world() {
+    static const std::string saved = dump(build_fixture_world());
+    return *parse(saved);
 }
 
 // --- the tests -------------------------------------------------------------
@@ -265,7 +295,7 @@ void game_over_round_trips() {
 }
 
 void determinism_survives_round_trip() {
-    World a = build_fixture_world();
+    World a = fixture_world();
     auto b = parse(dump(a));
     assert(b.has_value());
 
@@ -281,7 +311,7 @@ void determinism_survives_round_trip() {
 
 void unusable_saves_load_as_nullopt() {
     // Start from a known-good save to corrupt.
-    const World original = build_fixture_world();
+    const World original = fixture_world();
     const std::string good_json = dump(original);
 
     // Not JSON at all.
@@ -314,12 +344,20 @@ void unusable_saves_load_as_nullopt() {
         assert(!parse(s));
     }
 
-    // Dangling post-office reference (office 99 does not exist).
+    // An event aimed at an office that does not exist.
+    {
+        nlohmann::json j = nlohmann::json::parse(good_json);
+        assert(j.contains("event"));
+        j["event"]["dst"] = 9999;
+        assert(!WorldJson::from_json(j));
+    }
+
+    // Dangling post-office reference (office 9999 does not exist).
     {
         std::string s = good_json;
         const auto at = s.find("\"dst\": 1,");
         assert(at != std::string::npos);
-        s.replace(at, 9, "\"dst\": 99,");
+        s.replace(at, 9, "\"dst\": 9999,");
         assert(!parse(s));
     }
 }
@@ -327,7 +365,7 @@ void unusable_saves_load_as_nullopt() {
 // Saves from before multi-prefix rules hold a single "prefix" string; it
 // loads as a one-prefix list.
 void legacy_single_prefix_loads() {
-    const World original = build_fixture_world();
+    const World original = fixture_world();
     std::string s = dump(original);
     const auto mercer = s.find("\"NJ/Mercer\"");
     assert(mercer != std::string::npos);
@@ -349,7 +387,7 @@ void legacy_single_prefix_loads() {
 // Saves from before statistics, trails and schedule ids still load: with
 // empty history, and with every schedule given a distinct fresh id.
 void pre_stats_save_loads() {
-    const World original = build_fixture_world();
+    const World original = fixture_world();
 
     // Drop every line holding a key that did not exist before (dump(2) puts
     // each scalar key on its own line), then every "stats"/"trail"/log
@@ -428,7 +466,7 @@ std::string without_rng_line(const std::string& json) {
 // A corrupted RNG dump is not fatal: the game loads with a freshly seeded
 // RNG and everything else intact (only the random sequence changes).
 void corrupt_rng_falls_back_to_fresh_rng() {
-    const World original = build_fixture_world();
+    const World original = fixture_world();
     const std::string good = dump(original);
     std::string s = good;
 

@@ -1,8 +1,8 @@
 // test_simulation.cpp — headless tests for the simulation rules (World's
 // public API): routing-rule matching, schedule validation, departure pricing
 // and truck capacity, the departure grid, pick-up priority,
-// delivery/forwarding, offices appearing on their own, and the overflow timer
-// that ends the game. Run with
+// delivery/forwarding, offices appearing on their own, the overflow timer
+// that ends the game, and network events. Run with
 // `make test`. Pure simulation layer: no SDL/imgui/OpenGL — no window needed.
 //
 // Everything here is deterministic (fixed RNG seed, fixed tick counts) and
@@ -10,6 +10,7 @@
 // asserts hold on every run.
 #include "sim/entities.h"
 #include "sim/balance.h"
+#include "sim/events.h"
 #include "sim/game_types.h"
 #include "sim/office_names.h"
 #include "sim/road.h"
@@ -19,6 +20,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -110,7 +112,7 @@ void schedule_validation_and_pricing() {
     World w = make_line_world(3, 0);
     add_underpass_road(w, 0, 2);  // for the distinct-dst schedule below
     const int money0 = w.get_money();
-    assert(money0 < kStartingMoney);  // the fixture roads were paid for
+    assert(money0 == kStartingMoney);  // the fixture roads were free
 
     // Invalid routes are rejected and cost nothing.
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
@@ -470,7 +472,7 @@ void observed_truck_expires_on_arrival() {
     assert(w.get_letters_delivered_on_time() + w.get_letters_delivered_late() == cargo);
 }
 
-// remove_road: no refund, lookups fail in both argument orders, invalid calls
+// remove_road: money untouched, lookups fail in both argument orders, invalid calls
 // change nothing, dependent schedules cascade-delete on both endpoint
 // offices, the world stays stable afterwards (no phantom departures from the
 // removed road), in-flight trucks still deliver, and the road can be rebuilt.
@@ -478,7 +480,7 @@ void road_removal() {
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
     const Tick huge = 100 * kTicksPerDay;  // one departure a day, at the start offset
 
-    // --- removal, validation and no refund --------------------------------
+    // --- removal, validation and money untouched --------------------------
     World w = make_line_world(3, 5);  // roads: 0-1, 1-2
     add_underpass_road(w, 0, 2);
     const int money0 = w.get_money();
@@ -490,7 +492,7 @@ void road_removal() {
     assert(w.get_roads().size() == 3);
 
     assert(w.remove_road(1, 0));  // argument order does not matter
-    assert(w.get_money() == money0);  // NO refund
+    assert(w.get_money() == money0);
     assert(w.get_roads().size() == 2);
     assert(!w.has_road(0, 1));
     assert(!w.has_road(1, 0));
@@ -534,14 +536,14 @@ void road_removal() {
     assert(w3.get_trucks().empty());  // arrived and retired
     assert(w3.get_letters_delivered_on_time() + w3.get_letters_delivered_late() == 5);
 
-    // --- rebuild: a removed road can be built again, at full price ---------
+    // --- rebuild: a removed road can be built again, for free --------------
     World w4 = make_line_world(2, 0);
     const int money4 = w4.get_money();
     assert(w4.remove_road(0, 1));
     assert(w4.get_money() == money4);
     add_straight_road(w4, 0, 1);
     assert(w4.has_road(0, 1));
-    assert(w4.get_money() < money4);  // paid again — the removal refunded nothing
+    assert(w4.get_money() == money4);
 }
 
 // Hub-and-spoke end to end: mail rides a leg it is not addressed to, is
@@ -581,10 +583,9 @@ void stats_and_trails_follow_a_hub_route() {
     const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100);
     const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100);
     w.seed_letters();
-    const int before_roads = w.get_money();
     add_straight_road(w, a, b);
     add_straight_road(w, b, c);
-    const int road_spend = before_roads - w.get_money();
+    assert(w.get_money() == kStartingMoney);  // roads are free
     assert(w.add_schedule(a, b, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, {"P"}}));
     assert(w.add_schedule(b, c, 100 * kTicksPerDay, 60, {RoutingRuleType::ExactDestination, {}}));
 
@@ -608,7 +609,6 @@ void stats_and_trails_follow_a_hub_route() {
     assert(g[GlobalStat::Lost].total == 0);
     assert(g[GlobalStat::DeliveredOnTime].total == static_cast<int64_t>(kTruckCapacity));
     assert(g[GlobalStat::DeliveredLate].total == 0);
-    assert(g[GlobalStat::SpentRoads].total == road_spend);
     assert(g[GlobalStat::SpentTrucks].total == 2 * kTruckDepartureCost);
 
     // Income adds up three ways: globally, per delivering office, per log entry.
@@ -618,7 +618,7 @@ void stats_and_trails_follow_a_hub_route() {
     const int64_t income = g[GlobalStat::IncomeValue].total + g[GlobalStat::IncomeBonus].total;
     assert(income == logged);
     assert(income == offices[b].stats[OfficeStat::Income].total + offices[c].stats[OfficeStat::Income].total);
-    assert(w.get_money() == kStartingMoney - road_spend - 2 * kTruckDepartureCost + income);
+    assert(w.get_money() == kStartingMoney - 2 * kTruckDepartureCost + income);
 
     // Offices: B delivers its own mail and forwards C's.
     assert(offices[b].stats[OfficeStat::Delivered].total == to_b);
@@ -759,7 +759,6 @@ void offices_appear_over_time() {
 void spawn_placement_and_names() {
     // A road straight across the middle of the map.
     World w;
-    w.set_money(1'000'000);
     const PostOfficeId west = w.add_office("West", "", {100, 650}, 0, 100);
     const PostOfficeId east = w.add_office("East", "", {1900, 650}, 0, 100);
     add_straight_road(w, west, east);
@@ -835,6 +834,113 @@ void overflow_timer_drains() {
     assert(!w.is_game_over());
 }
 
+// --- network events ---------------------------------------------------------
+
+// Five busy offices with roomy buffers, plus every name in the list taken by
+// an inert office far off the map, so no office appears on its own and none
+// ever overflows: events can run as long as a test likes. Returns the total
+// letters_per_day (what event sizes scale with).
+double make_event_world(World& w) {
+    const Position spots[] = {{300, 300}, {1700, 300}, {1000, 650}, {300, 1000}, {1700, 1000}};
+    double network_mail = 0.0;
+    for (std::size_t i = 0; i < std::size(spots); ++i) {
+        const std::size_t letters_per_day = 20 + 10 * i;
+        w.add_office("Office " + std::to_string(i), "", spots[i], letters_per_day, /*max_outbound_letters=*/100'000);
+        network_mail += static_cast<double>(letters_per_day);
+    }
+    int64_t x = -100'000;
+    for (const char* name : office_names()) {
+        w.add_office(name, "", {x, -100'000}, 0, /*max_outbound_letters=*/100'000);
+        x -= 1'000;
+    }
+    return network_mail;
+}
+
+// Events stay off until the map has kEventMinOffices offices; the first is
+// then announced kFirstEventDelay later.
+void events_wait_for_five_offices() {
+    World w;
+    for (int64_t i = 0; i < 4; ++i)
+        w.add_office("O" + std::to_string(i), "", {200 + 300 * i, 200}, 10, 1000);
+    for (int i = 0; i < 1000; ++i)
+        w.advance_tick();
+    assert(w.get_next_event_announce() == kNever);
+    assert(!w.get_event().has_value());
+
+    w.add_office("O4", "", {1400, 200}, 10, 1000);
+    w.advance_tick();
+    assert(w.get_next_event_announce() == w.get_tick() + kFirstEventDelay);
+
+    // A new game opens with fewer: events are off.
+    assert(create_default_world().get_next_event_announce() == kNever);
+}
+
+// One event from announcement to end: on time, the right size, its letters
+// posted evenly over its day and addressed as its type says, and the next
+// one scheduled a period after its start. Runs events until it has seen
+// both types.
+void events_post_their_mail() {
+    World w;
+    const double network_mail = make_event_world(w);
+    bool seen_surge = false, seen_corridor = false;
+    for (std::size_t k = 0; k < 12 && !(seen_surge && seen_corridor); ++k) {
+        assert(w.get_events_so_far() == k);
+        w.schedule_next_event(w.get_tick() + 1);
+        w.advance_tick();  // the announcement
+        assert(w.get_event().has_value());
+        const NetworkEvent e = *w.get_event();
+        const Tick announced = w.get_tick();
+        assert(e.start == announced + kEventWarning);
+        assert(e.end == e.start + kEventDuration);
+        assert(e.posted == 0);
+        const double share = e.type == EventType::Surge ? kSurgeShare : kCorridorShare;
+        assert(e.letters == static_cast<std::size_t>(
+                                std::llround(share * network_mail * (1.0 + kEventGrowth * static_cast<double>(k)))));
+        assert(e.letters > 0);
+        assert(e.dst < w.get_post_offices().size());
+        if (e.type == EventType::Corridor)
+            assert(e.src < w.get_post_offices().size() && e.src != e.dst);
+        assert(!event_title(e, w.get_post_offices()).empty());
+        assert(!event_summary(e, w.get_post_offices()).empty());
+        (e.type == EventType::Surge ? seen_surge : seen_corridor) = true;
+
+        // Nothing before the start; then evenly, all of it by the last tick.
+        const int64_t before = w.get_stats()[GlobalStat::EventSpawned].total;
+        while (w.get_tick() + 1 < e.start)
+            w.advance_tick();
+        assert(w.get_event()->posted == 0);
+        while (w.get_tick() + 1 < e.start + kEventDuration / 2)
+            w.advance_tick();
+        assert(w.get_event()->posted == e.letters * (kEventDuration / 2) / kEventDuration);
+        while (w.get_tick() + 1 < e.end)
+            w.advance_tick();
+        assert(w.get_event()->posted == e.letters);
+        assert(w.get_stats()[GlobalStat::EventSpawned].total - before == static_cast<int64_t>(e.letters));
+
+        // Every letter this event posted, by its type's rule, inside its day.
+        std::size_t found = 0;
+        for (const PostOffice& office : w.get_post_offices()) {
+            for (const Letter& letter : office.outbound_letters) {
+                if (!letter.event || letter.created < e.start)
+                    continue;
+                ++found;
+                assert(letter.created < e.end);
+                assert(letter.dst == e.dst && letter.src != e.dst);
+                if (e.type == EventType::Corridor)
+                    assert(letter.src == e.src);
+            }
+        }
+        assert(found == e.letters);  // no trucks, roomy buffers: all still waiting
+
+        // The end: retired, counted, and the next one a period after this start.
+        w.advance_tick();
+        assert(!w.get_event().has_value());
+        assert(w.get_events_so_far() == k + 1);
+        assert(w.get_next_event_announce() == e.start + kEventPeriod - kEventWarning);
+    }
+    assert(seen_surge && seen_corridor);
+}
+
 }  // namespace
 
 int main() {
@@ -883,6 +989,10 @@ int main() {
     printf("PASS overflow_ends_the_game\n");
     overflow_timer_drains();
     printf("PASS overflow_timer_drains\n");
+    events_wait_for_five_offices();
+    printf("PASS events_wait_for_five_offices\n");
+    events_post_their_mail();
+    printf("PASS events_post_their_mail\n");
 
     printf("all simulation tests passed\n");
     return 0;

@@ -6,7 +6,6 @@
 #pragma once
 
 #include "sim/entities.h"
-#include "sim/balance.h"
 #include "sim/game_types.h"
 
 #include <cmath>
@@ -69,12 +68,4 @@ double distance_to_polyline(Position p, const std::vector<Position>& vertices);
 // Convenience: total Euclidean length of a road.
 inline double road_length(const Road& road) {
     return polyline_length(road.vertices);
-}
-
-// Cost in money to build a road: ceil(total length) * kRoadCostPerUnit.
-inline int road_cost(const std::vector<Position>& vertices) {
-    return static_cast<int>(std::ceil(polyline_length(vertices)) * kRoadCostPerUnit);
-}
-inline int road_cost(const Road& road) {
-    return road_cost(road.vertices);
 }

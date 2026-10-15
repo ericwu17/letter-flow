@@ -387,8 +387,7 @@ void DrawGlobalTab(const World& world) {
     const int64_t income_value = total(GlobalStat::IncomeValue);
     const int64_t income_bonus = total(GlobalStat::IncomeBonus);
     const int64_t spent_trucks = total(GlobalStat::SpentTrucks);
-    const int64_t spent_roads = total(GlobalStat::SpentRoads);
-    const int64_t net = income_value + income_bonus - spent_trucks - spent_roads;
+    const int64_t net = income_value + income_bonus - spent_trucks;
     const int64_t on_time = total(GlobalStat::DeliveredOnTime);
     const int64_t late = total(GlobalStat::DeliveredLate);
     const int64_t delivered = on_time + late;
@@ -404,10 +403,9 @@ void DrawGlobalTab(const World& world) {
         EndStatTile();
 
         ImGui::TableNextColumn();
-        std::snprintf(value, sizeof(value), "$%lld", static_cast<long long>(spent_trucks + spent_roads));
+        std::snprintf(value, sizeof(value), "$%lld", static_cast<long long>(spent_trucks));
         BeginStatTile("spent", "Spent", value, ui::theme::kInk);
-        ImGui::TextDisabled("$%lld trucks, $%lld roads", static_cast<long long>(spent_trucks),
-                            static_cast<long long>(spent_roads));
+        ImGui::TextDisabled("on truck departures");
         EndStatTile();
 
         ImGui::TableNextColumn();
@@ -442,12 +440,12 @@ void DrawGlobalTab(const World& world) {
         PlotRate("Letter values", {&g[GlobalStat::IncomeValue]}, now, Unit::MoneyPerHour, kGood);
         PlotRate("Early bonuses", {&g[GlobalStat::IncomeBonus]}, now, Unit::MoneyPerHour, kWarn);
         PlotRate("Trucks", {&g[GlobalStat::SpentTrucks]}, now, Unit::MoneyPerHour, kSpend);
-        PlotRate("Roads", {&g[GlobalStat::SpentRoads]}, now, Unit::MoneyPerHour, kMuted);
         EndTimeChart();
     }
     ImGui::TableNextColumn();
     if (BeginTimeChart("Letters", now, "per hour", chart_h)) {
         PlotRate("Posted", {&g[GlobalStat::Spawned]}, now, Unit::PerHour, kNeutral);
+        PlotRate("Event mail", {&g[GlobalStat::EventSpawned]}, now, Unit::PerHour, kSpend);
         PlotRate("On time", {&g[GlobalStat::DeliveredOnTime]}, now, Unit::PerHour, kGood);
         PlotRate("Late", {&g[GlobalStat::DeliveredLate]}, now, Unit::PerHour, kWarn);
         PlotRate("Lost", {&g[GlobalStat::Lost]}, now, Unit::PerHour, kBad);
@@ -855,6 +853,10 @@ void DrawDeliveriesTab(const World& world) {
 // ---------------------------------------------------------------------------
 
 void DrawStatsWindow(const World& world) {
+    // Once the game is over, the game-over card shows the statistics itself
+    // (DrawGameOver): a window behind its modal could not be used.
+    if (world.is_game_over())
+        return;
     const ImGuiIO& io = ImGui::GetIO();
     if (!io.WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_P, false))
         ui::g_game.stats_open = !ui::g_game.stats_open;
@@ -867,6 +869,13 @@ void DrawStatsWindow(const World& world) {
         ImGui::End();
         return;
     }
+    ui::DrawStatsContents(world);
+    ImGui::End();
+}
+
+namespace ui {
+
+void DrawStatsContents(const World& world) {
     DrawRangeButtons();
     ImGui::SameLine();
     ImGui::TextDisabled("  of in-game time");
@@ -889,10 +898,7 @@ void DrawStatsWindow(const World& world) {
         }
         ImGui::EndTabBar();
     }
-    ImGui::End();
 }
-
-namespace ui {
 
 void DrawOfficeStats(const World& world, PostOfficeId id) {
     const PostOffice& office = world.get_post_offices()[id];
@@ -945,6 +951,8 @@ void DrawLetterTrail(const Letter& letter, const std::vector<PostOffice>& office
     ImGui::Text("%s -> %s", offices[letter.src].name.c_str(), offices[letter.dst].name.c_str());
     FormatDayTime(letter.deadline, when, sizeof(when));
     ImGui::TextDisabled("Due %s, worth $%d (+ up to $%d early)", when, letter.value, letter.max_bonus);
+    if (letter.event)
+        ImGui::TextColored(kWarnText, "Event mail: posted for a network event");
     ImGui::Separator();
     if (letter.trail.empty()) {
         ImGui::TextDisabled("No journey recorded (posted before trails existed).");

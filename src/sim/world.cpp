@@ -2,6 +2,7 @@
 #include "sim/world.h"
 #include "sim/balance.h"
 #include "sim/entities.h"
+#include "sim/events.h"
 #include "sim/office_names.h"
 
 #include <algorithm>
@@ -73,6 +74,9 @@ bool World::operator==(const World& other) const {
         && next_schedule_id == other.next_schedule_id
         && next_office_spawn == other.next_office_spawn
         && game_over_office == other.game_over_office
+        && event == other.event
+        && next_event_announce == other.next_event_announce
+        && events_so_far == other.events_so_far
         && rng == other.rng;
 }
 
@@ -87,13 +91,16 @@ void World::advance_tick() {
         next_office_spawn = current_tick + office_spawn_interval();
     }
 
-    // 1. Letters trickle in: on every tick each office spawns a single letter
+    // 1. Network events: announced ahead, then a day of extra mail.
+    update_event();
+
+    // 2. Letters trickle in: on every tick each office spawns a single letter
     //    with probability letters_per_day / kTicksPerDay, so the expected
     //    number of letters per office per day is still letters_per_day.
     for (PostOfficeId id = 0; id < post_offices.size(); ++id)
         maybe_spawn_letter(id);
 
-    // 2. Departures: fire every schedule that has come due.
+    // 3. Departures: fire every schedule that has come due.
     //    Schedules fire in list order (the order shown in the inspector) and
     //    spawn_truck() MOVES picked-up letters out of the buffer, so when
     //    several schedules of one office depart on the same tick and their
@@ -107,7 +114,7 @@ void World::advance_tick() {
         }
     }
 
-    // 3. Arrivals: deliver cargo and retire the truck (swap-and-pop removal).
+    // 4. Arrivals: deliver cargo and retire the truck (swap-and-pop removal).
     for (std::size_t i = 0; i < trucks.size();) {
         if (trucks[i]->has_arrived(current_tick)) {
             deliver(*trucks[i]);
@@ -118,11 +125,11 @@ void World::advance_tick() {
         }
     }
 
-    // 4. Overflow: a full office runs down its timer; one that runs out ends
+    // 5. Overflow: a full office runs down its timer; one that runs out ends
     //    the game.
     update_overflow();
 
-    // 5. Statistics: flows were recorded as things happened above; gauges
+    // 6. Statistics: flows were recorded as things happened above; gauges
     //    are sampled once per tick, after everything has moved.
     sample_gauges();
 }
@@ -138,6 +145,89 @@ void World::update_overflow() {
             office.overflow_ticks -= 1;
         if (office.overflow_ticks >= kOverflowLimit && !is_game_over())
             game_over_office = id;  // the first (lowest id) to run out on this tick
+    }
+}
+
+void World::update_event() {
+    // An event retires at its end, and the next is due a period after its
+    // start (announced kEventWarning ahead).
+    if (event && current_tick >= event->end) {
+        next_event_announce = event->start + kEventPeriod - kEventWarning;
+        events_so_far += 1;
+        event.reset();
+    }
+    // Events switch on the first time the map is big enough. Offices are
+    // never removed, so this happens once per game.
+    if (next_event_announce == kNever && post_offices.size() >= kEventMinOffices)
+        next_event_announce = current_tick + kFirstEventDelay;
+    if (!event && current_tick >= next_event_announce)
+        announce_event();
+    if (event && current_tick >= event->start)
+        post_event_letters();
+}
+
+void World::announce_event() {
+    if (post_offices.size() < 2) {
+        // Nobody to write to (only possible in hand-built worlds): try again
+        // a period later.
+        next_event_announce = current_tick + kEventPeriod;
+        return;
+    }
+
+    NetworkEvent e;
+    e.type = std::bernoulli_distribution(0.5)(rng) ? EventType::Surge : EventType::Corridor;
+
+    // Bigger offices are likelier to host a surge (the +1 keeps an office
+    // that posts nothing in the running).
+    std::vector<double> sizes;
+    for (const PostOffice& office : post_offices)
+        sizes.push_back(static_cast<double>(office.letters_per_day) + 1.0);
+    if (e.type == EventType::Surge) {
+        e.dst = std::discrete_distribution<PostOfficeId>(sizes.begin(), sizes.end())(rng);
+    } else {
+        e.src = std::uniform_int_distribution<PostOfficeId>(0, post_offices.size() - 1)(rng);
+        std::vector<PostOfficeId> candidates;
+        std::vector<double> weights;
+        destination_weights(e.src, candidates, weights);
+        e.dst = candidates[std::discrete_distribution<std::size_t>(weights.begin(), weights.end())(rng)];
+    }
+
+    // Size: a share of what the whole network posts in a day, growing a
+    // little with every event.
+    double network_mail = 0.0;
+    for (const PostOffice& office : post_offices)
+        network_mail += static_cast<double>(office.letters_per_day);
+    const double share = e.type == EventType::Surge ? kSurgeShare : kCorridorShare;
+    e.letters = static_cast<std::size_t>(
+        std::llround(share * network_mail * (1.0 + kEventGrowth * static_cast<double>(events_so_far))));
+
+    e.name = std::uniform_int_distribution<std::size_t>(0, event_name_count(e.type) - 1)(rng);
+    e.start = current_tick + kEventWarning;
+    e.end = e.start + kEventDuration;
+    event = e;
+}
+
+void World::post_event_letters() {
+    NetworkEvent& e = *event;
+    // Evenly over the event: by the end of tick t, letters * (t - start + 1)
+    // / duration of them are out, all of them on the last tick.
+    const Tick duration = e.end - e.start;
+    const Tick elapsed = std::min(current_tick - e.start + 1, duration);
+    const auto due = static_cast<std::size_t>(static_cast<Tick>(e.letters) * elapsed / duration);
+    if (e.posted >= due)
+        return;
+
+    // A surge's letters come from every other office, in proportion to size.
+    std::vector<double> sizes;
+    if (e.type == EventType::Surge) {
+        for (PostOfficeId id = 0; id < post_offices.size(); ++id)
+            sizes.push_back(id == e.dst ? 0.0 : static_cast<double>(post_offices[id].letters_per_day) + 1.0);
+    }
+    for (; e.posted < due; ++e.posted) {
+        const PostOfficeId src = e.type == EventType::Corridor
+            ? e.src
+            : std::discrete_distribution<PostOfficeId>(sizes.begin(), sizes.end())(rng);
+        spawn_letter(src, e.dst, /*event=*/true);
     }
 }
 
@@ -227,7 +317,24 @@ void World::maybe_spawn_letter(PostOfficeId office_id) {
         spawn_letter(office_id);
 }
 
-void World::spawn_letter(PostOfficeId office_id) {
+void World::destination_weights(PostOfficeId src, std::vector<PostOfficeId>& candidates,
+                                std::vector<double>& weights) const {
+    // Destination odds: see kDestinationDistanceScale in balance.h.
+    const PostOffice& office = post_offices[src];
+    candidates.clear();
+    weights.clear();
+    for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
+        const PostOffice& other = post_offices[id];
+        if (id == src)
+            continue;
+        const double dx = static_cast<double>(other.pos.x - office.pos.x);
+        const double dy = static_cast<double>(other.pos.y - office.pos.y);
+        candidates.push_back(id);
+        weights.push_back((static_cast<double>(other.letters_per_day) + 1.0) / (1.0 + std::hypot(dx, dy) / kDestinationDistanceScale));
+    }
+}
+
+void World::spawn_letter(PostOfficeId office_id, std::optional<PostOfficeId> forced_dst, bool event_letter) {
     PostOffice& office = post_offices[office_id];
 
     // Letters are only addressed to other offices; with none, there is
@@ -246,20 +353,15 @@ void World::spawn_letter(PostOfficeId office_id) {
     std::uniform_int_distribution<int> pick_value(kLetterValueMin, kLetterValueMax);
     std::uniform_int_distribution<int> pick_bonus(kLetterBonusMin, kLetterBonusMax);
 
-    // Destination odds: see kDestinationDistanceScale in balance.h.
-    std::vector<PostOfficeId> candidates;
-    std::vector<double> weights;
-    for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
-        const PostOffice& other = post_offices[id];
-        if (id == office_id)
-            continue;
-        const double dx = static_cast<double>(other.pos.x - office.pos.x);
-        const double dy = static_cast<double>(other.pos.y - office.pos.y);
-        candidates.push_back(id);
-        weights.push_back((static_cast<double>(other.letters_per_day) + 1.0) / (1.0 + std::hypot(dx, dy) / kDestinationDistanceScale));
+    PostOfficeId dst = kNoPostOffice;
+    if (forced_dst) {
+        dst = *forced_dst;
+    } else {
+        std::vector<PostOfficeId> candidates;
+        std::vector<double> weights;
+        destination_weights(office_id, candidates, weights);
+        dst = candidates[std::discrete_distribution<std::size_t>(weights.begin(), weights.end())(rng)];
     }
-    const PostOfficeId dst = candidates[std::discrete_distribution<std::size_t>(
-        weights.begin(), weights.end())(rng)];
 
     Letter letter;
     letter.src = office_id;
@@ -268,10 +370,15 @@ void World::spawn_letter(PostOfficeId office_id) {
     letter.deadline = current_tick + pick_deadline(rng);
     letter.value = pick_value(rng);
     letter.max_bonus = pick_bonus(rng);
+    letter.event = event_letter;
     letter.trail.push_back({current_tick, TrailEvent::Spawned, office_id, kNoSchedule});
     office.outbound_letters.push_back(std::move(letter));
     stats[GlobalStat::Spawned].add(current_tick, 1);
     office.stats[OfficeStat::Spawned].add(current_tick, 1);
+    if (event_letter) {
+        stats[GlobalStat::EventSpawned].add(current_tick, 1);
+        office.stats[OfficeStat::EventSpawned].add(current_tick, 1);
+    }
 }
 
 void World::spawn_truck(PostOfficeId src_id, TruckSchedule& schedule) {
@@ -564,16 +671,11 @@ bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> v
     if (polyline_intersects_any(vertices))
         return false;
 
-    // Build the road object and deduct the cost.
+    // Build the road object (roads are free).
     Road road;
     road.src = src;
     road.dst = dst;
     road.vertices = std::move(vertices);
-    const int cost = road_cost(road);
-    if (money < cost)
-        return false;
-    money -= cost;
-    stats[GlobalStat::SpentRoads].add(current_tick, cost);
     roads.push_back(std::move(road));
     return true;
 }
@@ -587,7 +689,7 @@ bool World::remove_road(PostOfficeId a, PostOfficeId b) {
 
     // Cascade: drop every schedule that depends on this road, on both endpoint
     // offices — spawn_truck would otherwise build a truck from an empty vertex
-    // list on the next departure. No refund, for the road or the schedules.
+    // list on the next departure.
     std::erase_if(post_offices[a].outbound_schedules,
                   [b](const TruckSchedule& s) { return s.dst == b; });
     std::erase_if(post_offices[b].outbound_schedules,

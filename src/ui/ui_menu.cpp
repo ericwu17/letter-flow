@@ -529,13 +529,35 @@ PauseAction DrawGameOver(const World& world) {
         ImGui::TextColored(theme::kInkDim, "Lost");
         ImGui::SameLine(em * 9.0f);
         ImGui::Text("%lld letters", static_cast<long long>(world.get_stats()[GlobalStat::Lost].total));
+        ImGui::TextColored(theme::kInkDim, "Events weathered");
+        ImGui::SameLine(em * 9.0f);
+        ImGui::Text("%zu", world.get_events_so_far());
         ImGui::Spacing();
         ImGui::Spacing();
 
+        if (ImGui::Button("Statistics  (P)", button_size) ||
+            (!ImGui::IsPopupOpen("Statistics###game_over_stats") && ImGui::IsKeyPressed(ImGuiKey_P, false)))
+            ImGui::OpenPopup("Statistics###game_over_stats");
         if (theme::PrimaryButton("Main menu", button_size))
             action = PauseAction::MainMenu;
         if (ImGui::Button("Quit", button_size))
             action = PauseAction::Quit;
+
+        // The statistics window, as a modal over the card (the floating
+        // window would sit behind the card, out of reach). Its title-bar
+        // button, Esc or P closes it again.
+        ImGui::SetNextWindowSize(ImVec2(900.0f, 640.0f), ImGuiCond_Appearing);
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        bool stats_open = true;
+        if (ImGui::BeginPopupModal("Statistics###game_over_stats", &stats_open, ImGuiWindowFlags_NoSavedSettings)) {
+            ui::DrawStatsContents(world);
+            const bool typing = ImGui::GetIO().WantTextInput;
+            if (!ImGui::IsWindowAppearing() && !typing &&
+                (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_P, false)))
+                ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
         if (action != PauseAction::None)
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();

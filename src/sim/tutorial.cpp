@@ -57,7 +57,7 @@ const TutorialStep kSteps[] = {
         .title = "Lay the road",
         .body = "Click Ashford, then click Central to finish the road.\n\n"
                 "Roads run straight or at 45 degrees; on longer trips, click empty map to place "
-                "bends along the way. Roads cost by length, and can't cross each other. Esc or "
+                "bends along the way. Roads are free, but can't cross each other. Esc or "
                 "a right-click cancels. Clicking a road later lets you remove it.",
         .rings = {kAshford, kCentral, kNoPostOffice},
         .done = [](const World& w, const TutorialUiFacts&) { return w.has_road(kAshford, kCentral); },

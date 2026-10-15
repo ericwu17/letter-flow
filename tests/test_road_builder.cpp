@@ -92,7 +92,6 @@ void commit_collapses_straight_runs() {
 // preview that crosses an existing road or itself.
 void finished_roads_and_validity() {
     World w;
-    w.set_money(1'000'000);
     const PostOfficeId a = w.add_office("A", "A", {0, 0}, 0, 10);
     const PostOfficeId b = w.add_office("B", "B", {200, 0}, 0, 10);
     const PostOfficeId c = w.add_office("C", "C", {100, -100}, 0, 10);

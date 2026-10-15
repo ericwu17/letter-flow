@@ -110,10 +110,11 @@ void add_road_rules() {
     assert(!w.add_road(north, west, {{10, 0}, {10, -20}, {10, -10}, {0, -10}, {0, 10}}));
     // Out of the coordinate range.
     assert(!w.add_road(far_a, far_b, {{M + 1, 0}, {M + 1, 10}}));
-    assert(w.get_money() == money);  // failed builds cost nothing
+    assert(w.get_money() == money);
 
     // Meeting the existing road at its end office is fine.
     assert(w.add_road(north, west, {{10, 0}, {0, 0}, {0, 10}}));
+    assert(w.get_money() == money);  // roads are free
 }
 
 // A truck on a zero-length segment (possible in old saves) still has a

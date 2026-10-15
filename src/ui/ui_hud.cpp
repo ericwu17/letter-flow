@@ -1,10 +1,11 @@
 // ui_hud.cpp — the overlays on the map: the transport bar (play/pause,
-// speed, day/time) and the HUD card (money, deliveries, statistics and menu
-// buttons).
+// speed, day/time) and the HUD card (money, deliveries, the network event,
+// statistics and menu buttons).
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
 
+#include "sim/events.h"
 #include "sim/game_types.h"
 #include "sim/world.h"
 #include "imgui.h"
@@ -13,7 +14,9 @@
 #include <algorithm>
 #include <cfloat>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
+#include <string>
 
 namespace {
 
@@ -178,6 +181,77 @@ void HudStatRow(const char* label, const char* value, ImVec4 value_color) {
     const float value_w = ImGui::CalcTextSize(value).x;
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - value_w));
     ImGui::TextColored(value_color, "%s", value);
+}
+
+// How long a newly announced event's HUD section flashes, in real seconds.
+constexpr float kEventFlashDuration = 3.0f;
+
+// The HUD's network-event section, if an event is announced or running: when
+// it starts (or how long it has left), its name and what it does, and once
+// running, how much of its mail is out. Flashes for a moment when a new
+// event is announced.
+void DrawHudEvent(const World& world) {
+    const std::optional<NetworkEvent>& event = world.get_event();
+    if (!event)
+        return;
+    if (event->start != g_game.known_event_start) {
+        g_game.known_event_start = event->start;
+        g_game.event_flash_age = 0.0f;
+    }
+    g_game.event_flash_age += ImGui::GetIO().DeltaTime;
+
+    const Tick now = world.get_tick();
+    const bool running = now >= event->start;
+    const float em = ImGui::GetFontSize();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    // The section's content goes on channel 1, so the flash (channel 0) can
+    // be drawn underneath it once its size is known.
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->ChannelsSplit(2);
+    draw->ChannelsSetCurrent(1);
+    const ImVec2 section_min = ImGui::GetCursorScreenPos();
+    ImGui::BeginGroup();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + em * 13.0f);
+
+    char left[16];
+    ui::FormatDuration(running ? event->end - std::min(event->end, now) : event->start - now, left, sizeof(left));
+    ImGui::PushFont(nullptr, theme::kFontSmall);
+    if (running)
+        ImGui::TextColored(theme::kWarnText, "EVENT NOW  -  %s left", left);
+    else
+        ImGui::TextColored(theme::kWarnText, "EVENT COMING UP  -  in %s", left);
+    ImGui::PopFont();
+
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    const std::string title = event_title(*event, offices);
+    const std::string summary = event_summary(*event, offices);
+    ImGui::TextUnformatted(title.c_str());
+    ImGui::TextDisabled("%s", summary.c_str());
+    if (running) {
+        char progress[48];
+        std::snprintf(progress, sizeof(progress), "%zu / %zu letters", event->posted, event->letters);
+        const float fraction = event->letters == 0 ? 1.0f
+            : static_cast<float>(event->posted) / static_cast<float>(event->letters);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme::kWarn);
+        ImGui::ProgressBar(fraction, ImVec2(em * 13.0f, 0.0f), progress);
+        ImGui::PopStyleColor();
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
+
+    // A new event: a warn-colored wash behind the section, pulsing and
+    // fading out.
+    draw->ChannelsSetCurrent(0);
+    if (g_game.event_flash_age < kEventFlashDuration) {
+        const float t = g_game.event_flash_age / kEventFlashDuration;
+        const float pulse = 0.5f + 0.5f * std::cos(g_game.event_flash_age * 2.0f * 3.14159265f * 1.5f);
+        const ImVec2 section_max = ImGui::GetItemRectMax();
+        draw->AddRectFilled({section_min.x - 4.0f, section_min.y - 2.0f}, {section_max.x + 4.0f, section_max.y + 2.0f},
+                            U32(theme::kWarn, 0.35f * pulse * (1.0f - t)), 4.0f);
+    }
+    draw->ChannelsMerge();
 }
 
 }  // namespace
@@ -361,6 +435,7 @@ void DrawHUD(const World& world) {
         HudStatRow("Trucks en route", value, theme::kInk);
         ImGui::EndTable();
     }
+    DrawHudEvent(world);
 
     ImGui::Spacing();
     if (theme::PrimaryButton("Statistics  (P)", ImVec2(-FLT_MIN, 0.0f)))

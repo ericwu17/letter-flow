@@ -45,7 +45,9 @@ namespace {
 //     gone (every office is open), offices store overflow_ticks, and the
 //     world stores next_office_spawn and, once the game is over,
 //     game_over_office. v3 worlds were full of unbuilt offices, so they are
-//     not converted.
+//     not converted. Network events too: the world stores the event
+//     announced or running (if any), next_event_announce and events_so_far,
+//     and event letters are flagged "event".
 constexpr int kSaveFormatVersion = 4;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
@@ -82,6 +84,21 @@ TrailEvent trail_event_from_string(const std::string& text) {
     if (text == "departed") return TrailEvent::Departed;
     if (text == "arrived")  return TrailEvent::Arrived;
     throw std::runtime_error("unknown trail event in save file: " + text);
+}
+
+// EventType: a readable string, like RoutingRuleType above.
+const char* event_type_to_string(EventType type) {
+    switch (type) {
+    case EventType::Surge:    return "surge";
+    case EventType::Corridor: return "corridor";
+    }
+    throw std::runtime_error("unknown EventType");  // unreachable
+}
+
+EventType event_type_from_string(const std::string& text) {
+    if (text == "surge")    return EventType::Surge;
+    if (text == "corridor") return EventType::Corridor;
+    throw std::runtime_error("unknown event type in save file: " + text);
 }
 
 // A stat level's buckets as one space-separated string: a JSON array would
@@ -211,6 +228,8 @@ void to_json(nlohmann::json& j, const Letter& letter) {
          {"value", letter.value},
          {"max_bonus", letter.max_bonus},
          {"trail", letter.trail}};
+    if (letter.event)
+        j["event"] = true;  // left out for everyday mail
 }
 
 void from_json(const nlohmann::json& j, Letter& letter) {
@@ -221,6 +240,30 @@ void from_json(const nlohmann::json& j, Letter& letter) {
     j.at("value").get_to(letter.value);
     j.at("max_bonus").get_to(letter.max_bonus);
     letter.trail = j.value("trail", std::vector<TrailStop>{});
+    letter.event = j.value("event", false);
+}
+
+void to_json(nlohmann::json& j, const NetworkEvent& event) {
+    j = {{"type", event_type_to_string(event.type)},
+         {"dst", event.dst},
+         {"start", event.start},
+         {"end", event.end},
+         {"letters", event.letters},
+         {"posted", event.posted},
+         {"name", event.name}};
+    if (event.type == EventType::Corridor)
+        j["src"] = event.src;
+}
+
+void from_json(const nlohmann::json& j, NetworkEvent& event) {
+    event.type = event_type_from_string(j.at("type").get<std::string>());
+    event.src = j.value("src", kNoPostOffice);
+    j.at("dst").get_to(event.dst);
+    j.at("start").get_to(event.start);
+    j.at("end").get_to(event.end);
+    j.at("letters").get_to(event.letters);
+    j.at("posted").get_to(event.posted);
+    j.at("name").get_to(event.name);
 }
 
 void to_json(nlohmann::json& j, const DeliveredLetter& delivered) {
@@ -365,7 +408,9 @@ namespace {
 // duplicates, at least two in-range vertices anchored at the endpoint
 // offices), letters (and their trails) naming offices that do not exist,
 // schedule ids that repeat or that the World's id counter would hand out
-// again, and a game-over office that does not exist.
+// again, a game-over office that does not exist, and a network event naming
+// offices that do not exist (or, for a corridor, the same office twice) or
+// with an empty or overrun schedule.
 bool letter_is_valid(const Letter& letter, PostOfficeId num_offices) {
     if (letter.src >= num_offices || letter.dst >= num_offices)
         return false;
@@ -380,10 +425,17 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                            const std::vector<Road>& roads,
                            const std::vector<DeliveredLetter>& recent_deliveries,
                            ScheduleId next_schedule_id,
-                           PostOfficeId game_over_office) {
+                           PostOfficeId game_over_office,
+                           const std::optional<NetworkEvent>& event) {
     const PostOfficeId num_offices = post_offices.size();
     if (game_over_office != kNoPostOffice && game_over_office >= num_offices)
         return false;
+    if (event) {
+        if (event->dst >= num_offices || event->start >= event->end || event->posted > event->letters)
+            return false;
+        if (event->type == EventType::Corridor && (event->src >= num_offices || event->src == event->dst))
+            return false;
+    }
     std::vector<ScheduleId> schedule_ids;
     for (PostOfficeId office_id = 0; office_id < num_offices; ++office_id) {
         const PostOffice& office = post_offices[office_id];
@@ -452,6 +504,10 @@ nlohmann::json WorldJson::to_json(const World& world) {
     j["next_office_spawn"] = world.next_office_spawn;
     if (world.game_over_office != kNoPostOffice)
         j["game_over_office"] = world.game_over_office;  // absent while the game is on
+    j["next_event_announce"] = world.next_event_announce;
+    j["events_so_far"] = world.events_so_far;
+    if (world.event)
+        j["event"] = *world.event;  // absent between events
     j["stats"] = world.stats;
     j["recent_deliveries"] = world.recent_deliveries;
     j["post_offices"] = world.post_offices;
@@ -496,6 +552,10 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
         world.recent_deliveries = j.value("recent_deliveries", std::vector<DeliveredLetter>{});
         j.at("next_office_spawn").get_to(world.next_office_spawn);
         world.game_over_office = j.value("game_over_office", kNoPostOffice);
+        j.at("next_event_announce").get_to(world.next_event_announce);
+        j.at("events_so_far").get_to(world.events_so_far);
+        if (j.contains("event"))
+            world.event = j.at("event").get<NetworkEvent>();
 
         // Schedule ids. Saves from before ids hold none: hand every
         // schedule a fresh one, starting past any id already in the file.
@@ -525,7 +585,7 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
 
         if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads,
                                    world.recent_deliveries, world.next_schedule_id,
-                                   world.game_over_office)) {
+                                   world.game_over_office, world.event)) {
             cerr << "load: the saved world is inconsistent (see loaded_state_is_valid)" << endl;
             return std::nullopt;
         }

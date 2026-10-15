@@ -104,6 +104,10 @@ struct GameUiState {
     // get a SpawnPulse. Unset until the game's first frame, so the offices a
     // game opens or loads with don't all pulse at once.
     std::optional<std::size_t> known_offices;
+    // The network event the HUD last saw (by its start tick), and how long
+    // ago a new one was announced: its HUD section flashes for a moment.
+    Tick known_event_start = 0;
+    float event_flash_age = 1e9f;  // seconds; huge = not flashing
     // The letter hovered in a list last frame (HighlightLetter). DrawWorld
     // draws its journey and then clears it, so the highlight lapses as soon
     // as the list stops asking for it.
@@ -174,6 +178,11 @@ ImVec2 OfficeScreenPos(PostOfficeId office, const World& world);
 bool OverTransportBar(const World& world, ImVec2 p);
 
 // --- ui_stats.cpp -----------------------------------------------------------
+
+// The statistics window's contents (range buttons and tabs), drawn into the
+// current window: the floating window while the game runs, the game-over
+// card's statistics popup once it has ended.
+void DrawStatsContents(const World& world);
 
 // The inspector's "Statistics" section for one office: range totals and
 // charts over the time range picked in the statistics window.

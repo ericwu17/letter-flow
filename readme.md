@@ -11,6 +11,16 @@ closing; once the office has room again the ring slowly opens back up. If
 any office's ring closes (6 in-game hours of being full, about 45 seconds
 at normal speed), the game is over.
 
+Once the map has five offices, **events** start to strain the network about
+once a week: for a day, a burst of extra mail goes either from every office
+to one city (a *surge*, e.g. "Briarwood County Fair") or from one city to
+another (a *corridor*, e.g. "Election ballots: Ashford to Dunmore"). Each
+is announced 12 in-game hours ahead in the HUD, and marked on the map: a
+star on the offices involved, and for a corridor a dashed arrow between
+them. An event's size is a share of what the whole network posts in a
+normal day (half of it for a surge, 30% for a corridor), and grows a little
+with every event, so events keep pace with the network.
+
 This is a project to help me learn C++, which I started after I got rejected for a
 full-time new grad role at Hudson River Trading due to lack of C++ experience.
 
@@ -86,8 +96,9 @@ mingw32-make && ./letter-flow.exe
   In the tutorial, Save is disabled.
 - **F1 / F2**: Dear ImGui / ImPlot demo windows (widget reference while developing)
 - **Game over**: when an office overflows, the clock stops and a card
-  names the office and sums up the game (how long it lasted, letters
-  delivered and lost), with Main menu and Quit. The ended game is saved
+  names the office and sums up the game (how long it lasted, events weathered, letters
+  delivered and lost), with Statistics (P: the full statistics window, over
+  the card), Main menu and Quit. The ended game is saved
   right away and stays in the save list marked GAME OVER; playing it
   again shows the final map and the card, but it can't be continued.
 - **Main menu and saves**: the game opens on a main menu. *Play* lists
@@ -134,14 +145,15 @@ and `app/` everything.
 ```
 src/sim/                 the game rules: pure logic, deterministic, no SDL/ImGui/OpenGL
   game_types.h           shared primitives: Tick, Position, world constants
-  balance.h              gameplay tuning: costs, starting money, truck, letter, office-spawning and overflow numbers
-  entities.h             data entities: Letter (+ trail), RoutingRule, TruckSchedule, PostOffice
+  balance.h              gameplay tuning: costs, starting money, truck, letter, office-spawning, overflow and event numbers
+  entities.h             data entities: Letter (+ trail), RoutingRule, TruckSchedule, PostOffice, NetworkEvent
+  events.*               network event names and descriptions
   office_names.*         the names new offices get (assets/office_names.txt, embedded at build time)
   stats.*                StatSeries: multi-resolution ring buffers behind every statistic
   truck.*                Truck: deterministic point-to-point motion
   road.*                 Road and the exact integer geometry behind road rules
   road_builder.*         RoadBuilder: snaps the road being drawn to legal segments
-  world.*                World: owns all state, advances the sim in fixed 60 Hz ticks, spawns offices, ends the game
+  world.*                World: owns all state, advances the sim in fixed 60 Hz ticks, spawns offices, runs events, ends the game
   scenario.*             create_default_world() new game, create_tutorial_world() practice map
   tutorial.*             Tutorial: the tutorial's steps, their completion checks and progress
 src/persistence/         saving and loading (the only code that knows nlohmann/json)
