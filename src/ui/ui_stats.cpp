@@ -13,6 +13,7 @@
 #include "sim/world.h"
 #include "imgui.h"
 #include "implot.h"
+#include "implot_internal.h"  // ImPlotAxis, for PadYFit
 
 #include <algorithm>
 #include <array>
@@ -153,9 +154,12 @@ void PlotAndRecord(const char* label, Unit unit, std::vector<double> xs, std::ve
     g_readout.push_back({label, unit, std::move(xs), std::move(ys)});
 }
 
+// Chart lines' thickness, in pixels.
+constexpr float kLineWeight = 2.0f;
+
 ImPlotSpec LineSpec(std::optional<ImVec4> color = std::nullopt) {
     ImPlotSpec spec;
-    spec.LineWeight = 2.0f;
+    spec.LineWeight = kLineWeight;
     spec.Flags = ImPlotLineFlags_SkipNaN;
     if (color.has_value())
         spec.LineColor = *color;
@@ -220,6 +224,30 @@ int FormatAxisTime(double hours, char* buf, int size, void* /*user_data*/) {
     return std::snprintf(buf, len, "%02d:%02d", t.hour, t.minute);
 }
 
+// Widens the y axis's auto-fit by one line weight's worth of pixels above and
+// below the data, so a line at the data's max or min isn't half clipped by the
+// plot edge, with no further empty space. Call just before ImPlot::EndPlot,
+// which applies the fit: by then every item has been measured. Flat data is
+// shown one unit tall, resting on zero when it is near zero.
+void PadYFit() {
+    ImPlotAxis& y = ImPlot::GetCurrentPlot()->Axes[ImAxis_Y1];
+    if (!y.FitThisFrame || !(y.FitExtents.Min <= y.FitExtents.Max))  // nothing plotted
+        return;
+    double lo = y.FitExtents.Min;
+    double hi = y.FitExtents.Max;
+    if (hi - lo < 1e-9) {
+        lo = std::max(lo - 0.5, std::min(lo, 0.0));
+        hi = lo + 1.0;
+    }
+    // Solve margin / (range + 2 * margin) = kLineWeight / plot height.
+    const double usable_px = static_cast<double>(y.PixelSize() - 2.0f * kLineWeight);
+    if (usable_px <= 0.0)
+        return;
+    const double margin = (hi - lo) * static_cast<double>(kLineWeight) / usable_px;
+    y.FitExtents.Min = lo - margin;
+    y.FitExtents.Max = hi + margin;
+}
+
 // Opens a chart over the current range, scrolling with the game clock (the x
 // axis always ends at `now`). Plot series with PlotRate / PlotLevel /
 // PlotAverage, then close with EndTimeChart, which adds the hover readout.
@@ -236,7 +264,6 @@ bool BeginTimeChart(const char* title, Tick now, const char* y_label, float heig
 
     ImPlot::SetupAxes(nullptr, y_label, ImPlotAxisFlags_None, ImPlotAxisFlags_AutoFit);
     ImPlot::SetupAxisLimits(ImAxis_X1, x_min, x_max, ImPlotCond_Always);
-    ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0.0, INFINITY);
     ImPlot::SetupAxisFormat(ImAxis_X1, FormatAxisTime);
     // Ticks on round times: every tick_step since the start of the game,
     // thinned to every 2nd, 3rd... step until the labels fit the chart.
@@ -292,6 +319,7 @@ void EndTimeChart() {
         }
         ImGui::EndTooltip();
     }
+    PadYFit();
     ImPlot::EndPlot();
 }
 
@@ -301,9 +329,13 @@ void Sparkline(const char* id, const std::vector<double>& values, double y_max, 
     if (ImPlot::BeginPlot(id, size, ImPlotFlags_CanvasOnly | ImPlotFlags_NoInputs | ImPlotFlags_NoFrame)) {
         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoDecorations, ImPlotAxisFlags_NoDecorations);
         // 15% headroom, so a line pinned at y_max (a full truck, a full
-        // buffer) stays visible instead of merging into the top edge.
-        ImPlot::SetupAxesLimits(0.0, std::max(1.0, static_cast<double>(values.size()) - 1.0), 0.0,
-                                std::max(y_max, 1.0) * 1.15, ImPlotCond_Always);
+        // buffer) stays visible instead of merging into the top edge, and a
+        // pixel of footroom (the default line weight) so a line at zero isn't
+        // half clipped by the bottom.
+        const double top = std::max(y_max, 1.0) * 1.15;
+        const double bottom = -top / std::max(static_cast<double>(size.y) - 1.0, 1.0);
+        ImPlot::SetupAxesLimits(0.0, std::max(1.0, static_cast<double>(values.size()) - 1.0), bottom,
+                                top, ImPlotCond_Always);
         ImPlotSpec spec;
         spec.LineColor = color;
         spec.FillColor = color;
@@ -627,7 +659,6 @@ void DrawDepartureLogChart(const TruckSchedule& schedule, float height) {
     if (!ImPlot::BeginPlot("Recent departures", ImVec2(-1.0f, height), ImPlotFlags_NoMouseText | ImPlotFlags_NoBoxSelect))
         return;
     ImPlot::SetupAxes("departure", "letters", ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_AutoFit);
-    ImPlot::SetupAxisLimitsConstraints(ImAxis_Y1, 0.0, INFINITY);
     ImPlot::SetupLegend(ImPlotLocation_NorthWest);
     std::vector<double> xs, loaded, demand;
     for (std::size_t i = 0; i < log.size(); ++i) {
@@ -658,6 +689,7 @@ void DrawDepartureLogChart(const TruckSchedule& schedule, float height) {
             ImGui::SetTooltip("%s\n%u loaded, %u left behind", when, r.loaded, r.left_behind);
         }
     }
+    PadYFit();
     ImPlot::EndPlot();
 }
 
