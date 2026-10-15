@@ -203,7 +203,17 @@ void DrawTruckPanel(const World& world, const Truck& truck) {
     DrawLetterTable("truck_cargo", truck.get_letters(), offices, now);
 }
 
-// An HH:MM cell: two narrow drag fields (drag, or double-click to type).
+// A narrow, typed-only integer field showing `value` as two digits, clamped
+// to [0, max]. Returns true when the player changed the value.
+bool EditTwoDigits(const char* id, int& value, int max) {
+    const int before = value;
+    ImGui::InputScalar(id, ImGuiDataType_S32, &value, nullptr, nullptr, "%02d",
+                       ImGuiInputTextFlags_AutoSelectAll);
+    value = std::clamp(value, 0, max);
+    return value != before;
+}
+
+// An HH:MM cell: two narrow text fields, edited by typing.
 // `max_hours` bounds the hour field; the caller clamps the combined value.
 // Returns true and writes `ticks` when the player changed either field.
 bool EditHoursMinutes(const char* id, Tick& ticks, int max_hours) {
@@ -213,12 +223,12 @@ bool EditHoursMinutes(const char* id, Tick& ticks, int max_hours) {
     const float field_width = ImGui::CalcTextSize("00").x + ImGui::GetStyle().FramePadding.x * 2.0f;
     ImGui::PushID(id);
     ImGui::SetNextItemWidth(field_width);
-    bool changed = ImGui::DragInt("##h", &hours, 0.05f, 0, max_hours, "%02d", ImGuiSliderFlags_AlwaysClamp);
+    bool changed = EditTwoDigits("##h", hours, max_hours);
     ImGui::SameLine(0.0f, 2.0f);
     ImGui::TextUnformatted(":");
     ImGui::SameLine(0.0f, 2.0f);
     ImGui::SetNextItemWidth(field_width);
-    changed |= ImGui::DragInt("##m", &minutes, 0.2f, 0, 59, "%02d", ImGuiSliderFlags_AlwaysClamp);
+    changed |= EditTwoDigits("##m", minutes, 59);
     ImGui::PopID();
     if (changed)
         ticks = hours_minutes_to_ticks(hours, minutes);

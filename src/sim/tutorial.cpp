@@ -120,8 +120,8 @@ const TutorialStep kSteps[] = {
     {
         .title = "Update a schedule",
         .body = "Six hours is a long wait for a busy office, and schedules can be changed at any "
-                "time. Select Ashford and, in its schedule table, set \"Every\" to 01:00: drag "
-                "the field, or double-click it to type.\n\n"
+                "time. Select Ashford and, in its schedule table, set \"Every\" to 01:00 by "
+                "typing into its hour and minute fields.\n\n"
                 "Busy routes need more trucks; quiet ones waste $15 per empty run.",
         .office = kAshford,
         .anchor = TutorialAnchor::ScheduleTable,
