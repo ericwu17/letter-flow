@@ -412,16 +412,21 @@ void World::spawn_truck(PostOfficeId src_id, TruckSchedule& schedule) {
     std::uint32_t left_behind = 0;  // matching letters the truck had no room for
     for (std::size_t i = 0; i < outbound.size(); ++i) {
         Letter& letter = outbound[i];
-        if (!schedule.rule.matches(letter.dst, post_offices[letter.dst].postal_code, schedule.dst)) {
-            outbound[keep++] = std::move(letter);
-        } else if (truck->get_num_letters() >= kTruckCapacity) {
-            ++left_behind;
-            outbound[keep++] = std::move(letter);
-        } else {
+        const bool matches = schedule.rule.matches(letter.dst, post_offices[letter.dst].postal_code, schedule.dst);
+        if (matches && truck->get_num_letters() < kTruckCapacity) {
             src.stats[OfficeStat::Loaded].add(current_tick, 1);
             letter.trail.push_back({current_tick, TrailEvent::Departed, src_id, schedule.id});
             truck->push_back_letter(std::move(letter));
+            continue;
         }
+        if (matches)
+            ++left_behind;
+        // Letters ahead of the first one to board are already in place
+        // (keep == i). Moving one onto itself would empty its trail: vector
+        // self-move-assignment leaves the vector empty (libc++ does).
+        if (keep != i)
+            outbound[keep] = std::move(letter);
+        ++keep;
     }
     outbound.resize(keep);
 

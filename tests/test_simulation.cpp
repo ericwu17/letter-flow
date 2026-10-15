@@ -394,6 +394,31 @@ void first_matching_schedule_wins_contested_letters() {
 
 // Trucks depart on schedule even with an empty buffer — they just carry
 // nothing — and retire on arrival like any other truck.
+// Letters a departure leaves in the buffer keep their trails, including those
+// ahead of the first letter to board, which spawn_truck() must not move onto
+// themselves (that empties a vector under libc++).
+void letters_left_behind_keep_their_trails() {
+    World w = make_line_world(3, 20);
+    // The first departure takes nothing, so it passes over every letter;
+    // the second takes the mail for office 1 out of the middle of the buffer.
+    assert(w.add_schedule(0, 1, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, {"Z"}}));
+    assert(w.add_schedule(0, 1, 100 * kTicksPerDay, 1, {RoutingRuleType::ExactDestination, {}}));
+    w.advance_tick();  // tick 1: both depart
+
+    const std::vector<Letter>& left = w.get_post_offices()[0].outbound_letters;
+    const std::vector<Letter>& loaded = w.get_trucks()[1]->get_letters();
+    assert(!left.empty() && !loaded.empty());
+    for (const Letter& letter : left) {
+        assert(letter.trail.size() == 1);
+        assert(letter.trail[0].event == TrailEvent::Spawned && letter.trail[0].office == 0);
+    }
+    for (const Letter& letter : loaded) {
+        assert(letter.trail.size() == 2);
+        assert(letter.trail[0].event == TrailEvent::Spawned && letter.trail[0].office == 0);
+        assert(letter.trail[1].event == TrailEvent::Departed && letter.trail[1].tick == 1);
+    }
+}
+
 void empty_buffer_still_spawns_a_truck() {
     World w = make_line_world(2, 0);  // nobody ever produces mail
     assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
@@ -962,6 +987,8 @@ int main() {
     printf("PASS departures_restart_each_day\n");
     first_matching_schedule_wins_contested_letters();
     printf("PASS first_matching_schedule_wins_contested_letters\n");
+    letters_left_behind_keep_their_trails();
+    printf("PASS letters_left_behind_keep_their_trails\n");
     empty_buffer_still_spawns_a_truck();
     printf("PASS empty_buffer_still_spawns_a_truck\n");
     postal_code_edits_take_effect_at_departure();
