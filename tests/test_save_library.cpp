@@ -113,14 +113,18 @@ void create_lists_and_persists() {
     assert(summary.money == kStartingMoney);
     assert(summary.last_played > 0);
 
-    // ...holding exactly the starter scenario.
+    // ...holding a fresh starter scenario.
     const auto world = reopened.load(summary.id);
     assert(world.has_value());
-    assert(*world == create_default_world());
+    assert(world->get_tick() == 0);
+    assert(world->get_post_offices().size() == kInitialOffices);
 
     // Newest first when created within the same second (ties go to the higher id).
     const auto second = reopened.create("Game 2");
     assert(second.has_value() && *second != summary.id);
+    // Each new save gets its own seed, so a different game.
+    const auto second_world = reopened.load(*second);
+    assert(second_world.has_value() && !(*second_world == *world));
     assert(reopened.saves()[0].id == *second);
     assert(files_in(dir) == (std::set<std::string>{"game_1.json", "game_2.json"}));
 }

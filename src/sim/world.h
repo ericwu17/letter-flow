@@ -10,6 +10,7 @@
 #include "sim/truck.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -20,6 +21,9 @@
 
 // A tick that never comes: "not scheduled".
 inline constexpr Tick kNever = std::numeric_limits<Tick>::max();
+
+// The seed a World's RNG starts from unless reseeded (see World::reseed).
+inline constexpr std::uint32_t kDefaultSeed = 20260926u;
 
 class World {
 private:
@@ -61,7 +65,7 @@ private:
     // take_money_events(). Transient: neither serialized nor compared.
     std::vector<MoneyEvent> money_events;
 
-    std::mt19937 rng{20260926u};  // fixed seed -> fully deterministic simulation
+    std::mt19937 rng{kDefaultSeed};  // fixed seed -> fully deterministic simulation
 
     // Simulation internals, driven by advance_tick() / seed_letters().
     void maybe_spawn_letter(PostOfficeId office);  // per-tick Bernoulli roll
@@ -105,6 +109,9 @@ public:
 
     // Scenario construction. create_default_world() (scenario.h) builds the
     // starter map entirely through this public API — no friendship required.
+    // Restarts the RNG from `seed`. Same seed, same game: everything random
+    // (office placement, mail, events) follows from it.
+    void reseed(std::uint32_t seed) { rng.seed(seed); }
     // An office is open for mail the moment it is added.
     PostOfficeId add_office(std::string name, std::string postal_code, Position pos,
                             std::size_t letters_per_day,

@@ -732,7 +732,8 @@ void assert_well_placed(const std::vector<PostOffice>& offices) {
 }
 
 // A new game opens with a few offices from the name list, with no postal
-// codes, spread out over the map; and it is the same game every time.
+// codes, spread out over the map; and the same seed is the same game every
+// time, while another seed is another game.
 void opening_offices() {
     const World w = create_default_world();
     const std::vector<PostOffice>& offices = w.get_post_offices();
@@ -752,6 +753,8 @@ void opening_offices() {
     assert(w.get_next_office_spawn() == kOfficeSpawnIntervalStart);
     assert(!w.is_game_over());
     assert(create_default_world() == w);
+    assert(create_default_world(7) == create_default_world(7));
+    assert(!(create_default_world(7) == w));
 }
 
 // Offices keep appearing: exactly when due, a little sooner each time, but

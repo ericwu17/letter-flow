@@ -8,9 +8,11 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 
-World create_default_world() {
+World create_default_world(std::uint32_t seed) {
     World world;
+    world.reseed(seed);
     for (std::size_t i = 0; i < kInitialOffices; ++i)
         world.spawn_random_office();
     return world;

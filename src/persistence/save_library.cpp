@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <random>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -245,7 +246,9 @@ void SaveLibrary::set_summary(SaveId id, const std::string& path, SaveSummary su
 std::optional<SaveId> SaveLibrary::create(const std::string& name) {
     if (name.empty())
         return std::nullopt;
-    const auto written = write_new_save(save_dir, name, WorldJson::to_json(create_default_world()));
+    // A fresh seed per save, so no two new games play out alike.
+    const std::uint32_t seed = std::random_device{}();
+    const auto written = write_new_save(save_dir, name, WorldJson::to_json(create_default_world(seed)));
     if (!written)
         return std::nullopt;
     const SaveId id = next_id++;

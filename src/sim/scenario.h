@@ -5,12 +5,15 @@
 #include "sim/entities.h"
 #include "sim/world.h"
 
+#include <cstdint>
+
 // A new game: kInitialOffices randomly placed and named offices (see
 // World::spawn_random_office), with no roads or truck routes. More offices
 // keep appearing as the game goes on; the player builds the roads and
 // schedules that keep their mail moving (see add_road and add_schedule).
-// Deterministic: the World's RNG starts from a fixed seed.
-World create_default_world();
+// Deterministic: the same seed always builds the same game. New saves pick
+// a random one (SaveLibrary::create); tests use the default.
+World create_default_world(std::uint32_t seed = kDefaultSeed);
 
 // The tutorial's offices, by id (create_tutorial_world adds them in this
 // order). Central is the hub; Ashford and Brookside lie on 45° diagonals
