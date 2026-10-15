@@ -402,6 +402,37 @@ void DrawSpawnPulses(ImDrawList* draw, const ViewTransform& view, const World& w
     std::erase_if(g_game.spawn_pulses, [](const SpawnPulse& p) { return p.age >= kSpawnPulseDuration; });
 }
 
+// A dashed arrow straight from `a` to `b`, starting `tail_gap` pixels past `a`
+// and with its tip `tip_gap` pixels short of `b` (to clear the markers drawn
+// there). The dashes march toward `b` at `march_speed` pixels a second.
+void DrawDashedArrow(ImDrawList* draw, ImVec2 a, ImVec2 b, float tail_gap, float tip_gap, ImU32 color,
+                     float march_speed) {
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    const float length = std::sqrt(dx * dx + dy * dy);
+    const float from = tail_gap;
+    const float to = length - tip_gap;  // where the arrowhead's tip is
+    if (to <= from)
+        return;
+    const ImVec2 dir(dx / length, dy / length);
+    auto at = [&](float d) { return ImVec2(a.x + dir.x * d, a.y + dir.y * d); };
+
+    constexpr float kDash = 10.0f;
+    constexpr float kGap = 7.0f;
+    const float shift = std::fmod(static_cast<float>(ImGui::GetTime()) * march_speed, kDash + kGap);
+    for (float d = from - (kDash + kGap) + shift; d < to - 10.0f; d += kDash + kGap) {
+        const float d0 = std::max(d, from);
+        const float d1 = std::min(d + kDash, to - 10.0f);
+        if (d1 > d0)
+            draw->AddLine(at(d0), at(d1), color, 3.0f);
+    }
+    // The arrowhead.
+    const ImVec2 tip = at(to);
+    const ImVec2 base = at(to - 12.0f);
+    const ImVec2 side(-dir.y * 6.5f, dir.x * 6.5f);
+    draw->AddTriangleFilled(tip, {base.x + side.x, base.y + side.y}, {base.x - side.x, base.y - side.y}, color);
+}
+
 // The network event's markers under the offices: for a corridor, a dashed
 // arrow straight from one office to the other (roads or not), marching while
 // the event runs; for a running surge, a slow pulsing ring round its target.
@@ -424,30 +455,7 @@ void DrawEventRoute(ImDrawList* draw, const ViewTransform& view, const World& wo
     if (event->src >= offices.size())
         return;
     const ImVec2 a = WorldToScreen(view, offices[event->src].pos);
-    const float dx = b.x - a.x;
-    const float dy = b.y - a.y;
-    const float length = std::sqrt(dx * dx + dy * dy);
-    const float from = office_radius + 8.0f;
-    const float to = length - office_radius - 12.0f;  // where the arrowhead's tip is
-    if (to <= from)
-        return;
-    const ImVec2 dir(dx / length, dy / length);
-    auto at = [&](float d) { return ImVec2(a.x + dir.x * d, a.y + dir.y * d); };
-
-    constexpr float kDash = 10.0f;
-    constexpr float kGap = 7.0f;
-    const float shift = running ? std::fmod(time * 30.0f, kDash + kGap) : 0.0f;
-    for (float d = from - (kDash + kGap) + shift; d < to - 10.0f; d += kDash + kGap) {
-        const float d0 = std::max(d, from);
-        const float d1 = std::min(d + kDash, to - 10.0f);
-        if (d1 > d0)
-            draw->AddLine(at(d0), at(d1), kColorEvent, 3.0f);
-    }
-    // The arrowhead.
-    const ImVec2 tip = at(to);
-    const ImVec2 base = at(to - 12.0f);
-    const ImVec2 side(-dir.y * 6.5f, dir.x * 6.5f);
-    draw->AddTriangleFilled(tip, {base.x + side.x, base.y + side.y}, {base.x - side.x, base.y - side.y}, kColorEvent);
+    DrawDashedArrow(draw, a, b, office_radius + 8.0f, office_radius + 12.0f, kColorEvent, running ? 30.0f : 0.0f);
 }
 
 // A five-pointed star centered on `c`, `outer` pixels to its tips.
@@ -481,8 +489,9 @@ void DrawEventBadges(ImDrawList* draw, const ViewTransform& view, const World& w
 }
 
 // A hovered letter's journey on the map: the legs it has travelled, along the
-// roads it took; the truck it is on, if any; and rings around the office it
-// was posted at and the one it is addressed to.
+// roads it took; the truck it is on, if any, with the road it has driven so
+// far; a dashed arrow from where it is now straight to where it is going; and
+// rings around the office it was posted at and the one it is addressed to.
 void DrawLetterHighlight(ImDrawList* draw, const ViewTransform& view, const World& world, float office_radius) {
     if (!g_game.highlight_letter.has_value())
         return;
@@ -504,22 +513,33 @@ void DrawLetterHighlight(ImDrawList* draw, const ViewTransform& view, const Worl
             draw->AddLine(WorldToScreen(view, leg[k - 1]), WorldToScreen(view, leg[k]), kColorSelection, 5.0f);
     }
 
-    // On a truck right now: ring it, and trace the leg so far.
+    const ImVec2 dst = WorldToScreen(view, offices[letter.dst].pos);
     if (!letter.trail.empty() && letter.trail.back().event == TrailEvent::Departed) {
+        // On a truck right now: trace the leg so far along its road, point
+        // on to the destination, and ring the truck.
         for (const std::shared_ptr<Truck>& truck : world.get_trucks()) {
             const std::vector<Letter>& cargo = truck->get_letters();
             if (std::find(cargo.begin(), cargo.end(), letter) == cargo.end())
                 continue;
-            const ImVec2 at = WorldToScreen(view, truck->get_position(world.get_tick()));
-            draw->AddLine(WorldToScreen(view, offices[truck->get_src()].pos), at, kColorSelection, 3.0f);
+            const std::vector<Position> leg = truck->route_travelled(world.get_tick());
+            for (std::size_t k = 1; k < leg.size(); ++k)
+                draw->AddLine(WorldToScreen(view, leg[k - 1]), WorldToScreen(view, leg[k]), kColorSelection, 3.0f);
+            const ImVec2 at = WorldToScreen(view, leg.back());
+            DrawDashedArrow(draw, at, dst, 15.0f, office_radius + 12.0f, kColorSelection, 30.0f);
             draw->AddCircleFilled(at, 13.0f, kColorSelectionHalo);
             draw->AddCircle(at, 11.0f, kColorSelection, 0, 3.0f);
             break;
         }
+    } else {
+        // Waiting in an office (none to point from once it is delivered).
+        const PostOfficeId here = letter.trail.empty() ? letter.src : letter.trail.back().office;
+        if (here != letter.dst && here < offices.size())
+            DrawDashedArrow(draw, WorldToScreen(view, offices[here].pos), dst, office_radius + 8.0f,
+                            office_radius + 12.0f, kColorSelection, 30.0f);
     }
 
     draw->AddCircle(WorldToScreen(view, offices[letter.src].pos), office_radius + 9.0f, kColorSelection, 0, 2.5f);
-    draw->AddCircle(WorldToScreen(view, offices[letter.dst].pos), office_radius + 9.0f, kColorDestination, 0, 4.0f);
+    draw->AddCircle(dst, office_radius + 9.0f, kColorDestination, 0, 4.0f);
 }
 
 // Faint grid lines every kGridStep world units across the whole display, like

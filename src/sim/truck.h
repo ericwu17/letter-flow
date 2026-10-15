@@ -67,6 +67,9 @@ public:
     // frame, so it never drifts and is exactly reproducible (deterministic replay).
     double route_length() const;
     Position get_position(Tick now) const;
+    // The part of the route covered by tick `now`: the route's vertices passed
+    // so far, ending at get_position(now).
+    std::vector<Position> route_travelled(Tick now) const;
     bool has_arrived(Tick now) const;
     PostOfficeId get_src() const { return state.src; }
     PostOfficeId get_dst() const { return state.dst; }
