@@ -143,6 +143,20 @@ $(FONT_HEADER): $(IMGUI_DIR)/misc/fonts/Roboto-Medium.ttf
 
 $(BUILD_DIR)/src/ui/ui_theme.o: $(FONT_HEADER)
 
+# Embed the post office names (one per line) as a C string array, so new
+# offices can be named without the game reading any file at runtime (see
+# src/sim/office_names.h). Drops carriage returns and blank lines and escapes
+# backslashes and quotes.
+NAMES_HEADER = $(GENERATED_DIR)/office_names_txt.h
+$(NAMES_HEADER): assets/office_names.txt
+	@mkdir -p $(dir $@)
+	{ echo '// Generated from $< by the makefile. Do not edit.'; \
+	  echo 'static const char* const kOfficeNames[] = {'; \
+	  sed -e 's/\r$$//' -e '/^[[:space:]]*$$/d' -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/.*/    "&",/' $<; \
+	  echo '};'; } > $@
+
+$(BUILD_DIR)/src/sim/office_names.o: $(NAMES_HEADER)
+
 clean:
 	rm -rf $(BUILD_DIR) $(EXE)
 

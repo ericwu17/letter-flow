@@ -40,6 +40,7 @@ struct SaveSummary {
     std::string name;
     Tick tick = 0;                 // the world's in-game clock
     int money = 0;
+    bool game_over = false;        // the game has ended (World::is_game_over)
     std::int64_t last_played = 0;  // unix seconds (created, loaded or stored)
 };
 

@@ -3,6 +3,14 @@
 A small logistics toy: letters pile up at post offices and your truck
 schedules have to move them before their deadlines.
 
+In the spirit of Mini Metro, the map grows on its own: a game opens with
+three post offices, and new ones keep appearing at random spots, each named
+from `assets/office_names.txt` and with no postal code. A post office whose
+outbound buffer is full flashes red, and a red ring around it starts
+closing; once the office has room again the ring slowly opens back up. If
+any office's ring closes (6 in-game hours of being full, about 45 seconds
+at normal speed), the game is over.
+
 This is a project to help me learn C++, which I started after I got rejected for a
 full-time new grad role at Hudson River Trading due to lack of C++ experience.
 
@@ -44,7 +52,9 @@ mingw32-make && ./letter-flow.exe
 
 ## Controls
 
-- **Click an office**: inspect its mail, add/remove truck schedules
+- **Click an office**: inspect its mail, add/remove truck schedules, and
+  give it a postal code (Settings). While its overflow timer runs, the
+  inspector says how long is left.
 - **Truck schedules**: each schedule has a routing rule — only letters for the
   destination, letters addressed to a postal-code prefix, or all letters.
   Letters that arrive at an office they are not addressed to are forwarded
@@ -75,13 +85,19 @@ mingw32-make && ./letter-flow.exe
   to cancel (road building, an open popup, a text field), it does that first.
   In the tutorial, Save is disabled.
 - **F1 / F2**: Dear ImGui / ImPlot demo windows (widget reference while developing)
+- **Game over**: when an office overflows, the clock stops and a card
+  names the office and sums up the game (how long it lasted, letters
+  delivered and lost), with Main menu and Quit. The ended game is saved
+  right away and stays in the save list marked GAME OVER; playing it
+  again shows the final map and the card, but it can't be continued.
 - **Main menu and saves**: the game opens on a main menu. *Play* lists
   your saves (most recently played first): start a new game, or rename,
   copy, delete or play an existing save (double-clicking a row plays it
   too). *Tutorial* opens a small five-town practice map, where pop-up
-  cards walk you through building offices and roads, creating and editing
-  schedules, hub-and-spoke forwarding and postal-code routing. Most cards
-  continue once you've done what they ask; any can be skipped. The tutorial
+  cards walk you through building roads, creating and editing schedules,
+  overflowing offices, hub-and-spoke forwarding and postal-code routing.
+  Most cards continue once you've done what they ask; any can be skipped.
+  New offices appear and overflow ends the game there too. The tutorial
   is never saved: leaving it, or quitting during it, discards it. *Credits*
   is a placeholder page for now.
 - **Saving**: each save is a JSON file of its own in `saves/`,
@@ -98,7 +114,9 @@ mingw32-make && ./letter-flow.exe
   menu, when you quit, and whenever you pick Save in the pause menu. A file in the folder that can't be read
   is skipped (and left as it is), and the menu says so.
   The single `saves.json` (and the older `save.json`) of earlier versions is
-  no longer read.
+  no longer read. Saves from before offices appeared on their own (world
+  format 3, with offices you paid to build) still list but no longer load;
+  they can be deleted from the list.
   Each save also holds the statistics history and letter trails (saves from
   before statistics existed still load, with empty history).
   The save includes the RNG's internal state, so a loaded game continues the
@@ -116,14 +134,15 @@ and `app/` everything.
 ```
 src/sim/                 the game rules: pure logic, deterministic, no SDL/ImGui/OpenGL
   game_types.h           shared primitives: Tick, Position, world constants
-  balance.h              gameplay tuning: costs, starting money, truck and letter numbers
+  balance.h              gameplay tuning: costs, starting money, truck, letter, office-spawning and overflow numbers
   entities.h             data entities: Letter (+ trail), RoutingRule, TruckSchedule, PostOffice
+  office_names.*         the names new offices get (assets/office_names.txt, embedded at build time)
   stats.*                StatSeries: multi-resolution ring buffers behind every statistic
   truck.*                Truck: deterministic point-to-point motion
   road.*                 Road and the exact integer geometry behind road rules
   road_builder.*         RoadBuilder: snaps the road being drawn to legal segments
-  world.*                World: owns all state, advances the sim in fixed 60 Hz ticks
-  scenario.*             create_default_world() starter map, create_tutorial_world() practice map
+  world.*                World: owns all state, advances the sim in fixed 60 Hz ticks, spawns offices, ends the game
+  scenario.*             create_default_world() new game, create_tutorial_world() practice map
   tutorial.*             Tutorial: the tutorial's steps, their completion checks and progress
 src/persistence/         saving and loading (the only code that knows nlohmann/json)
   world_json.h           WorldJson: World <-> JSON (keeps nlohmann out of world.h)
@@ -135,7 +154,7 @@ src/ui/                  Dear ImGui presentation layer (the only place ImGui exi
   ui_map.cpp             the map: camera, offices, roads, trucks, selection, road building
   ui_hud.cpp             transport bar (play/pause, speed, clock) and the HUD card
   ui_inspector.cpp       inspector: office panel (letters, schedules, new-schedule form), truck panel
-  ui_menu.cpp            main menu, credits page and save list (the screens before a game starts), pause menu
+  ui_menu.cpp            main menu, credits page and save list (the screens before a game starts), pause menu, game-over card
   ui_tutorial.cpp        tutorial cards and spotlights
   ui_stats.cpp           statistics window, stat widgets and letter-trail tooltips (ImPlot)
   ui_theme.*             the "postal" look: palette, ImGui/ImPlot style, embedded font, styled widgets
@@ -157,6 +176,7 @@ third_party/nlohmann/json.hpp vendored single-header JSON library (only
 third_party/stb/stb_image.h   vendored PNG decoder, v2.30 (only app_icon.cpp
                               includes it)
 assets/logo.png               app icon, compiled into the executable
+assets/office_names.txt       post office names, one per line, compiled into the executable
 imgui/misc/fonts/Roboto-Medium.ttf  UI font, compiled into the executable
 ```
 

@@ -547,19 +547,16 @@ void DrawOfficeHeader(const std::vector<PostOffice>& offices, PostOfficeId selec
         ImGui::EndCombo();
     }
 
-    if (!office.postal_code.empty()) {
+    if (!office.postal_code.empty())
         theme::Pill(office.postal_code.c_str(), theme::kPaper2, theme::kInkDim);
-        ImGui::SameLine();
-    }
-    if (office.built)
-        theme::Pill("OPEN", theme::kGood, theme::kPaperLight);
     else
-        theme::Pill("NOT BUILT", theme::kPaper3, theme::kInkDim);
+        ImGui::TextDisabled("No postal code (set one under Settings)");
     ImGui::Spacing();
 }
 
 // How full the outbound buffer is: "Outbound ... n / max" over a thin bar
-// that turns warn / bad at the same thresholds as the office on the map.
+// that turns warn / bad at the same thresholds as the office on the map,
+// and, while its overflow timer is running, how long until the game ends.
 void DrawCapacityBar(const PostOffice& office) {
     const float fill = office.max_outbound_letters == 0 ? 0.0f
         : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
@@ -573,6 +570,20 @@ void DrawCapacityBar(const PostOffice& office) {
     ImGui::ProgressBar(fill, ImVec2(-FLT_MIN, ImGui::GetFontSize() * 0.45f), "");
     ImGui::PopStyleColor();
     ImGui::TextDisabled("About %zu new letters posted per day.", office.letters_per_day);
+
+    if (office.overflow_ticks > 0) {
+        const bool full = office.outbound_letters.size() >= office.max_outbound_letters;
+        char left[32];
+        FormatDuration(kOverflowLimit - std::min(kOverflowLimit, office.overflow_ticks), left, sizeof(left));
+        ImGui::PushTextWrapPos(0.0f);
+        if (office.overflow_ticks >= kOverflowLimit)
+            ImGui::TextColored(kColorErrorText, "Overflowed: this office ended the game.");
+        else if (full)
+            ImGui::TextColored(kColorErrorText, "Overflowing! Game over in %s if it stays full.", left);
+        else
+            ImGui::TextColored(theme::kWarnText, "Recovering: %s left on the overflow timer.", left);
+        ImGui::PopTextWrapPos();
+    }
 }
 
 // The "+ New schedule" button under the schedule table: it opens a list of
@@ -649,40 +660,21 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
 
     DrawOfficeHeader(offices, selected);
 
-    // An unbuilt office has no letters or schedules yet: offer to build it.
-    if (!office.built) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::Text("Once built, this office takes in about %zu letters per day and holds up to %zu "
-                    "outbound letters.", office.letters_per_day, office.max_outbound_letters);
-        ImGui::PopTextWrapPos();
-        ImGui::Spacing();
-        const bool affordable = world.get_money() >= office.build_cost;
-        ImGui::BeginDisabled(!affordable);
-        char build_label[64];
-        std::snprintf(build_label, sizeof(build_label), "Build post office  -  $%d", office.build_cost);
-        if (theme::PrimaryButton(build_label, ImVec2(-FLT_MIN, ImGui::GetFrameHeight() * 1.3f)))
-            world.build_office(selected);
-        ui::NoteItemAnchor(TutorialAnchor::BuildOfficeButton);
-        ImGui::EndDisabled();
-        if (!affordable)
-            ImGui::TextColored(kColorErrorText, "You only have $%d.", world.get_money());
-    } else {
-        DrawCapacityBar(office);
-        ImGui::Spacing();
+    DrawCapacityBar(office);
+    ImGui::Spacing();
 
-        ImGui::BeginGroup();  // header and table, as one tutorial anchor
-        if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
-            DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
-        ImGui::EndGroup();
-        ui::NoteItemAnchor(TutorialAnchor::OutboundLetters);
+    ImGui::BeginGroup();  // header and table, as one tutorial anchor
+    if (ImGui::CollapsingHeader("Outbound letters", ImGuiTreeNodeFlags_DefaultOpen))
+        DrawLetterTable("outbound_letters", office.outbound_letters, offices, world.get_tick());
+    ImGui::EndGroup();
+    ui::NoteItemAnchor(TutorialAnchor::OutboundLetters);
 
-        if (ImGui::CollapsingHeader("Statistics"))
-            ui::DrawOfficeStats(world, selected);
+    if (ImGui::CollapsingHeader("Statistics"))
+        ui::DrawOfficeStats(world, selected);
 
-        if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawScheduleTable(world, selected);
-            DrawAddScheduleButton(world, selected);
-        }
+    if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawScheduleTable(world, selected);
+        DrawAddScheduleButton(world, selected);
     }
 
     // Postal code, editable: every keystroke is committed to the World, so

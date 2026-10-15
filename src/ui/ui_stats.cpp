@@ -387,8 +387,8 @@ void DrawGlobalTab(const World& world) {
     const int64_t income_value = total(GlobalStat::IncomeValue);
     const int64_t income_bonus = total(GlobalStat::IncomeBonus);
     const int64_t spent_trucks = total(GlobalStat::SpentTrucks);
-    const int64_t spent_build = total(GlobalStat::SpentRoads) + total(GlobalStat::SpentOffices);
-    const int64_t net = income_value + income_bonus - spent_trucks - spent_build;
+    const int64_t spent_roads = total(GlobalStat::SpentRoads);
+    const int64_t net = income_value + income_bonus - spent_trucks - spent_roads;
     const int64_t on_time = total(GlobalStat::DeliveredOnTime);
     const int64_t late = total(GlobalStat::DeliveredLate);
     const int64_t delivered = on_time + late;
@@ -404,10 +404,10 @@ void DrawGlobalTab(const World& world) {
         EndStatTile();
 
         ImGui::TableNextColumn();
-        std::snprintf(value, sizeof(value), "$%lld", static_cast<long long>(spent_trucks + spent_build));
+        std::snprintf(value, sizeof(value), "$%lld", static_cast<long long>(spent_trucks + spent_roads));
         BeginStatTile("spent", "Spent", value, ui::theme::kInk);
-        ImGui::TextDisabled("$%lld trucks, $%lld building", static_cast<long long>(spent_trucks),
-                            static_cast<long long>(spent_build));
+        ImGui::TextDisabled("$%lld trucks, $%lld roads", static_cast<long long>(spent_trucks),
+                            static_cast<long long>(spent_roads));
         EndStatTile();
 
         ImGui::TableNextColumn();
@@ -442,8 +442,7 @@ void DrawGlobalTab(const World& world) {
         PlotRate("Letter values", {&g[GlobalStat::IncomeValue]}, now, Unit::MoneyPerHour, kGood);
         PlotRate("Early bonuses", {&g[GlobalStat::IncomeBonus]}, now, Unit::MoneyPerHour, kWarn);
         PlotRate("Trucks", {&g[GlobalStat::SpentTrucks]}, now, Unit::MoneyPerHour, kSpend);
-        PlotRate("Building", {&g[GlobalStat::SpentRoads], &g[GlobalStat::SpentOffices]}, now,
-                 Unit::MoneyPerHour, kMuted);
+        PlotRate("Roads", {&g[GlobalStat::SpentRoads]}, now, Unit::MoneyPerHour, kMuted);
         EndTimeChart();
     }
     ImGui::TableNextColumn();
@@ -518,8 +517,6 @@ void DrawOfficesTab(const World& world) {
     std::vector<Row> rows;
     for (PostOfficeId id = 0; id < offices.size(); ++id) {
         const PostOffice& o = offices[id];
-        if (!o.built)
-            continue;
         const int64_t peak = RangePeak(o.stats[OfficeStat::Backlog], now);
         rows.push_back({id, RangeSum(o.stats[OfficeStat::Spawned], now), RangeSum(o.stats[OfficeStat::Lost], now),
                         RangeSum(o.stats[OfficeStat::Delivered], now), RangeSum(o.stats[OfficeStat::Forwarded], now),
@@ -527,7 +524,7 @@ void DrawOfficesTab(const World& world) {
                         o.max_outbound_letters > 0 ? static_cast<double>(peak) / static_cast<double>(o.max_outbound_letters) : 0.0});
     }
     if (rows.empty()) {
-        ImGui::TextDisabled("No post offices built yet.");
+        ImGui::TextDisabled("No post offices yet.");
         return;
     }
 
@@ -589,7 +586,7 @@ void DrawOfficesTab(const World& world) {
         ImGui::EndTable();
     }
 
-    if (ui::g_game.stats_office >= offices.size() || !offices[ui::g_game.stats_office].built) {
+    if (ui::g_game.stats_office >= offices.size()) {
         ImGui::TextDisabled("Click an office for its charts.");
         return;
     }

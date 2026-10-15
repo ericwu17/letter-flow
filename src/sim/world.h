@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <utility>
@@ -39,6 +40,12 @@ private:
     std::vector<DeliveredLetter> recent_deliveries;  // oldest first, at most kRecentDeliveriesSize
     ScheduleId next_schedule_id = 0;                 // next id add_schedule hands out
 
+    // When advance_tick() next calls spawn_random_office().
+    Tick next_office_spawn = kOfficeSpawnIntervalStart;
+    // The office whose overflow timer ran out, ending the game; kNoPostOffice
+    // while the game is still on.
+    PostOfficeId game_over_office = kNoPostOffice;
+
     // Payouts and departure charges since the UI last called
     // take_money_events(). Transient: neither serialized nor compared.
     std::vector<MoneyEvent> money_events;
@@ -50,6 +57,11 @@ private:
     void spawn_letter(PostOfficeId office);        // one letter, buffer permitting
     void spawn_truck(PostOfficeId src, TruckSchedule& schedule);
     void deliver(Truck& truck);
+    // Runs every office's overflow timer for this tick and ends the game when
+    // one runs out.
+    void update_overflow();
+    // How long after a spawn the next one comes, given the offices so far.
+    Tick office_spawn_interval() const;
     // Records this tick's sample of every gauge statistic.
     void sample_gauges();
     // The schedule with this id among `office`'s schedules, or nullptr.
@@ -61,28 +73,31 @@ private:
                                     const RoutingRule& normalized_rule) const;
 
 public:
-    // Advances the simulation by one tick: probabilistic letter spawning,
-    // schedule departures, truck arrivals and delivery/scoring.
+    // Advances the simulation by one tick: new offices appearing,
+    // probabilistic letter spawning, schedule departures, truck arrivals and
+    // delivery/scoring, and the overflow timers. Does nothing at all once the
+    // game is over (the clock stops too).
     void advance_tick();
 
     // Scenario construction. create_default_world() (scenario.h) builds the
     // starter map entirely through this public API — no friendship required.
-    // New offices start unbuilt; the player pays build_cost to build them.
+    // An office is open for mail the moment it is added.
     PostOfficeId add_office(std::string name, std::string postal_code, Position pos,
                             std::size_t letters_per_day,
-                            std::size_t max_outbound_letters,
-                            int build_cost);
-    // Fills every built office's buffer with one day's worth of letters right away,
+                            std::size_t max_outbound_letters);
+    // Adds an office of a random class (kOfficeClasses) at a random free spot
+    // (see the placement rules in balance.h), named after a random unused
+    // entry of office_names(), with no postal code. advance_tick() calls it
+    // whenever next_office_spawn comes due; scenarios call it to open a game.
+    // Returns nullopt, adding nothing, if every name is taken or no free spot
+    // turned up.
+    std::optional<PostOfficeId> spawn_random_office();
+    // Fills every office's buffer with one day's worth of letters right away,
     // so a scenario starts in motion instead of waiting for letters to trickle
     // in one probabilistic spawn at a time.
     void seed_letters();
 
     // Player actions (called from the UI).
-    // Builds an office, paying its build_cost up front. Only built offices
-    // spawn and receive letters, and only they can be joined by roads (and
-    // hence schedules). Returns false and changes nothing if the id is
-    // invalid, the office is already built, or the player cannot afford it.
-    bool build_office(PostOfficeId office);
     // Creates a truck schedule on the src -> dst route: each day, departures
     // fall on the grid start_offset + k * period up to midnight, restarting at
     // start_offset the next day (both in ticks; start_offset is a time of day,
@@ -133,7 +148,7 @@ public:
     // Build a road from `src` to `dst`. `vertices` is the complete polyline:
     // vertices[0] must equal post_offices[src].pos and vertices.back() must
     // equal post_offices[dst].pos, and every coordinate must be within
-    // ±kMaxCoordinate. Both offices must be built. All segments must be
+    // ±kMaxCoordinate. All segments must be
     // non-empty and horizontal, vertical, or exactly 45° diagonal; the road
     // must not touch itself, and
     // may touch existing roads only at post offices they share as endpoints.
@@ -183,6 +198,10 @@ public:
     // Read-only access for the presentation layer. Named with the same get_*
     // convention as Truck's accessors.
     Tick get_tick() const { return current_tick; }
+    Tick get_next_office_spawn() const { return next_office_spawn; }
+    bool is_game_over() const { return game_over_office != kNoPostOffice; }
+    // The office that overflowed and ended the game, or kNoPostOffice.
+    PostOfficeId get_game_over_office() const { return game_over_office; }
     bool is_paused() const { return paused; }
     float get_speed_multiplier() const { return speed_multiplier; }
     int get_money() const { return money; }

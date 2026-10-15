@@ -4,12 +4,16 @@
 // each screen on a paper card, and the in-game pause menu. main.cpp calls
 // DrawMainMenu while no game is running: before the first launch, and after
 // the player leaves a game or the tutorial, which lands on the title card.
+// The game-over card, which replaces the pause menu once a game has ended,
+// lives here too.
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
 
 #include "persistence/save_library.h"
+#include "sim/game_types.h"
 #include "sim/scenario.h"
+#include "sim/stats.h"
 #include "sim/world.h"
 #include "imgui.h"
 
@@ -287,6 +291,12 @@ std::optional<SaveId> DrawSavesScreen(SaveLibrary& library) {
                 ImGui::AlignTextToFramePadding();
                 ui::FormatDayTime(save.tick, text, sizeof(text));
                 ImGui::TextUnformatted(text);
+                if (save.game_over) {
+                    // Ended games still open (to look at the final map), but
+                    // can't be played on.
+                    ImGui::SameLine();
+                    theme::Pill("GAME OVER", theme::kBad, theme::kPaperLight);
+                }
 
                 ImGui::TableSetColumnIndex(2);
                 ImGui::AlignTextToFramePadding();
@@ -393,6 +403,11 @@ std::optional<MenuLaunch> DrawMainMenu(SaveLibrary& library, std::optional<World
 
 PauseAction DrawPauseMenu(const World& world, SaveLibrary& library, std::optional<SaveId> save) {
     ui::GameUiState& game = ui::g_game;
+    if (world.is_game_over()) {
+        // The game-over card has taken over (DrawGameOver).
+        game.pause_menu_open = false;
+        return PauseAction::None;
+    }
     if (!game.pause_menu_open && g_esc_opens_menu && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
         game.pause_menu_open = true;
 
@@ -464,3 +479,67 @@ PauseAction DrawPauseMenu(const World& world, SaveLibrary& library, std::optiona
 }
 
 bool PauseMenuOpen() { return ui::g_game.pause_menu_open; }
+
+PauseAction DrawGameOver(const World& world) {
+    // Hosted like the pause menu: OpenPopup needs a current window.
+    ImGui::Begin("##game_over_host", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoDocking |
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
+    if (!ImGui::IsPopupOpen("##game_over"))
+        ImGui::OpenPopup("##game_over");
+
+    PauseAction action = PauseAction::None;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 18.0f));
+    const bool open = ImGui::BeginPopupModal("##game_over", nullptr,
+                                             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+                                                 ImGuiWindowFlags_AlwaysAutoResize |
+                                                 ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PopStyleVar();
+    if (open) {
+        const float em = ImGui::GetFontSize();
+        const ImVec2 button_size(em * 16.0f, 0.0f);
+        ImGui::PushFont(nullptr, theme::kFontHuge);
+        ImGui::TextColored(theme::kBad, "Game over");
+        ImGui::PopFont();
+
+        const std::vector<PostOffice>& offices = world.get_post_offices();
+        const PostOfficeId overflowed = world.get_game_over_office();
+        char when[64];
+        ui::FormatDayTime(world.get_tick(), when, sizeof(when));
+        ImGui::Text("%s overflowed (%s).", overflowed < offices.size() ? offices[overflowed].name.c_str() : "An office",
+                    when);
+        ImGui::Spacing();
+
+        const Tick tick = world.get_tick();
+        const Tick days = tick / kTicksPerDay;
+        const Tick hours = tick % kTicksPerDay / kTicksPerHour;
+        ImGui::TextColored(theme::kInkDim, "Lasted");
+        ImGui::SameLine(em * 9.0f);
+        ImGui::Text("%llu %s, %llu %s", static_cast<unsigned long long>(days), days == 1 ? "day" : "days",
+                    static_cast<unsigned long long>(hours), hours == 1 ? "hour" : "hours");
+        ImGui::TextColored(theme::kInkDim, "Post offices");
+        ImGui::SameLine(em * 9.0f);
+        ImGui::Text("%zu", offices.size());
+        ImGui::TextColored(theme::kInkDim, "Delivered");
+        ImGui::SameLine(em * 9.0f);
+        ImGui::Text("%zu letters (%zu late)", world.get_letters_delivered_on_time() + world.get_letters_delivered_late(),
+                    world.get_letters_delivered_late());
+        ImGui::TextColored(theme::kInkDim, "Lost");
+        ImGui::SameLine(em * 9.0f);
+        ImGui::Text("%lld letters", static_cast<long long>(world.get_stats()[GlobalStat::Lost].total));
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        if (theme::PrimaryButton("Main menu", button_size))
+            action = PauseAction::MainMenu;
+        if (ImGui::Button("Quit", button_size))
+            action = PauseAction::Quit;
+        if (action != PauseAction::None)
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    ImGui::End();
+    return action;
+}

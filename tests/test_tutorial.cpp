@@ -52,8 +52,6 @@ void tutorial_world_matches_the_steps() {
     assert(offices[kBrookside].name == "Brookside");
     assert(offices[kDunmore].name == "Dunmore");
     assert(offices[kElmwood].name == "Elmwood");
-    for (const PostOffice& office : offices)
-        assert(!office.built);
     assert(w.is_paused());
     assert(w.get_roads().empty());
     // The postal-code lesson needs Elmwood misfiled, and Dunmore already south.
@@ -93,21 +91,8 @@ void following_the_steps_finishes_the_tutorial() {
     expect_step(t, "Getting around");
     t.next();
 
-    expect_step(t, "Pick a site");
+    expect_step(t, "Start a road");
     t.update(w, facts);
-    expect_step(t, "Pick a site");  // the inspector defaults to office 0, Central
-    facts.selected_office = kAshford;
-    t.update(w, facts);
-
-    expect_step(t, "Build it");
-    assert(w.build_office(kAshford));
-    t.update(w, facts);
-
-    expect_step(t, "Build the hub");
-    facts.selected_office = kCentral;
-    assert(w.build_office(kCentral));
-    t.update(w, facts);
-
     expect_step(t, "Start a road");
     facts.building_road = true;
     t.update(w, facts);
@@ -122,7 +107,13 @@ void following_the_steps_finishes_the_tutorial() {
     t.update(w, facts);
 
     expect_step(t, "Mail arrives");
+    facts.selected_office = kAshford;
     tick_until_step_done(w, t, facts);
+
+    expect_step(t, "Don't let it overflow");
+    t.update(w, facts);
+    expect_step(t, "Don't let it overflow");  // an info card
+    t.next();
 
     expect_step(t, "Create a schedule");
     assert(w.add_schedule(kAshford, kCentral, hours_minutes_to_ticks(6, 0), 0, RoutingRule{}));  // the UI's defaults
@@ -140,17 +131,14 @@ void following_the_steps_finishes_the_tutorial() {
     t.update(w, facts);
 
     expect_step(t, "Grow the network");
-    assert(w.build_office(kBrookside));
-    assert(w.build_office(kDunmore));
-    assert(w.build_office(kElmwood));
     assert(add_direct_road(w, kCentral, kBrookside));
     assert(add_direct_road(w, kCentral, kDunmore));
     t.update(w, facts);
     expect_step(t, "Grow the network");  // Dunmore - Elmwood is still missing
     assert(add_direct_road(w, kDunmore, kElmwood));
     t.update(w, facts);
-    // Every required build fits the tutorial's budget with plenty to spare.
-    assert(w.get_money() > 5000);
+    // Every required road fits the tutorial's budget with plenty to spare.
+    assert(w.get_money() > 2000);
 
     expect_step(t, "Hub and spoke");
     assert(w.update_schedule(kAshford, 0, hours_minutes_to_ticks(0, 30), 0,
@@ -192,10 +180,12 @@ void following_the_steps_finishes_the_tutorial() {
     assert(t.finished());
 
     // The network the tutorial built actually delivers south-bound mail
-    // through the hub: run a day and check Elmwood received letters.
+    // through the hub: run a day and check Elmwood received letters. The
+    // tutorial's roomy buffers last that long without anyone overflowing.
     const std::size_t delivered = w.get_letters_delivered_on_time() + w.get_letters_delivered_late();
     for (Tick i = 0; i < kTicksPerDay; ++i)
         w.advance_tick();
+    assert(!w.is_game_over());
     assert(w.get_letters_delivered_on_time() + w.get_letters_delivered_late() > delivered);
     assert(w.get_post_offices()[kElmwood].stats[OfficeStat::Delivered].total > 0);
 }
@@ -207,14 +197,10 @@ void steps_done_early_are_skipped() {
     t.next();
     t.next();
 
-    // Build both offices and the road before following any step: once
-    // Ashford is selected, everything up to pressing play is already done.
-    assert(w.build_office(kAshford));
-    assert(w.build_office(kCentral));
+    // Build the road before following any step: everything up to pressing
+    // play is already done.
+    expect_step(t, "Start a road");
     assert(add_direct_road(w, kAshford, kCentral));
-    t.update(w, facts);
-    expect_step(t, "Pick a site");  // selecting is still to do
-    facts.selected_office = kAshford;
     t.update(w, facts);
     expect_step(t, "Start the clock");
 

@@ -16,8 +16,6 @@ namespace {
 
 using namespace tutorial_map;
 
-bool built(const World& w, PostOfficeId id) { return w.get_post_offices()[id].built; }
-
 // Whether `src` has a schedule to `dst` whose rule satisfies `pred`.
 template <typename Pred>
 bool has_schedule(const World& w, PostOfficeId src, PostOfficeId dst, Pred pred) {
@@ -34,8 +32,9 @@ const TutorialStep kSteps[] = {
     {
         .title = "Welcome to Letter Flow",
         .body = "Letters are posted at post offices every day, each addressed to another office "
-                "and due by a deadline. Your job is to build a postal network and run trucks "
-                "that deliver them. Every delivery pays, and early ones pay a bonus.\n\n"
+                "and due by a deadline. Your job is to build roads and run trucks that deliver "
+                "them before the offices fill up. Every delivery pays, and early ones pay a "
+                "bonus.\n\n"
                 "This tutorial walks you through it on a small map of five towns. Nothing here "
                 "is saved.",
     },
@@ -46,32 +45,9 @@ const TutorialStep kSteps[] = {
                 "map. The card at the top right shows your money and deliveries.",
     },
     {
-        .title = "Pick a site",
-        .body = "None of the five offices is open yet. Click Ashford on the map (it's circled) "
-                "to inspect it.",
-        .office = kAshford,
-        .done = [](const World&, const TutorialUiFacts& f) { return f.selected_office == kAshford; },
-    },
-    {
-        .title = "Build it",
-        .body = "The inspector shows what Ashford would handle once built. Press \"Build post "
-                "office\" to open it. The cost comes out of your money, top right.",
-        .office = kAshford,
-        .anchor = TutorialAnchor::BuildOfficeButton,
-        .done = [](const World& w, const TutorialUiFacts&) { return built(w, kAshford); },
-    },
-    {
-        .title = "Build the hub",
-        .body = "Mail needs somewhere to go. Select Central, in the middle of the map, and build "
-                "it too. Bigger offices cost more but post more mail.",
-        .office = kCentral,
-        .anchor = TutorialAnchor::BuildOfficeButton,
-        .done = [](const World& w, const TutorialUiFacts&) { return built(w, kCentral); },
-    },
-    {
         .title = "Start a road",
-        .body = "Trucks only drive on roads. Press \"Build a road...\" at the bottom of the "
-                "inspector to start drawing one.",
+        .body = "Trucks only drive on roads, and there are none yet. Press \"Build a road...\" "
+                "at the bottom of the inspector to start drawing one.",
         .anchor = TutorialAnchor::BuildRoadButton,
         .done = [](const World& w, const TutorialUiFacts& f) {
             return f.building_road || w.has_road(kAshford, kCentral);
@@ -105,6 +81,14 @@ const TutorialStep kSteps[] = {
             return w.get_post_offices()[kAshford].outbound_letters.size() >= 3 ||
                    has_schedule(w, kAshford, kCentral);
         },
+    },
+    {
+        .title = "Don't let it overflow",
+        .body = "A full office flashes red, and a red ring around it starts filling up. If an "
+                "office stays full until its ring closes, the game is over. Once the office has "
+                "room again, the ring slowly drains.\n\n"
+                "New offices also keep appearing on the map as time goes by, each one more mail "
+                "to move.",
     },
     {
         .title = "Create a schedule",
@@ -151,14 +135,11 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "Grow the network",
-        .body = "Build Brookside, Dunmore and Elmwood, then the roads Central to Brookside, "
-                "Central to Dunmore, and Dunmore to Elmwood.\n\n"
+        .body = "Brookside, Dunmore and Elmwood are piling up mail too. Build the roads Central "
+                "to Brookside, Central to Dunmore, and Dunmore to Elmwood.\n\n"
                 "Note that Elmwood only connects through Dunmore.",
         .rings = {kBrookside, kDunmore, kElmwood},
         .done = [](const World& w, const TutorialUiFacts&) {
-            for (PostOfficeId id = 0; id < kOfficeCount; ++id)
-                if (!built(w, id))
-                    return false;
             return w.has_road(kCentral, kBrookside) && w.has_road(kCentral, kDunmore) &&
                    w.has_road(kDunmore, kElmwood);
         },
@@ -235,10 +216,11 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "You're ready",
-        .body = "That's everything: build offices and roads, run schedules, sort mail with "
-                "postal codes, and keep an eye on deadlines and costs.\n\n"
-                "Start a real game from Play on the main menu. The full map has thirty towns "
-                "and a much tighter budget.",
+        .body = "That's everything: build roads, run schedules, sort mail with postal codes, "
+                "and keep an eye on deadlines, costs and full offices.\n\n"
+                "Start a real game from Play on the main menu. It opens with three towns and a "
+                "tighter budget, and new towns keep appearing, with no postal codes until you "
+                "give them some.",
     },
 };
 

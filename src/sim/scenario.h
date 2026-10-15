@@ -5,10 +5,11 @@
 #include "sim/entities.h"
 #include "sim/world.h"
 
-// The starter scenario: thirty unbuilt offices across New Jersey, New York,
-// and Pennsylvania, and no roads or truck routes. The player pays to build the
-// offices, roads and schedules they want (see build_office, add_road and
-// add_schedule); bigger offices cost more to build.
+// A new game: kInitialOffices randomly placed and named offices (see
+// World::spawn_random_office), with no roads or truck routes. More offices
+// keep appearing as the game goes on; the player builds the roads and
+// schedules that keep their mail moving (see add_road and add_schedule).
+// Deterministic: the World's RNG starts from a fixed seed.
 World create_default_world();
 
 // The tutorial's offices, by id (create_tutorial_world adds them in this
@@ -24,7 +25,7 @@ inline constexpr PostOfficeId kElmwood = 4;
 inline constexpr PostOfficeId kOfficeCount = 5;
 }  // namespace tutorial_map
 
-// The tutorial world (see tutorial.h): the five unbuilt offices above with
-// fast mail, a generous balance, and the clock paused. Elmwood starts with a
+// The tutorial world (see tutorial.h): the five offices above with fast mail,
+// a generous balance, and the clock paused. Elmwood starts with a
 // misfiled postal code ("ELM-01") for the postal-code lesson to fix.
 World create_tutorial_world();

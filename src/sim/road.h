@@ -61,6 +61,11 @@ bool all_segments_valid_direction(const std::vector<Position>& vertices);
 // Total Euclidean length of all segments in the polyline.
 double polyline_length(const std::vector<Position>& vertices);
 
+// Shortest Euclidean distance from p to any point of the polyline
+// (infinity for an empty one). Floating point: used to keep new offices clear
+// of roads, never to judge a road's legality.
+double distance_to_polyline(Position p, const std::vector<Position>& vertices);
+
 // Convenience: total Euclidean length of a road.
 inline double road_length(const Road& road) {
     return polyline_length(road.vertices);

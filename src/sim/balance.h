@@ -12,9 +12,8 @@
 // Economy
 // ---------------------------------------------------------------------------
 
-// Enough to open with a small town and a city joined by a road (or three
-// small towns in a chain), with some left over for truck departures, but not
-// two cities.
+// Enough to join the opening offices by road, with some left over for truck
+// departures; the rest has to be earned by delivering mail.
 constexpr int kStartingMoney = 5000;
 
 // Road construction: cost per world unit of road length (rounded up).
@@ -53,3 +52,50 @@ constexpr int kLetterBonusMax = 10;
 // Destination odds: bigger offices (by letters_per_day) and closer ones
 // attract more mail. weight = (size + 1) / (1 + distance / kDestinationDistanceScale).
 constexpr double kDestinationDistanceScale = 150.0;
+
+// ---------------------------------------------------------------------------
+// Post offices
+// ---------------------------------------------------------------------------
+
+// Offices appear on their own (World::spawn_random_office): a new game opens
+// with kInitialOffices of them, and another arrives every spawn interval.
+constexpr std::size_t kInitialOffices = 3;
+
+// The first spawn comes this long into the game; every office beyond the
+// opening ones shortens the wait for the next by kOfficeSpawnIntervalStep,
+// down to kOfficeSpawnIntervalMin.
+constexpr Tick kOfficeSpawnIntervalStart = kTicksPerDay;
+constexpr Tick kOfficeSpawnIntervalStep  = kTicksPerHour;
+constexpr Tick kOfficeSpawnIntervalMin   = 8 * kTicksPerHour;
+
+// The kinds of office that can appear, drawn with odds proportional to
+// spawn_weight.
+struct OfficeClass {
+    std::size_t letters_per_day;
+    std::size_t max_outbound_letters;
+    double spawn_weight;
+};
+constexpr OfficeClass kOfficeClasses[] = {
+    {20, 40, 6.0},   // small town
+    {30, 60, 3.0},   // city
+    {50, 100, 1.0},  // major city
+};
+
+// Where a new office may appear: at least kOfficeSpawnMargin inside the
+// world's edges, kOfficeMinSpacing from every other office and
+// kOfficeRoadClearance from every road (all in world units). A spawn tries
+// this many random spots before giving up until the next interval.
+constexpr double kOfficeSpawnMargin    = 80.0;
+constexpr double kOfficeMinSpacing     = 150.0;
+constexpr double kOfficeRoadClearance  = 40.0;
+constexpr int kOfficeSpawnAttempts     = 200;
+
+// ---------------------------------------------------------------------------
+// Overflow
+// ---------------------------------------------------------------------------
+
+// An office whose outbound buffer is full runs down its overflow timer by a
+// tick every tick, and winds it back up the same way once it has room again.
+// The game is over when any office's timer reaches this (6 in-game hours,
+// about 45 seconds at normal speed).
+constexpr Tick kOverflowLimit = hours_minutes_to_ticks(6, 0);

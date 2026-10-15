@@ -2,13 +2,16 @@
 #include "sim/world.h"
 #include "sim/balance.h"
 #include "sim/entities.h"
+#include "sim/office_names.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -68,11 +71,21 @@ bool World::operator==(const World& other) const {
         && stats == other.stats
         && recent_deliveries == other.recent_deliveries
         && next_schedule_id == other.next_schedule_id
+        && next_office_spawn == other.next_office_spawn
+        && game_over_office == other.game_over_office
         && rng == other.rng;
 }
 
 void World::advance_tick() {
+    if (is_game_over())
+        return;
     current_tick += 1;
+
+    // 0. Now and then a new office opens somewhere on the map.
+    if (current_tick >= next_office_spawn) {
+        spawn_random_office();
+        next_office_spawn = current_tick + office_spawn_interval();
+    }
 
     // 1. Letters trickle in: on every tick each office spawns a single letter
     //    with probability letters_per_day / kTicksPerDay, so the expected
@@ -105,16 +118,83 @@ void World::advance_tick() {
         }
     }
 
-    // 4. Statistics: flows were recorded as things happened above; gauges
+    // 4. Overflow: a full office runs down its timer; one that runs out ends
+    //    the game.
+    update_overflow();
+
+    // 5. Statistics: flows were recorded as things happened above; gauges
     //    are sampled once per tick, after everything has moved.
     sample_gauges();
+}
+
+void World::update_overflow() {
+    for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
+        PostOffice& office = post_offices[id];
+        // At or over the cap counts as full: forwarded letters can push a
+        // buffer past it (see deliver()).
+        if (office.outbound_letters.size() >= office.max_outbound_letters)
+            office.overflow_ticks += 1;
+        else if (office.overflow_ticks > 0)
+            office.overflow_ticks -= 1;
+        if (office.overflow_ticks >= kOverflowLimit && !is_game_over())
+            game_over_office = id;  // the first (lowest id) to run out on this tick
+    }
+}
+
+Tick World::office_spawn_interval() const {
+    const std::size_t extra = post_offices.size() > kInitialOffices ? post_offices.size() - kInitialOffices : 0;
+    const Tick shortened = static_cast<Tick>(extra) * kOfficeSpawnIntervalStep;
+    if (shortened >= kOfficeSpawnIntervalStart - kOfficeSpawnIntervalMin)
+        return kOfficeSpawnIntervalMin;
+    return kOfficeSpawnIntervalStart - shortened;
+}
+
+std::optional<PostOfficeId> World::spawn_random_office() {
+    // A name no office has yet.
+    std::vector<const char*> free_names;
+    for (const char* name : office_names()) {
+        const bool taken = std::any_of(post_offices.begin(), post_offices.end(),
+                                       [&](const PostOffice& o) { return o.name == std::string_view(name); });
+        if (!taken)
+            free_names.push_back(name);
+    }
+    if (free_names.empty())
+        return std::nullopt;
+
+    // A spot inside the margins, clear of every office and every road.
+    // Coordinates are whole world units, like every other position.
+    std::uniform_int_distribution<int64_t> pick_x(static_cast<int64_t>(kOfficeSpawnMargin),
+                                                  static_cast<int64_t>(kWorldWidth - kOfficeSpawnMargin));
+    std::uniform_int_distribution<int64_t> pick_y(static_cast<int64_t>(kOfficeSpawnMargin),
+                                                  static_cast<int64_t>(kWorldHeight - kOfficeSpawnMargin));
+    std::optional<Position> spot;
+    for (int attempt = 0; attempt < kOfficeSpawnAttempts && !spot; ++attempt) {
+        const Position candidate{pick_x(rng), pick_y(rng)};
+        const bool crowded = std::any_of(post_offices.begin(), post_offices.end(), [&](const PostOffice& o) {
+            return euclidean_length(o.pos - candidate) < kOfficeMinSpacing;
+        });
+        const bool on_road = std::any_of(roads.begin(), roads.end(), [&](const Road& r) {
+            return distance_to_polyline(candidate, r.vertices) < kOfficeRoadClearance;
+        });
+        if (!crowded && !on_road)
+            spot = candidate;
+    }
+    if (!spot)
+        return std::nullopt;
+
+    std::vector<double> weights;
+    for (const OfficeClass& office_class : kOfficeClasses)
+        weights.push_back(office_class.spawn_weight);
+    const OfficeClass& office_class =
+        kOfficeClasses[std::discrete_distribution<std::size_t>(weights.begin(), weights.end())(rng)];
+    const char* name = free_names[std::uniform_int_distribution<std::size_t>(0, free_names.size() - 1)(rng)];
+
+    return add_office(name, "", *spot, office_class.letters_per_day, office_class.max_outbound_letters);
 }
 
 void World::sample_gauges() {
     std::size_t waiting = 0;
     for (PostOffice& office : post_offices) {
-        if (!office.built)
-            continue;
         office.stats[OfficeStat::Backlog].sample(current_tick, as_stat(office.outbound_letters.size()));
         waiting += office.outbound_letters.size();
     }
@@ -137,8 +217,6 @@ TruckSchedule* World::find_schedule(PostOfficeId office, ScheduleId id) {
 
 void World::maybe_spawn_letter(PostOfficeId office_id) {
     const PostOffice& office = post_offices[office_id];
-    if (!office.built)
-        return;
 
     // Exact integer roll: a uniform value in [0, kTicksPerDay) lands below
     // letters_per_day with probability letters_per_day / kTicksPerDay.
@@ -151,16 +229,10 @@ void World::maybe_spawn_letter(PostOfficeId office_id) {
 
 void World::spawn_letter(PostOfficeId office_id) {
     PostOffice& office = post_offices[office_id];
-    if (!office.built)
-        return;
 
-    // Letters are only addressed to other built offices; with none, there is
-    // nowhere to send mail (this also keeps the dst loop below terminating).
-    const bool has_built_dst = std::any_of(
-        post_offices.begin(), post_offices.end(), [&](const PostOffice& other) {
-            return other.built && &other != &office;
-        });
-    if (!has_built_dst)
+    // Letters are only addressed to other offices; with none, there is
+    // nowhere to send mail (this also keeps the dst loop below non-empty).
+    if (post_offices.size() < 2)
         return;
 
     if (office.outbound_letters.size() >= office.max_outbound_letters) {
@@ -179,7 +251,7 @@ void World::spawn_letter(PostOfficeId office_id) {
     std::vector<double> weights;
     for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
         const PostOffice& other = post_offices[id];
-        if (id == office_id || !other.built)
+        if (id == office_id)
             continue;
         const double dx = static_cast<double>(other.pos.x - office.pos.x);
         const double dy = static_cast<double>(other.pos.y - office.pos.y);
@@ -411,30 +483,16 @@ void World::set_postal_code(PostOfficeId office, std::string postal_code) {
 
 PostOfficeId World::add_office(std::string name, std::string postal_code, Position pos,
                                std::size_t letters_per_day,
-                               std::size_t max_outbound_letters,
-                               int build_cost) {
+                               std::size_t max_outbound_letters) {
     PostOffice office;
     office.name = std::move(name);
     office.postal_code = std::move(postal_code);
     office.pos = pos;
     office.letters_per_day = letters_per_day;
     office.max_outbound_letters = max_outbound_letters;
-    office.build_cost = build_cost;
     const PostOfficeId id = post_offices.size();
     post_offices.push_back(std::move(office));
     return id;
-}
-
-bool World::build_office(PostOfficeId office) {
-    if (office >= post_offices.size() || post_offices[office].built)
-        return false;
-    const int cost = post_offices[office].build_cost;
-    if (money < cost)
-        return false;
-    money -= cost;
-    stats[GlobalStat::SpentOffices].add(current_tick, cost);
-    post_offices[office].built = true;
-    return true;
 }
 
 void World::seed_letters() {
@@ -468,8 +526,6 @@ const Road* World::find_road(PostOfficeId a, PostOfficeId b) const {
 bool World::add_road(PostOfficeId src, PostOfficeId dst, std::vector<Position> vertices) {
     // Validate office indices.
     if (src >= post_offices.size() || dst >= post_offices.size() || src == dst)
-        return false;
-    if (!post_offices[src].built || !post_offices[dst].built)
         return false;
     if (vertices.size() < 2)
         return false;

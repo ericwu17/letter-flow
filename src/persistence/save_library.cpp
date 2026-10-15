@@ -115,6 +115,7 @@ SaveSummary summarize(const json& save) {
         summary.tick = tick->get<Tick>();
     if (const auto money = world.find("money"); money != world.end() && money->is_number_integer())
         summary.money = money->get<int>();
+    summary.game_over = world.contains("game_over_office");  // only written once the game is over
     return summary;
 }
 

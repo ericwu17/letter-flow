@@ -58,6 +58,13 @@ struct MoneyPopup {
     float age = 0.0f;  // seconds
 };
 
+// A ring expanding out of an office that just appeared on the map. Real
+// time, like MoneyPopup; purely presentational.
+struct SpawnPulse {
+    PostOfficeId office = kNoPostOffice;
+    float age = 0.0f;  // seconds
+};
+
 // The inspector's editable fields for one office. DrawOfficePanel reloads
 // them all whenever the inspected office changes.
 struct InspectorForms {
@@ -92,6 +99,11 @@ struct GameUiState {
     RoadMenuState road_menu;
 
     std::vector<MoneyPopup> money_popups;
+    std::vector<SpawnPulse> spawn_pulses;
+    // How many offices the map has seen: any beyond this count are new and
+    // get a SpawnPulse. Unset until the game's first frame, so the offices a
+    // game opens or loads with don't all pulse at once.
+    std::optional<std::size_t> known_offices;
     // The letter hovered in a list last frame (HighlightLetter). DrawWorld
     // draws its journey and then clears it, so the highlight lapses as soon
     // as the list stops asking for it.

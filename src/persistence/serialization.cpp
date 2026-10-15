@@ -41,7 +41,12 @@ namespace {
 // Statistics, letter trails, schedule ids and the recent-deliveries log were
 // added within v3 as optional keys: a save without them still loads (with
 // empty history and freshly assigned schedule ids), so no bump was needed.
-constexpr int kSaveFormatVersion = 3;
+// v4: offices appear on their own and can overflow: build_cost and built are
+//     gone (every office is open), offices store overflow_ticks, and the
+//     world stores next_office_spawn and, once the game is over,
+//     game_over_office. v3 worlds were full of unbuilt offices, so they are
+//     not converted.
+constexpr int kSaveFormatVersion = 4;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
 // reordering or extending the enum can never silently misread old saves. An
@@ -292,8 +297,7 @@ void to_json(nlohmann::json& j, const PostOffice& office) {
          {"pos", office.pos},
          {"max_outbound_letters", office.max_outbound_letters},
          {"letters_per_day", office.letters_per_day},
-         {"build_cost", office.build_cost},
-         {"built", office.built},
+         {"overflow_ticks", office.overflow_ticks},
          {"outbound_letters", office.outbound_letters},
          {"outbound_schedules", office.outbound_schedules},
          {"stats", office.stats}};
@@ -305,8 +309,7 @@ void from_json(const nlohmann::json& j, PostOffice& office) {
     j.at("pos").get_to(office.pos);
     j.at("max_outbound_letters").get_to(office.max_outbound_letters);
     j.at("letters_per_day").get_to(office.letters_per_day);
-    j.at("build_cost").get_to(office.build_cost);
-    j.at("built").get_to(office.built);
+    j.at("overflow_ticks").get_to(office.overflow_ticks);
     j.at("outbound_letters").get_to(office.outbound_letters);
     j.at("outbound_schedules").get_to(office.outbound_schedules);
     office.stats = j.value("stats", OfficeStats{});
@@ -359,10 +362,10 @@ namespace {
 // references, schedules violating the invariants add_schedule() enforces
 // (dst is another office, period > 0, non-empty distinct postal prefixes), and roads
 // violating the invariants add_road() enforces (normalized src < dst, no
-// duplicates, both endpoint offices built, at least two in-range vertices
-// anchored at the endpoint offices), letters (and their trails) naming
-// offices that do not exist, and schedule ids that repeat or that the
-// World's id counter would hand out again.
+// duplicates, at least two in-range vertices anchored at the endpoint
+// offices), letters (and their trails) naming offices that do not exist,
+// schedule ids that repeat or that the World's id counter would hand out
+// again, and a game-over office that does not exist.
 bool letter_is_valid(const Letter& letter, PostOfficeId num_offices) {
     if (letter.src >= num_offices || letter.dst >= num_offices)
         return false;
@@ -376,8 +379,11 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                            const std::vector<std::shared_ptr<Truck>>& trucks,
                            const std::vector<Road>& roads,
                            const std::vector<DeliveredLetter>& recent_deliveries,
-                           ScheduleId next_schedule_id) {
+                           ScheduleId next_schedule_id,
+                           PostOfficeId game_over_office) {
     const PostOfficeId num_offices = post_offices.size();
+    if (game_over_office != kNoPostOffice && game_over_office >= num_offices)
+        return false;
     std::vector<ScheduleId> schedule_ids;
     for (PostOfficeId office_id = 0; office_id < num_offices; ++office_id) {
         const PostOffice& office = post_offices[office_id];
@@ -415,8 +421,6 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
         const Road& road = roads[i];
         if (road.src >= num_offices || road.dst >= num_offices || road.src >= road.dst)
             return false;
-        if (!post_offices[road.src].built || !post_offices[road.dst].built)
-            return false;
         if (road.vertices.size() < 2 || !all_vertices_in_range(road.vertices))
             return false;
         if (road.vertices.front() != post_offices[road.src].pos ||
@@ -445,6 +449,9 @@ nlohmann::json WorldJson::to_json(const World& world) {
     j["letters_delivered_on_time"] = world.letters_delivered_on_time;
     j["letters_delivered_late"] = world.letters_delivered_late;
     j["next_schedule_id"] = world.next_schedule_id;
+    j["next_office_spawn"] = world.next_office_spawn;
+    if (world.game_over_office != kNoPostOffice)
+        j["game_over_office"] = world.game_over_office;  // absent while the game is on
     j["stats"] = world.stats;
     j["recent_deliveries"] = world.recent_deliveries;
     j["post_offices"] = world.post_offices;
@@ -487,6 +494,8 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
         j.at("roads").get_to(world.roads);
         world.stats = j.value("stats", GlobalStats{});
         world.recent_deliveries = j.value("recent_deliveries", std::vector<DeliveredLetter>{});
+        j.at("next_office_spawn").get_to(world.next_office_spawn);
+        world.game_over_office = j.value("game_over_office", kNoPostOffice);
 
         // Schedule ids. Saves from before ids hold none: hand every
         // schedule a fresh one, starting past any id already in the file.
@@ -515,7 +524,8 @@ std::optional<World> WorldJson::from_json(const nlohmann::json& j) {
         }
 
         if (!loaded_state_is_valid(world.post_offices, world.trucks, world.roads,
-                                   world.recent_deliveries, world.next_schedule_id)) {
+                                   world.recent_deliveries, world.next_schedule_id,
+                                   world.game_over_office)) {
             cerr << "load: the saved world is inconsistent (see loaded_state_is_valid)" << endl;
             return std::nullopt;
         }

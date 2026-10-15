@@ -1,13 +1,17 @@
 // road.cpp — road geometry implementation. Pure logic, no rendering, no input.
 //
 // Every predicate here is exact: positions are integers and the only
-// operations are subtraction, multiplication and comparison. The coordinate
+// operations are subtraction, multiplication and comparison. (The length and
+// distance measures at the end are floating point; nothing decides road
+// legality with them.) The coordinate
 // bound (kMaxCoordinate, see game_types.h) guarantees no int64_t overflow.
 #include "sim/road.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -144,4 +148,23 @@ double polyline_length(const std::vector<Position>& vertices) {
         total += euclidean_length(vertices[i] - vertices[i - 1]);
     }
     return total;
+}
+
+double distance_to_polyline(Position p, const std::vector<Position>& vertices) {
+    if (vertices.empty())
+        return std::numeric_limits<double>::infinity();
+    double best = euclidean_length(p - vertices[0]);
+    for (std::size_t i = 1; i < vertices.size(); ++i) {
+        const Position a = vertices[i - 1];
+        const Position b = vertices[i];
+        const auto ab_x = static_cast<double>(b.x - a.x);
+        const auto ab_y = static_cast<double>(b.y - a.y);
+        const auto ap_x = static_cast<double>(p.x - a.x);
+        const auto ap_y = static_cast<double>(p.y - a.y);
+        const double len_sq = ab_x * ab_x + ab_y * ab_y;
+        // The closest point of the segment: p projected onto it, clamped to its ends.
+        const double t = len_sq == 0.0 ? 0.0 : std::clamp((ap_x * ab_x + ap_y * ab_y) / len_sq, 0.0, 1.0);
+        best = std::min(best, std::hypot(ap_x - t * ab_x, ap_y - t * ab_y));
+    }
+    return best;
 }

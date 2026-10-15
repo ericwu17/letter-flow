@@ -29,11 +29,10 @@ struct TutorialUiFacts {
 // drawn this frame (ui::NoteAnchor); the tutorial spotlights the step's.
 enum class TutorialAnchor {
     None,
-    BuildOfficeButton,  // "Build post office" (an unbuilt office's inspector)
     BuildRoadButton,    // "Build a road..."
     TransportBar,       // play/pause and speed
-    OutboundLetters,    // a built office's outbound letter list
-    ScheduleTable,      // a built office's schedule table
+    OutboundLetters,    // an office's outbound letter list
+    ScheduleTable,      // an office's schedule table
     AddScheduleButton,  // the "+ New schedule" button
     SettingsHeader,     // the office's collapsed "Settings" section...
     PostalCodeInput,    // ...and the postal-code field inside it

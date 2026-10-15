@@ -1,7 +1,8 @@
 // test_simulation.cpp — headless tests for the simulation rules (World's
 // public API): routing-rule matching, schedule validation, departure pricing
-// and truck capacity, the departure grid, pick-up priority, and
-// delivery/forwarding. Run with
+// and truck capacity, the departure grid, pick-up priority,
+// delivery/forwarding, offices appearing on their own, and the overflow timer
+// that ends the game. Run with
 // `make test`. Pure simulation layer: no SDL/imgui/OpenGL — no window needed.
 //
 // Everything here is deterministic (fixed RNG seed, fixed tick counts) and
@@ -10,14 +11,20 @@
 #include "sim/entities.h"
 #include "sim/balance.h"
 #include "sim/game_types.h"
+#include "sim/office_names.h"
+#include "sim/road.h"
+#include "sim/scenario.h"
 #include "sim/truck.h"
 #include "sim/world.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -48,17 +55,15 @@ void add_underpass_road(World& w, PostOfficeId a, PostOfficeId b) {
 // are joined by straight roads. Only office 0 produces mail
 // (`letters_at_source` seeded letters, all addressed to one of the other
 // offices at random, plus that same rate trickling in per tick); every other
-// office has letters_per_day = 0 and stays inert. Every office is built, for
-// free (build_cost 0), so money only moves for roads and truck departures.
+// office has letters_per_day = 0 and stays inert. Money only moves for roads
+// and truck departures.
 World make_line_world(std::size_t count, std::size_t letters_at_source) {
     World w;
     for (std::size_t i = 0; i < count; ++i) {
         const std::string name = "O" + std::to_string(i);
         const std::string code = "T/" + std::to_string(i);
-        const PostOfficeId id = w.add_office(name, code, {100 * static_cast<int64_t>(i), 0},
-                                             i == 0 ? letters_at_source : 0,
-                                             /*max_outbound_letters=*/1000, /*build_cost=*/0);
-        assert(w.build_office(id));
+        w.add_office(name, code, {100 * static_cast<int64_t>(i), 0},
+                     i == 0 ? letters_at_source : 0, /*max_outbound_letters=*/1000);
     }
     w.seed_letters();
     for (std::size_t i = 1; i < count; ++i)
@@ -252,13 +257,10 @@ void departures_are_charged() {
     assert(events.size() == 1);
     assert(events[0].office == 0 && events[0].amount == -kTruckDepartureCost);
 
-    // Spend down to just under one departure's price by building a pricey
-    // (inert) office: the departure is skipped and nothing changes.
+    // Just under one departure's price: the departure is skipped and nothing
+    // changes.
     World broke = make_line_world(2, 3);
-    const PostOfficeId sink = broke.add_office("Sink", "S", {0, 1000}, 0, 0,
-                                               broke.get_money() - (kTruckDepartureCost - 1));
-    assert(broke.build_office(sink));
-    assert(broke.get_money() == kTruckDepartureCost - 1);
+    broke.set_money(kTruckDepartureCost - 1);
     assert(broke.add_schedule(0, 1, kTicksPerHour, 1, all));
     const std::size_t waiting = broke.get_post_offices()[0].outbound_letters.size();
     broke.take_money_events();
@@ -547,11 +549,9 @@ void road_removal() {
 // schedule delivers it onward — every seeded letter ends up scored, on time.
 void multi_hop_forwarding_delivers_every_letter() {
     World w;
-    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTruckCapacity, 100, 0);
-    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100, 0);
-    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100, 0);
-    for (const PostOfficeId id : {a, b, c})
-        assert(w.build_office(id));
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTruckCapacity, 100);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100);
+    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100);
     w.seed_letters();  // one truckload of letters at A, addressed to B or C at random
     add_straight_road(w, a, b);
     add_straight_road(w, b, c);
@@ -577,11 +577,9 @@ void multi_hop_forwarding_delivers_every_letter() {
 // records exactly when it left and reached which office on which schedule.
 void stats_and_trails_follow_a_hub_route() {
     World w;
-    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTruckCapacity, 100, 0);
-    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100, 0);
-    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100, 0);
-    for (const PostOfficeId id : {a, b, c})
-        assert(w.build_office(id));
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTruckCapacity, 100);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100);
+    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100);
     w.seed_letters();
     const int before_roads = w.get_money();
     add_straight_road(w, a, b);
@@ -612,7 +610,6 @@ void stats_and_trails_follow_a_hub_route() {
     assert(g[GlobalStat::DeliveredLate].total == 0);
     assert(g[GlobalStat::SpentRoads].total == road_spend);
     assert(g[GlobalStat::SpentTrucks].total == 2 * kTruckDepartureCost);
-    assert(g[GlobalStat::SpentOffices].total == 0);  // they were free
 
     // Income adds up three ways: globally, per delivering office, per log entry.
     int64_t logged = 0;
@@ -660,9 +657,8 @@ void stats_and_trails_follow_a_hub_route() {
 // at the office, and the backlog gauge shows the buffer at its cap.
 void lost_letters_are_counted() {
     World w;
-    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 100, /*max_outbound_letters=*/2, 0);
-    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100, 0);
-    assert(w.build_office(a) && w.build_office(b));
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 100, /*max_outbound_letters=*/2);
+    w.add_office("B", "P/B", {100, 0}, 0, 100);  // somewhere to send the mail
     w.seed_letters();  // 100 attempts into a buffer of 2
     w.advance_tick();
     const OfficeStats& stats = w.get_post_offices()[a].stats;
@@ -696,53 +692,147 @@ void skipped_departures_and_orphaned_trucks() {
     assert(w.get_stats()[GlobalStat::IncomeValue].total > 0);
 }
 
-// Offices start unbuilt and inert: they spawn no letters, receive none, and
-// cannot be joined by roads until the player pays to build them.
-void building_offices() {
-    World w;
-    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, 50, 100, 1000);
-    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 50, 100, 2000);
-    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 50, 100, 10 * kStartingMoney);
-    for (const PostOffice& office : w.get_post_offices())
-        assert(!office.built);
+// Every office is clear of the map's edges and of every other office, as
+// spawn_random_office() places them.
+void assert_well_placed(const std::vector<PostOffice>& offices) {
+    for (std::size_t i = 0; i < offices.size(); ++i) {
+        const Position p = offices[i].pos;
+        assert(static_cast<double>(p.x) >= kOfficeSpawnMargin);
+        assert(static_cast<double>(p.x) <= kWorldWidth - kOfficeSpawnMargin);
+        assert(static_cast<double>(p.y) >= kOfficeSpawnMargin);
+        assert(static_cast<double>(p.y) <= kWorldHeight - kOfficeSpawnMargin);
+        for (std::size_t j = 0; j < i; ++j)
+            assert(euclidean_length(offices[j].pos - p) >= kOfficeMinSpacing);
+    }
+}
 
-    // Unbuilt: no letters, no roads.
-    w.seed_letters();
-    for (Tick t = 0; t < kTicksPerDay; ++t)
+// A new game opens with a few offices from the name list, with no postal
+// codes, spread out over the map; and it is the same game every time.
+void opening_offices() {
+    const World w = create_default_world();
+    const std::vector<PostOffice>& offices = w.get_post_offices();
+    assert(offices.size() == kInitialOffices);
+    std::set<std::string> names;
+    for (const PostOffice& office : offices) {
+        assert(office.postal_code.empty());
+        assert(office.outbound_letters.empty() && office.outbound_schedules.empty());
+        assert(office.overflow_ticks == 0);
+        const auto in_list = std::find_if(office_names().begin(), office_names().end(),
+                                          [&](const char* name) { return office.name == name; });
+        assert(in_list != office_names().end());
+        names.insert(office.name);
+    }
+    assert(names.size() == offices.size());  // all different
+    assert_well_placed(offices);
+    assert(w.get_next_office_spawn() == kOfficeSpawnIntervalStart);
+    assert(!w.is_game_over());
+    assert(create_default_world() == w);
+}
+
+// Offices keep appearing: exactly when due, a little sooner each time, but
+// never more often than kOfficeSpawnIntervalMin.
+void offices_appear_over_time() {
+    World w = create_default_world();
+    while (w.get_tick() + 1 < kOfficeSpawnIntervalStart)
         w.advance_tick();
-    for (const PostOffice& office : w.get_post_offices())
-        assert(office.outbound_letters.empty());
-    assert(!w.add_road(a, b, {{0, 0}, {100, 0}}));
-    assert(w.get_money() == kStartingMoney);
+    assert(w.get_post_offices().size() == kInitialOffices);
+    w.advance_tick();  // the first spawn
+    assert(w.get_tick() == kOfficeSpawnIntervalStart);
+    assert(w.get_post_offices().size() == kInitialOffices + 1);
+    assert(w.get_post_offices().back().postal_code.empty());
+    assert(w.get_next_office_spawn() == w.get_tick() + kOfficeSpawnIntervalStart - kOfficeSpawnIntervalStep);
+    assert_well_placed(w.get_post_offices());
 
-    // Building charges build_cost once; rebuilding and bad ids are rejected.
-    assert(w.build_office(a));
-    assert(w.get_money() == kStartingMoney - 1000);
-    assert(!w.build_office(a));
-    assert(!w.build_office(99));
-    assert(w.get_money() == kStartingMoney - 1000);
+    // A crowded map waits only the minimum.
+    World crowded;
+    for (int i = 0; i < 30; ++i)
+        assert(crowded.spawn_random_office().has_value());
+    while (crowded.get_tick() < kOfficeSpawnIntervalStart)
+        crowded.advance_tick();
+    assert(crowded.get_post_offices().size() == 31);
+    assert(crowded.get_next_office_spawn() == crowded.get_tick() + kOfficeSpawnIntervalMin);
+    assert_well_placed(crowded.get_post_offices());
+}
 
-    // A lone built office has nobody to write to.
-    w.seed_letters();
-    assert(w.get_post_offices()[a].outbound_letters.empty());
+// New offices keep clear of roads, give up when the map has no room left,
+// and never reuse a name.
+void spawn_placement_and_names() {
+    // A road straight across the middle of the map.
+    World w;
+    w.set_money(1'000'000);
+    const PostOfficeId west = w.add_office("West", "", {100, 650}, 0, 100);
+    const PostOfficeId east = w.add_office("East", "", {1900, 650}, 0, 100);
+    add_straight_road(w, west, east);
+    std::optional<PostOfficeId> spawned;
+    while ((spawned = w.spawn_random_office()).has_value()) {
+        const Road& road = w.get_roads()[0];
+        assert(distance_to_polyline(w.get_post_offices()[*spawned].pos, road.vertices) >= kOfficeRoadClearance);
+    }
+    // The map filled up long before the names ran out.
+    assert(w.get_post_offices().size() > 10);
+    assert(w.get_post_offices().size() < office_names().size());
+    std::vector<PostOffice> spawned_offices(w.get_post_offices().begin() + 2, w.get_post_offices().end());
+    assert_well_placed(spawned_offices);
 
-    // Unaffordable offices stay unbuilt and cost nothing.
-    assert(!w.build_office(c));
-    assert(!w.get_post_offices()[c].built);
-    assert(w.get_money() == kStartingMoney - 1000);
+    // Every name taken (by offices far off the map, out of everyone's way):
+    // nothing to call a new office.
+    World named_out;
+    int64_t x = -100'000;
+    for (const char* name : office_names()) {
+        named_out.add_office(name, "", {x, -100'000}, 0, 100);
+        x -= 1'000;
+    }
+    const World before = named_out;
+    assert(!named_out.spawn_random_office().has_value());
+    assert(named_out == before);
+}
 
-    // With two built offices, mail flows only between them, never to C.
-    assert(w.build_office(b));
-    assert(w.get_money() == kStartingMoney - 3000);
-    assert(w.add_road(a, b, {{0, 0}, {100, 0}}));
-    assert(!w.add_road(b, c, {{100, 0}, {200, 0}}));
-    w.seed_letters();
-    assert(!w.get_post_offices()[a].outbound_letters.empty());
-    assert(!w.get_post_offices()[b].outbound_letters.empty());
-    assert(w.get_post_offices()[c].outbound_letters.empty());
-    for (const PostOffice& office : w.get_post_offices())
-        for (const Letter& letter : office.outbound_letters)
-            assert(letter.dst != c);
+// A full office runs down its overflow timer; one that runs out ends the
+// game and freezes it.
+void overflow_ends_the_game() {
+    World w;
+    // A letter every tick into a buffer of one: full from tick 1 on.
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTicksPerDay, /*max_outbound_letters=*/1);
+    w.add_office("B", "P/B", {100, 0}, 0, 100);
+    while (w.get_tick() + 1 < kOverflowLimit)
+        w.advance_tick();
+    assert(w.get_post_offices()[a].overflow_ticks == kOverflowLimit - 1);
+    assert(!w.is_game_over());
+    assert(w.get_game_over_office() == kNoPostOffice);
+
+    w.advance_tick();
+    assert(w.get_post_offices()[a].overflow_ticks == kOverflowLimit);
+    assert(w.is_game_over());
+    assert(w.get_game_over_office() == a);
+
+    // Nothing moves any more, the clock included.
+    const World ended = w;
+    for (int i = 0; i < 100; ++i)
+        w.advance_tick();
+    assert(w == ended);
+}
+
+// Once a full office has room again, its timer winds back down a tick per
+// tick.
+void overflow_timer_drains() {
+    World w;
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, /*letters_per_day=*/5, /*max_outbound_letters=*/5);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100);
+    add_straight_road(w, a, b);
+    w.seed_letters();  // five letters: full
+    for (int i = 0; i < 300; ++i)
+        w.advance_tick();
+    const Tick before = w.get_post_offices()[a].overflow_ticks;
+    assert(before == 300);
+
+    // A truck leaves next tick with all five letters.
+    assert(w.add_schedule(a, b, kTicksPerDay, (w.get_tick() + 1) % kTicksPerDay,
+                          RoutingRule{RoutingRuleType::AllLetters, {}}));
+    for (int i = 0; i < 50; ++i)
+        w.advance_tick();
+    assert(w.get_post_offices()[a].outbound_letters.size() < 5);
+    assert(w.get_post_offices()[a].overflow_ticks == before - 50);
+    assert(!w.is_game_over());
 }
 
 }  // namespace
@@ -782,8 +872,17 @@ int main() {
     printf("PASS road_removal\n");
     observed_truck_expires_on_arrival();
     printf("PASS observed_truck_expires_on_arrival\n");
-    building_offices();
-    printf("PASS building_offices\n");
+
+    opening_offices();
+    printf("PASS opening_offices\n");
+    offices_appear_over_time();
+    printf("PASS offices_appear_over_time\n");
+    spawn_placement_and_names();
+    printf("PASS spawn_placement_and_names\n");
+    overflow_ends_the_game();
+    printf("PASS overflow_ends_the_game\n");
+    overflow_timer_drains();
+    printf("PASS overflow_timer_drains\n");
 
     printf("all simulation tests passed\n");
     return 0;

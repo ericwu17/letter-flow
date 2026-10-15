@@ -1,10 +1,12 @@
 // ui_map.cpp — the map: the camera, offices, roads and trucks drawn into
 // the background draw list, hover and click-to-select, road building and the
-// road destroy menu, money popups and hovered letters' journeys.
+// road destroy menu, money popups, new offices' pulses, overflow warnings and
+// hovered letters' journeys.
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
 
+#include "sim/balance.h"
 #include "sim/entities.h"
 #include "sim/game_types.h"
 #include "sim/road.h"
@@ -27,6 +29,7 @@ namespace {
 using ui::g_game;
 using ui::RoadBuildState;
 using ui::MoneyPopup;
+using ui::SpawnPulse;
 using ui::RoadKey;
 using ui::SelectOffice;
 namespace theme = ui::theme;
@@ -48,16 +51,17 @@ constexpr float kPostalCodeFontScale = 0.75f;
 // The map's colors, named by role. Every value comes from the shared palette
 // in ui_theme.h, so re-theming the app is an edit there.
 constexpr ImU32 kColorText          = U32(theme::kInk);          // labels
-constexpr ImU32 kColorTextDim       = U32(theme::kInkDim);       // unbuilt offices, postal codes
+constexpr ImU32 kColorTextDim       = U32(theme::kInkDim);       // postal codes
 constexpr ImU32 kColorHalo          = U32(theme::kMap, 0.9f);    // outline around map labels
 constexpr ImU32 kColorGrid          = U32(theme::kMapGrid);      // the map's paper grid
 constexpr ImU32 kColorShadow        = U32(theme::kShadow, 0.22f);
 constexpr ImU32 kColorChipBg        = U32(theme::kPaperLight, 0.9f);  // postal-code chips, cost label
 constexpr ImU32 kColorChipBorder    = U32(theme::kPaper3);
-constexpr ImU32 kColorOfficeBody    = U32(theme::kPaperLight);   // unfilled part of a built office
+constexpr ImU32 kColorOfficeBody    = U32(theme::kPaperLight);   // unfilled part of an office
 constexpr ImU32 kColorOfficeRing    = U32(theme::kNavy);
-constexpr ImU32 kColorOfficeUnbuilt = U32(theme::kPaper2);       // offices not yet built
-constexpr ImU32 kColorUnbuiltRing   = U32(theme::kInkDim);
+constexpr ImU32 kColorOverflow      = U32(theme::kBad);          // overflow timer, full office's name
+constexpr ImU32 kColorOverflowTrack = U32(theme::kBad, 0.2f);    // the rest of the timer's circle
+constexpr ImU32 kColorSpawnPulse    = U32(theme::kNavy);         // ring around a new office
 constexpr ImU32 kColorSelection     = U32(theme::kRed);          // selection rings, hovered journey
 constexpr ImU32 kColorSelectionHalo = U32(theme::kRed, 0.22f);
 constexpr ImU32 kColorDestination   = U32(theme::kNavy);         // a hovered letter's destination
@@ -203,7 +207,7 @@ std::optional<PostOfficeId> HitTestOffice(const std::vector<PostOffice>& offices
     return std::nullopt;
 }
 
-// While drawing a road: the built office other than the road's source
+// While drawing a road: the office other than the road's source
 // nearest to `screen_pos` within `radius` pixels, or nullopt. The preview
 // snaps to it and a click there completes the road.
 std::optional<PostOfficeId> NearestRoadDestination(const std::vector<PostOffice>& offices,
@@ -212,7 +216,7 @@ std::optional<PostOfficeId> NearestRoadDestination(const std::vector<PostOffice>
     std::optional<PostOfficeId> nearest;
     float best_dist_sq = radius * radius;
     for (PostOfficeId id = 0; id < offices.size(); ++id) {
-        if (id == src || !offices[id].built)
+        if (id == src)
             continue;
         const ImVec2 c = WorldToScreen(view, offices[id].pos);
         const float dx = screen_pos.x - c.x;
@@ -364,6 +368,36 @@ void DrawMoneyPopups(ImDrawList* draw, const ViewTransform& view, World& world) 
     }
     ImGui::PopFont();
     std::erase_if(g_game.money_popups, [](const MoneyPopup& p) { return p.age >= kPopupDuration; });
+}
+
+// New offices: each one that appeared since last frame sends out a few
+// expanding rings, so the player notices it wherever it landed.
+constexpr float kSpawnPulseDuration = 2.4f;  // seconds, real time
+constexpr int kSpawnPulseRings = 2;          // rings sent out one after another
+constexpr float kSpawnPulseReach = 44.0f;    // pixels past the office's rim
+
+void DrawSpawnPulses(ImDrawList* draw, const ViewTransform& view, const World& world, float office_radius) {
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    if (!g_game.known_offices.has_value())
+        g_game.known_offices = offices.size();
+    for (PostOfficeId id = *g_game.known_offices; id < offices.size(); ++id)
+        g_game.spawn_pulses.push_back({id, 0.0f});
+    g_game.known_offices = offices.size();
+
+    const float dt = ImGui::GetIO().DeltaTime;
+    const float ring_duration = kSpawnPulseDuration / static_cast<float>(kSpawnPulseRings);
+    for (SpawnPulse& p : g_game.spawn_pulses) {
+        p.age += dt;
+        if (p.age >= kSpawnPulseDuration || p.office >= offices.size())
+            continue;
+        const float t = std::fmod(p.age, ring_duration) / ring_duration;  // this ring's progress
+        const float grow = 1.0f - (1.0f - t) * (1.0f - t);                  // ease-out
+        const ImVec2 c = WorldToScreen(view, offices[p.office].pos);
+        const ImU32 color = (kColorSpawnPulse & ~IM_COL32_A_MASK) |
+                            (static_cast<ImU32>(255.0f * (1.0f - t)) << IM_COL32_A_SHIFT);
+        draw->AddCircle(c, office_radius + 4.0f + kSpawnPulseReach * grow, color, 0, 3.0f);
+    }
+    std::erase_if(g_game.spawn_pulses, [](const SpawnPulse& p) { return p.age >= kSpawnPulseDuration; });
 }
 
 // A hovered letter's journey on the map: the legs it has travelled, along the
@@ -530,48 +564,56 @@ void DrawWorld(World& world) {
                  g_game.road_builder.is_invalid ? kColorRoadBad : kColorText);
     }
 
-    // Post offices.
+    // Post offices, with the rings announcing new ones underneath.
+    DrawSpawnPulses(draw, view, world, office_radius);
+    // Full offices flash in real time, so they keep flashing while paused.
+    const float flash = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 2.0f * IM_PI * 1.25f);
     for (PostOfficeId id = 0; id < offices.size(); ++id) {
         const PostOffice& office = offices[id];
         const ImVec2 c = WorldToScreen(view, office.pos);
+        const bool full = office.outbound_letters.size() >= office.max_outbound_letters;
         if (selected_truck == nullptr && id == g_game.selected_office) {
             draw->AddCircleFilled(c, office_radius + 9.0f, kColorSelectionHalo);
             draw->AddCircle(c, office_radius + 5.0f, kColorSelection, 0, 3.0f);
         }
+        if (full)
+            draw->AddCircleFilled(c, office_radius + 8.0f + 5.0f * flash, U32(theme::kBad, 0.15f + 0.35f * flash));
         draw->AddCircleFilled({c.x, c.y + 2.0f}, office_radius + 1.0f, kColorShadow);
-        if (!office.built) {
-            // Not built yet: a blank disc with a dashed rim.
-            draw->AddCircleFilled(c, office_radius, kColorOfficeUnbuilt);
-            constexpr int kDashes = 12;
-            const float dash = 2.0f * IM_PI / static_cast<float>(kDashes);
-            for (int i = 0; i < kDashes; ++i) {
-                const float a0 = static_cast<float>(i) * dash;
-                draw->PathArcTo(c, office_radius, a0, a0 + dash * 0.55f, 4);
-                draw->PathStroke(kColorUnbuiltRing, 0, 1.5f);
-            }
-        } else {
-            // Clock-style fill: a wedge sweeping clockwise from 12 o'clock
-            // shows how full the outbound buffer is, turning warn then bad
-            // as it nears max_outbound_letters.
-            const float fill = office.max_outbound_letters == 0 ? 0.0f
-                : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
-                                     / static_cast<float>(office.max_outbound_letters));
-            const ImU32 fill_color = U32(theme::FillColor(fill));
-            draw->AddCircleFilled(c, office_radius, kColorOfficeBody);
-            if (fill >= 1.0f) {
-                draw->AddCircleFilled(c, office_radius, fill_color);
-            } else if (fill > 0.0f) {
-                const float start = -IM_PI * 0.5f;
-                draw->PathLineTo(c);
-                draw->PathArcTo(c, office_radius, start, start + 2.0f * IM_PI * fill);
-                draw->PathFillConcave(fill_color);
-            }
-            draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 2.0f);
+
+        // Clock-style fill: a wedge sweeping clockwise from 12 o'clock
+        // shows how full the outbound buffer is, turning warn then bad
+        // as it nears max_outbound_letters.
+        const float fill = office.max_outbound_letters == 0 ? 0.0f
+            : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
+                                 / static_cast<float>(office.max_outbound_letters));
+        const ImU32 fill_color = U32(theme::FillColor(fill));
+        draw->AddCircleFilled(c, office_radius, kColorOfficeBody);
+        if (fill >= 1.0f) {
+            draw->AddCircleFilled(c, office_radius, fill_color);
+        } else if (fill > 0.0f) {
+            const float start = -IM_PI * 0.5f;
+            draw->PathLineTo(c);
+            draw->PathArcTo(c, office_radius, start, start + 2.0f * IM_PI * fill);
+            draw->PathFillConcave(fill_color);
+        }
+        draw->AddCircle(c, office_radius, kColorOfficeRing, 0, 2.0f);
+
+        // The overflow timer, just outside the rim: an arc sweeping clockwise
+        // from 12 o'clock while the office is full and shrinking back once it
+        // has room again. A closed circle is the end of the game.
+        if (office.overflow_ticks > 0) {
+            const float timer = std::min(1.0f, static_cast<float>(office.overflow_ticks)
+                                                   / static_cast<float>(kOverflowLimit));
+            const float timer_radius = office_radius + 4.5f;
+            const float start = -IM_PI * 0.5f;
+            draw->AddCircle(c, timer_radius, kColorOverflowTrack, 0, 3.0f);
+            draw->PathArcTo(c, timer_radius, start, start + 2.0f * IM_PI * timer);
+            draw->PathStroke(kColorOverflow, 0, 3.0f);
         }
 
         const ImVec2 name_size = ImGui::CalcTextSize(office.name.c_str());
-        const ImVec2 name_pos(c.x - name_size.x * 0.5f, c.y - office_radius - name_size.y - 5.0f);
-        theme::DrawHaloText(draw, name_pos, office.built ? kColorText : kColorTextDim, kColorHalo,
+        const ImVec2 name_pos(c.x - name_size.x * 0.5f, c.y - office_radius - name_size.y - 7.0f);
+        theme::DrawHaloText(draw, name_pos, full ? kColorOverflow : kColorText, kColorHalo,
                             office.name.c_str());
 
         // Postal code, in a small chip centered below the circle.
@@ -612,10 +654,8 @@ void DrawWorld(World& world) {
         if (hovered_truck == nullptr && !hovered_office.has_value())
             hovered_road = HitTestRoad(world.get_roads(), view, io.MousePos, road_hit_tolerance);
     } else if (mouse_on_map && g_game.road_build_state == RoadBuildState::SelectSource) {
-        // Picking a road's source office: only built offices are clickable.
+        // Picking a road's source office: only offices are clickable.
         hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
-        if (hovered_office.has_value() && !offices[*hovered_office].built)
-            hovered_office.reset();
     }
     if (hovered_truck != nullptr || hovered_office.has_value() || hovered_road.has_value())
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);

@@ -95,7 +95,6 @@ enum class GlobalStat : std::size_t {
     IncomeBonus,        // early-delivery bonuses
     SpentTrucks,        // truck departure charges
     SpentRoads,         // road construction
-    SpentOffices,       // post office construction
     Spawned,
     Lost,               // spawn refused because the office's buffer was full
     DeliveredOnTime,
@@ -132,7 +131,6 @@ inline constexpr std::array<StatInfo, static_cast<std::size_t>(GlobalStat::Count
     {"income_bonus", StatKind::Flow},
     {"spent_trucks", StatKind::Flow},
     {"spent_roads", StatKind::Flow},
-    {"spent_offices", StatKind::Flow},
     {"spawned", StatKind::Flow},
     {"lost", StatKind::Flow},
     {"delivered_on_time", StatKind::Flow},

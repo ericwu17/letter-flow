@@ -177,14 +177,15 @@ int main(int, char**)
     // from the menu (empty until then). The UI layer reads/mutates it, and
     // the frame loop below steps it forward at a fixed tick rate (frozen
     // while the pause menu is open). It is written back into the save it came
-    // from at the start of every game day, when the player returns to the
-    // main menu, and on quit. The tutorial runs in a world of its own with no
+    // from at the start of every game day, the moment the game is over, when
+    // the player returns to the main menu, and on quit. The tutorial runs in a world of its own with no
     // save behind it (save_id empty): it is never written anywhere, and
     // leaving it drops everything and returns to the menu.
     std::optional<World> world;
     std::optional<SaveId> save_id;
     std::optional<Tutorial> tutorial;
     Tick autosaved_day = 0;  // the game day last autosaved (or launched on)
+    bool was_game_over = false;  // the game had already ended last frame (or at launch)
     float tick_accumulator = 0.0f;
     const ImVec4 clear_color = ui::theme::kMap;  // the map's parchment background
 
@@ -230,19 +231,30 @@ int main(int, char**)
                 save_game(library, *save_id, *world, saves_dir, "new day");
                 autosaved_day = day;
             }
+            // The game just ended: store it right away, so the save shows
+            // the ended game whatever happens next. (The clock has stopped,
+            // so the new-day autosave above never fires again.)
+            const bool game_over = world->is_game_over();
+            if (game_over && !was_game_over && save_id)
+                save_game(library, *save_id, *world, saves_dir, "game over");
+            was_game_over = game_over;
 
             // 3. Build this frame's UI. Order matters: the dockspace hosts the
             //    windows, the map goes into the background draw list (under the
             //    windows), the transport bar is drawn on top of the map, then
-            //    the HUD/inspector windows, and the pause menu over it all.
+            //    the HUD/inspector windows, and the pause menu over it all. Once
+            //    the game is over, the game-over card takes the pause menu's
+            //    (and the tutorial cards') place.
             DrawDockspace();
             DrawWorld(*world);
             DrawTransportBar(*world);
             DrawHUD(*world);
             DrawInspector(*world);
             DrawStatsWindow(*world);
-            const bool left_tutorial = tutorial && DrawTutorial(*tutorial, *world);
-            switch (DrawPauseMenu(*world, library, save_id)) {
+            const bool left_tutorial = tutorial && !game_over && DrawTutorial(*tutorial, *world);
+            const PauseAction action =
+                game_over ? DrawGameOver(*world) : DrawPauseMenu(*world, library, save_id);
+            switch (action) {
             case PauseAction::None:
                 if (left_tutorial)
                     leave_game();
@@ -261,6 +273,7 @@ int main(int, char**)
             // save or the tutorial.
             save_id = launched->save;
             autosaved_day = world->get_tick() / kTicksPerDay;
+            was_game_over = world->is_game_over();
             if (save_id)
                 printf("Loaded save %u\n", static_cast<unsigned>(*save_id));
             else

@@ -16,7 +16,6 @@
 // corrupt or old-format save, and parsed back. The saves file itself is
 // covered by test_save_library.cpp.
 #include "sim/balance.h"
-#include "sim/scenario.h"
 #include "sim/world.h"
 #include "persistence/world_json.h"
 
@@ -46,6 +45,36 @@ void add_l_road(World& w, PostOfficeId a, PostOfficeId b, bool vertical_first) {
     assert(w.add_road(a, b, {pa, corner, pb}));
 }
 
+// Twelve offices of the old starter map (New Jersey), at its spacing, with
+// their hierarchical postal codes. Every buffer is roomy enough that none of
+// them overflows during the fixture's run (see build_fixture_world()).
+World create_nj_world() {
+    struct OfficeDef {
+        const char* name;
+        const char* postal_code;
+        Position pos;
+        std::size_t letters_per_day;
+    };
+    const OfficeDef defs[] = {
+        {"Lawrenceville", "NJ/Mercer/Lawrenceville", { 918, 844}, 20},  // 0
+        {"Princeton",     "NJ/Mercer/Princeton",     { 968, 782}, 30},  // 1
+        {"Trenton",       "NJ/Mercer/Trenton",       { 908, 926}, 30},  // 2
+        {"Hopewell",      "NJ/Mercer/Hopewell",      { 894, 748}, 20},  // 3
+        {"Monroe",        "NJ/Central/Monroe",       {1154, 820}, 20},  // 4
+        {"Edison",        "NJ/Central/Edison",       {1170, 614}, 30},  // 5
+        {"Somerville",    "NJ/Central/Somerville",   {1014, 556}, 20},  // 6
+        {"Florham Park",  "NJ/North/FlorhamPark",    {1188, 334}, 20},  // 7
+        {"Newark",        "NJ/North/Newark",         {1358, 388}, 50},  // 8
+        {"Paterson",      "NJ/North/Paterson",       {1358, 202}, 30},  // 9
+        {"Elizabeth",     "NJ/North/Elizabeth",      {1328, 464}, 30},  // 10
+        {"Asbury Park",   "NJ/Shore/AsburyPark",     {1484, 924}, 20},  // 11
+    };
+    World w;
+    for (const OfficeDef& def : defs)
+        w.add_office(def.name, def.postal_code, def.pos, def.letters_per_day, /*max_outbound_letters=*/1000);
+    return w;
+}
+
 // A world as the saves file stores it.
 std::string dump(const World& w) {
     return WorldJson::to_json(w).dump(2);
@@ -61,19 +90,15 @@ std::optional<World> parse(const std::string& text) {
 
 // A world in which every serialized field holds a distinct, non-default
 // value. Fully deterministic (fixed RNG seed + fixed tick counts), so the
-// fixture asserts at the end hold on every run.
+// fixture asserts at the end hold on every run. The game is still on: an
+// ended game (game_over_office) round-trips in game_over_round_trips().
 World build_fixture_world() {
-    World w = create_default_world();  // offices: names, postal codes, positions,
-                                       // spawn rates and build costs all non-default
+    World w = create_nj_world();  // offices: names, postal codes, positions and
+                                  // spawn rates all non-default
 
     // The fixture builds far more than a real opening could afford, so
     // fund it directly instead of depending on kStartingMoney.
     w.set_money(100'000);
-
-    // Build only the offices the roads below join (paying their build costs),
-    // so the save holds both built and unbuilt offices, then seed their mail.
-    for (const PostOfficeId id : {0u, 1u, 2u, 3u, 4u, 5u, 7u, 11u})
-        assert(w.build_office(id));
     w.seed_letters();
 
     // Non-default transport state. (advance_tick() ignores these — the frame
@@ -135,6 +160,17 @@ World build_fixture_world() {
     for (int i = 0; i < 20000 && w.get_trucks().empty(); ++i)
         w.advance_tick();
 
+    // An office that fills up at once (a letter every tick into a buffer of
+    // five), run just long enough to start its overflow timer: far short of
+    // kOverflowLimit, and of any truck in flight arriving (the shortest
+    // road above takes well over 20 ticks to drive).
+    const PostOfficeId flooded = w.add_office("Flooded", "NJ/Flooded", {700, 1100}, kTicksPerDay,
+                                              /*max_outbound_letters=*/5);
+    for (int i = 0; i < 20; ++i)
+        w.advance_tick();
+    assert(w.get_post_offices()[flooded].overflow_ticks > 0);   // default: 0
+    assert(!w.is_game_over());
+
     // The distinctness guarantees the round-trip test relies on: a forgotten
     // field would revert to a default that differs from every value below.
     assert(w.get_tick() > 0);                        // default: 0
@@ -145,6 +181,11 @@ World build_fixture_world() {
     assert(w.get_letters_delivered_late() > 0);      // default: 0
     assert(!w.get_trucks().empty());                 // default: empty
     assert(!w.get_roads().empty());                  // default: empty
+    assert(w.get_next_office_spawn() != kOfficeSpawnIntervalStart);  // default: that
+    // Offices that appeared on their own (no postal code), besides the
+    // twelve NJ ones and the flooded one.
+    assert(w.get_post_offices().size() > 13);
+    assert(w.get_post_offices()[12].postal_code.empty());
 
     // Statistics and trails (stats.h, Letter::trail): every kind of stat
     // table has been written to, and every log holds entries.
@@ -197,6 +238,30 @@ void round_trip_preserves_every_field() {
     World advanced = *loaded;
     advanced.advance_tick();
     assert(advanced != *loaded);
+}
+
+// An ended game saves and loads as ended, still frozen.
+void game_over_round_trips() {
+    World w;
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTicksPerDay, /*max_outbound_letters=*/1);
+    w.add_office("B", "P/B", {100, 0}, 0, 100);
+    for (Tick t = 0; t < 2 * kOverflowLimit && !w.is_game_over(); ++t)
+        w.advance_tick();
+    assert(w.get_game_over_office() == a);
+
+    const std::string saved = dump(w);
+    const auto loaded = parse(saved);
+    assert(loaded.has_value());
+    assert(*loaded == w);
+    assert(loaded->is_game_over());
+    assert(dump(*loaded) == saved);
+
+    // A game-over office that does not exist makes the save unusable.
+    std::string s = saved;
+    const auto at = s.find("\"game_over_office\": 0");
+    assert(at != std::string::npos);
+    s.replace(at, 21, "\"game_over_office\": 99");
+    assert(!parse(s));
 }
 
 void determinism_survives_round_trip() {
@@ -384,6 +449,8 @@ void corrupt_rng_falls_back_to_fresh_rng() {
 int main() {
     round_trip_preserves_every_field();
     printf("PASS round_trip_preserves_every_field\n");
+    game_over_round_trips();
+    printf("PASS game_over_round_trips\n");
     determinism_survives_round_trip();
     printf("PASS determinism_survives_round_trip\n");
     unusable_saves_load_as_nullopt();

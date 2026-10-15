@@ -38,6 +38,14 @@ PauseAction DrawPauseMenu(const World& world, SaveLibrary& library, std::optiona
 // Whether the pause menu is open; the game is frozen while it is.
 bool PauseMenuOpen();
 
+// The game-over card (ui_menu.cpp): a modal over the frozen final map once
+// the World says the game is over, naming the office that overflowed and
+// summing up the game, with Main menu and Quit. It cannot be dismissed
+// otherwise: an ended game can be looked at but not played on. Takes the
+// pause menu's place (DrawPauseMenu does nothing while the game is over);
+// the caller handles the action as it does the pause menu's.
+PauseAction DrawGameOver(const World& world);
+
 // Forgets the UI state that belongs to one game (selection, camera, road
 // building, form inputs, the statistics window), so the next game starts
 // clean. DrawMainMenu calls it whenever it launches a game.

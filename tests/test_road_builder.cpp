@@ -93,12 +93,10 @@ void commit_collapses_straight_runs() {
 void finished_roads_and_validity() {
     World w;
     w.set_money(1'000'000);
-    const PostOfficeId a = w.add_office("A", "A", {0, 0}, 0, 10, 0);
-    const PostOfficeId b = w.add_office("B", "B", {200, 0}, 0, 10, 0);
-    const PostOfficeId c = w.add_office("C", "C", {100, -100}, 0, 10, 0);
-    const PostOfficeId d = w.add_office("D", "D", {100, 100}, 0, 10, 0);
-    for (const PostOfficeId id : {a, b, c, d})
-        assert(w.build_office(id));
+    const PostOfficeId a = w.add_office("A", "A", {0, 0}, 0, 10);
+    const PostOfficeId b = w.add_office("B", "B", {200, 0}, 0, 10);
+    const PostOfficeId c = w.add_office("C", "C", {100, -100}, 0, 10);
+    w.add_office("D", "D", {100, 100}, 0, 10);
 
     RoadBuilder ab = RoadBuilder::from_source({0, 0}, a);
     ab.build_to({100, 0});

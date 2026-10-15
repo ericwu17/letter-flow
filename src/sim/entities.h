@@ -215,14 +215,15 @@ struct TruckSchedule {
 struct PostOffice {
     Position pos;
     std::string name;
-    std::string postal_code;               // hierarchical code, e.g. "NJ/Mercer/Princeton";
+    std::string postal_code;               // hierarchical code, e.g. "NJ/Mercer/Princeton", set
+                                           // by the player (offices appear with none);
                                            // PostalPrefix routing rules match on prefixes of it
     std::size_t max_outbound_letters = 0;  // game-rule cap on the buffer (not vector::capacity!)
     std::size_t letters_per_day = 0;       // expected letters per day: each tick spawns
                                            // one with probability letters_per_day / kTicksPerDay
-    int build_cost = 0;                    // price the player pays to build this office
-    bool built = false;                    // unbuilt offices are inert: no letters in or out,
-                                           // no roads, no schedules (see World::build_office)
+    Tick overflow_ticks = 0;               // how long the buffer has (net) been full: +1 per
+                                           // tick at or over the cap, -1 per tick below it;
+                                           // the game ends at kOverflowLimit
     std::vector<Letter> outbound_letters;
     std::vector<TruckSchedule> outbound_schedules;
     OfficeStats stats;

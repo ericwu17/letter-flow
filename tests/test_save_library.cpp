@@ -335,6 +335,40 @@ void broken_world_still_lists() {
     assert(files_in(dir) == std::set<std::string>{"fine.json"});
 }
 
+// An ended game is marked in the list, from the store and after reopening;
+// saves from before offices appeared on their own (world format 3) no
+// longer load, but stay listed.
+void game_over_and_old_saves() {
+    const fs::path dir = fresh_dir("game_over");
+    SaveLibrary library(dir.string());
+    const auto id = library.create("Doomed");
+    assert(id.has_value());
+    assert(!find_summary(library, *id)->game_over);
+
+    // Nobody moves the mail: the opening offices fill up and one overflows.
+    World w = create_default_world();
+    for (Tick t = 0; t < 5 * kTicksPerDay && !w.is_game_over(); ++t)
+        w.advance_tick();
+    assert(w.is_game_over());
+    assert(library.store(*id, w));
+    assert(find_summary(library, *id)->game_over);
+
+    SaveLibrary reopened(dir.string());
+    const SaveId doomed = find_by_name(reopened, "Doomed");
+    assert(find_summary(reopened, doomed)->game_over);
+    const auto loaded = reopened.load(doomed);
+    assert(loaded.has_value() && *loaded == w);
+
+    // An old-format world.
+    assert(reopened.create("Old").has_value());
+    nlohmann::json doc = nlohmann::json::parse(slurp(dir / "old.json"));
+    doc.at("world")["format_version"] = 3;
+    write_file(dir / "old.json", doc.dump(2));
+    SaveLibrary again(dir.string());
+    assert(again.saves().size() == 2);
+    assert(!again.load(find_by_name(again, "Old")));
+}
+
 }  // namespace
 
 int main() {
@@ -354,6 +388,8 @@ int main() {
     printf("PASS corrupt_files_are_skipped_and_kept\n");
     broken_world_still_lists();
     printf("PASS broken_world_still_lists\n");
+    game_over_and_old_saves();
+    printf("PASS game_over_and_old_saves\n");
 
     printf("all save library tests passed\n");
     return 0;
