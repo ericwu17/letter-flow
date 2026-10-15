@@ -1,10 +1,10 @@
 // save_library.h — every saved game, one JSON file per save.
 // Pure simulation layer: no imgui/SDL/OpenGL headers (see game_types.h).
 //
-// The saves live in one directory (persistent_saves/ in SDL's per-user
+// The saves live in one directory (saves/ in SDL's per-user
 // app-data directory), one file each, named after the save:
 //
-//   persistent_saves/game_1.json
+//   saves/game_1.json
 //     { "format_version": 1, "name": "Game 1", "last_played": 1760275200,
 //       "world": { ... } }
 //

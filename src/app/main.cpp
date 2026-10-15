@@ -169,9 +169,8 @@ int main(int, char**)
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init(nullptr);
 
-    // Every saved game is a file of its own in persistent_saves/
-    // (save_library.h).
-    const std::string saves_dir = pref_dir + "persistent_saves";
+    // Every saved game is a file of its own in saves/ (save_library.h).
+    const std::string saves_dir = pref_dir + "saves";
     SaveLibrary library(saves_dir);
 
     // Our state: the whole game lives here once the player launches a save

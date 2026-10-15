@@ -37,7 +37,7 @@ fs::path fresh_dir(const std::string& name) {
     const fs::path dir = kLibraryDir / name;
     fs::remove_all(dir);
     fs::create_directories(dir);
-    return dir / "persistent_saves";
+    return dir / "saves";
 }
 
 std::string slurp(const fs::path& path) {

@@ -84,11 +84,11 @@ mingw32-make && ./letter-flow.exe
   continue once you've done what they ask; any can be skipped. The tutorial
   is never saved: leaving it, or quitting during it, discards it. *Credits*
   is a placeholder page for now.
-- **Saving**: each save is a JSON file of its own in `persistent_saves/`,
+- **Saving**: each save is a JSON file of its own in `saves/`,
   inside SDL's per-user app-data directory (`SDL_GetPrefPath`):
-  `~/Library/Application Support/LetterFlow/LetterFlow/persistent_saves/` on macOS,
-  `~/.local/share/LetterFlow/LetterFlow/persistent_saves/` on Linux,
-  `%APPDATA%\LetterFlow\LetterFlow\persistent_saves\` on Windows.
+  `~/Library/Application Support/LetterFlow/LetterFlow/saves/` on macOS,
+  `~/.local/share/LetterFlow/LetterFlow/saves/` on Linux,
+  `%APPDATA%\LetterFlow\LetterFlow\saves\` on Windows.
   A save's filename is its name, lowercased with anything but letters and
   digits turned into `_` (`Bob's Game #2` → `bob_s_game_2.json`); the real
   name is kept inside the file. Saves whose names give the same filename are
