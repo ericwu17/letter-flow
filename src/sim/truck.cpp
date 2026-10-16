@@ -55,6 +55,23 @@ std::vector<Position> Truck::route_travelled(Tick now) const {
     return route;
 }
 
+Position Truck::get_heading(Tick now) const {
+    double dist = distance_travelled(now);
+    Position heading{0, 0};
+    // The same walk as get_position(), remembering the last segment with any
+    // length so a truck past its final vertex keeps facing along it.
+    for (std::size_t i = 0; i < state.distances.size(); ++i) {
+        const double segment = state.distances[i];
+        if (segment <= 0.0)
+            continue;
+        heading = state.vertices[i + 1] - state.vertices[i];
+        if (dist < segment)
+            break;
+        dist -= segment;
+    }
+    return heading;
+}
+
 bool Truck::has_arrived(Tick now) const {
     // distance_travelled() is 0 until departure and grows with every tick
     // after it, so the truck has arrived exactly from arrival_tick on, with

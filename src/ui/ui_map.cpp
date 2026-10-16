@@ -68,7 +68,6 @@ constexpr ImU32 kColorSelection     = U32(theme::kRed);          // selection ri
 constexpr ImU32 kColorSelectionHalo = U32(theme::kRed, 0.22f);
 constexpr ImU32 kColorDestination   = U32(theme::kNavy);         // a hovered letter's destination
 constexpr ImU32 kColorTruck         = U32(theme::kRed);
-constexpr ImU32 kColorTruckOutline  = U32(theme::kPaperLight);
 constexpr ImU32 kColorMoneyIn       = U32(theme::kGood);
 constexpr ImU32 kColorMoneyOut      = U32(theme::kBad);
 
@@ -232,15 +231,58 @@ std::optional<PostOfficeId> NearestRoadDestination(const std::vector<PostOffice>
     return nearest;
 }
 
-// The truck whose drawn square (half-size `half_px`, screen space) contains
+// A truck's shape, in pixels along its heading (+x, toward the nose) and
+// across it (+y): a cargo box from the tail to the shoulders, then a pointed
+// nose. Fixed on-screen size, like the offices.
+constexpr float kTruckTail = -12.0f;
+constexpr float kTruckShoulder = 5.0f;
+constexpr float kTruckNose = 12.0f;
+constexpr float kTruckHalfWidth = 6.0f;
+
+// The unit vector, in screen space, a truck faces at tick `now`. The view is
+// a uniform scale, so the world heading only needs normalizing; a truck with
+// no heading (a zero-length route) faces right.
+ImVec2 TruckForward(const Truck& truck, Tick now) {
+    const Position h = truck.get_heading(now);
+    const float x = static_cast<float>(h.x);
+    const float y = static_cast<float>(h.y);
+    const float len = std::sqrt(x * x + y * y);
+    return len > 0.0f ? ImVec2{x / len, y / len} : ImVec2{1.0f, 0.0f};
+}
+
+// The screen point `along` pixels ahead of `c` and `across` pixels to the
+// side, for a truck at `c` facing `fwd`.
+ImVec2 TruckPoint(ImVec2 c, ImVec2 fwd, float along, float across) {
+    return {c.x + fwd.x * along - fwd.y * across, c.y + fwd.y * along + fwd.x * across};
+}
+
+// The truck's outline (convex, clockwise on screen from the nose), grown by
+// `grow` pixels all round for the selection ring.
+std::vector<ImVec2> TruckOutline(ImVec2 c, ImVec2 fwd, float grow = 0.0f) {
+    const float w = kTruckHalfWidth + grow;
+    return {TruckPoint(c, fwd, kTruckNose + grow * 1.5f, 0.0f),
+            TruckPoint(c, fwd, kTruckShoulder, w),
+            TruckPoint(c, fwd, kTruckTail - grow, w),
+            TruckPoint(c, fwd, kTruckTail - grow, -w),
+            TruckPoint(c, fwd, kTruckShoulder, -w)};
+}
+
+// The truck whose drawn shape (grown by `slack_px`, screen space) contains
 // `screen_pos`, or null. Trucks draw in vector order, so the last hit is the
 // one on top.
 std::shared_ptr<Truck> HitTestTruck(const World& world, const ViewTransform& view,
-                                    ImVec2 screen_pos, float half_px) {
+                                    ImVec2 screen_pos, float slack_px) {
     std::shared_ptr<Truck> hit;
     for (const std::shared_ptr<Truck>& truck : world.get_trucks()) {
         const ImVec2 c = WorldToScreen(view, truck->get_position(world.get_tick()));
-        if (std::abs(screen_pos.x - c.x) <= half_px && std::abs(screen_pos.y - c.y) <= half_px)
+        const ImVec2 fwd = TruckForward(*truck, world.get_tick());
+        // The cursor in the truck's frame; the nose counts as part of its box.
+        const float dx = screen_pos.x - c.x;
+        const float dy = screen_pos.y - c.y;
+        const float along = dx * fwd.x + dy * fwd.y;
+        const float across = -dx * fwd.y + dy * fwd.x;
+        if (along >= kTruckTail - slack_px && along <= kTruckNose + slack_px &&
+            std::abs(across) <= kTruckHalfWidth + slack_px)
             hit = truck;
     }
     return hit;
@@ -525,9 +567,9 @@ void DrawLetterHighlight(ImDrawList* draw, const ViewTransform& view, const Worl
             for (std::size_t k = 1; k < leg.size(); ++k)
                 draw->AddLine(WorldToScreen(view, leg[k - 1]), WorldToScreen(view, leg[k]), kColorSelection, 3.0f);
             const ImVec2 at = WorldToScreen(view, leg.back());
-            DrawDashedArrow(draw, at, dst, 15.0f, office_radius + 12.0f, kColorSelection, 30.0f);
-            draw->AddCircleFilled(at, 13.0f, kColorSelectionHalo);
-            draw->AddCircle(at, 11.0f, kColorSelection, 0, 3.0f);
+            DrawDashedArrow(draw, at, dst, 21.0f, office_radius + 12.0f, kColorSelection, 30.0f);
+            draw->AddCircleFilled(at, 19.0f, kColorSelectionHalo);
+            draw->AddCircle(at, 16.0f, kColorSelection, 0, 3.0f);
             break;
         }
     } else {
@@ -833,15 +875,14 @@ void DrawWorld(World& world) {
     // that (see the click handling below), and the hand cursor says so. Hit
     // areas are a little larger than what is drawn (everything is drawn at a
     // fixed pixel size), so small things stay easy to click.
-    const float truck_half = 5.5f;
-    const float truck_hit_half = 6.0f;
+    const float truck_hit_slack = 1.0f;
     const float office_hit_radius = office_radius + 6.0f;
     const float road_hit_tolerance = 8.0f;
     std::shared_ptr<Truck> hovered_truck;
     std::optional<PostOfficeId> hovered_office;
     std::optional<std::size_t> hovered_road;
     if (mouse_on_map && g_game.road_build_state == RoadBuildState::Idle) {
-        hovered_truck = HitTestTruck(world, view, io.MousePos, truck_hit_half);
+        hovered_truck = HitTestTruck(world, view, io.MousePos, truck_hit_slack);
         if (hovered_truck == nullptr)
             hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
         if (hovered_truck == nullptr && !hovered_office.has_value())
@@ -854,22 +895,38 @@ void DrawWorld(World& world) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 
     // Trucks in transit (position is derived from the tick, so they animate
-    // smoothly as the simulation advances and freeze when it is paused). The
-    // hovered truck gets an ink outline, the selected one a haloed ring.
+    // smoothly as the simulation advances and freeze when it is paused). Each
+    // points along its road, nose solid red; its cargo box fills red from the
+    // tail as it carries more of kTruckCapacity. The hovered truck gets an
+    // ink outline, the selected one a haloed ring.
     for (const std::shared_ptr<Truck>& truck : world.get_trucks()) {
         const ImVec2 c = WorldToScreen(view, truck->get_position(world.get_tick()));
-        const float r = truck_half;
+        const ImVec2 fwd = TruckForward(*truck, world.get_tick());
         const bool hovered = hovered_truck != nullptr && hovered_truck == truck;
         if (truck == selected_truck) {
-            const float ring = r + 4.0f;
-            draw->AddRectFilled({c.x - ring - 3.0f, c.y - ring - 3.0f}, {c.x + ring + 3.0f, c.y + ring + 3.0f},
-                                kColorSelectionHalo, 5.0f);
-            draw->AddRect({c.x - ring, c.y - ring}, {c.x + ring, c.y + ring}, kColorSelection, 3.0f, 0, 2.5f);
+            const std::vector<ImVec2> halo = TruckOutline(c, fwd, 7.0f);
+            const std::vector<ImVec2> ring = TruckOutline(c, fwd, 4.0f);
+            draw->AddConvexPolyFilled(halo.data(), static_cast<int>(halo.size()), kColorSelectionHalo);
+            draw->AddPolyline(ring.data(), static_cast<int>(ring.size()), kColorSelection, ImDrawFlags_Closed, 2.5f);
         }
-        draw->AddRectFilled({c.x - r, c.y - r + 1.5f}, {c.x + r, c.y + r + 1.5f}, kColorShadow, 2.0f);
-        draw->AddRectFilled({c.x - r, c.y - r}, {c.x + r, c.y + r}, kColorTruck, 2.0f);
-        draw->AddRect({c.x - r, c.y - r}, {c.x + r, c.y + r},
-                      hovered ? kColorText : kColorTruckOutline, 2.0f, 0, hovered ? 2.0f : 1.5f);
+        const std::vector<ImVec2> shadow = TruckOutline({c.x, c.y + 1.5f}, fwd);
+        draw->AddConvexPolyFilled(shadow.data(), static_cast<int>(shadow.size()), kColorShadow);
+
+        const std::vector<ImVec2> outline = TruckOutline(c, fwd);
+        const int outline_size = static_cast<int>(outline.size());
+        draw->AddConvexPolyFilled(outline.data(), outline_size, kColorTruck);
+        // The letters in the truck
+        const float w = kTruckHalfWidth;
+        const float load = std::min(1.0f, static_cast<float>(truck->get_num_letters())
+                                              / static_cast<float>(kTruckCapacity));
+        if (load > 0.0f) {
+            const float level = kTruckTail + (kTruckShoulder - kTruckTail) * load;
+            draw->AddQuadFilled(TruckPoint(c, fwd, kTruckTail, -w), TruckPoint(c, fwd, level, -w),
+                                TruckPoint(c, fwd, level, w), TruckPoint(c, fwd, kTruckTail, w),
+                                kColorOfficeBody);
+        }
+        draw->AddPolyline(outline.data(), outline_size, hovered ? kColorText : kColorTruck,
+                          ImDrawFlags_Closed, hovered ? 2.0f : 1.5f);
     }
     if (hovered_truck != nullptr) {
         const Truck& truck = *hovered_truck;

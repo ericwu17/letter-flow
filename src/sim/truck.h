@@ -70,6 +70,11 @@ public:
     // The part of the route covered by tick `now`: the route's vertices passed
     // so far, ending at get_position(now).
     std::vector<Position> route_travelled(Tick now) const;
+    // Which way the truck faces at tick `now`: the step (end - start) of the
+    // route segment it is on, the next one when it is exactly on a bend, the
+    // last one once it has arrived. Zero-length segments are skipped; {0, 0}
+    // only for a route with no length at all.
+    Position get_heading(Tick now) const;
     bool has_arrived(Tick now) const;
     PostOfficeId get_src() const { return state.src; }
     PostOfficeId get_dst() const { return state.dst; }

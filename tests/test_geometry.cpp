@@ -137,6 +137,20 @@ void truck_route_travelled() {
     assert((truck.route_travelled(1000) == std::vector<Position>{{0, 0}, {0, 0}, {0, 50}, {30, 50}}));
 }
 
+// get_heading() faces along the segment the truck is on: the next one on a
+// bend, the last one after arrival, past zero-length segments.
+void truck_heading() {
+    const Truck truck(0, 1, {{0, 0}, {0, 0}, {0, 50}, {30, 50}}, 100, kTruckSpeed);
+    assert((truck.get_heading(0) == Position{0, 50}));    // before departure
+    assert((truck.get_heading(100) == Position{0, 50}));
+    assert((truck.get_heading(110) == Position{0, 50}));
+    assert((truck.get_heading(125) == Position{30, 0}));  // exactly on the bend
+    assert((truck.get_heading(130) == Position{30, 0}));
+    assert((truck.get_heading(1000) == Position{30, 0}));
+    const Truck parked(0, 1, {{5, 5}, {5, 5}}, 100, kTruckSpeed);
+    assert((parked.get_heading(100) == Position{0, 0}));
+}
+
 // has_arrived() works from an arrival tick cached at construction; it must
 // agree, on every tick around arrival and before departure, with the
 // definition it replaced: distance covered (elapsed * speed) >= route length.
@@ -184,6 +198,8 @@ int main() {
     printf("PASS truck_zero_length_segment\n");
     truck_route_travelled();
     printf("PASS truck_route_travelled\n");
+    truck_heading();
+    printf("PASS truck_heading\n");
     truck_arrival_matches_distance();
     printf("PASS truck_arrival_matches_distance\n");
 
