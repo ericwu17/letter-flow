@@ -28,6 +28,11 @@ namespace ui {
 struct CameraState {
     float zoom = 1.0f;
     ImVec2 pan = {0.0f, 0.0f};
+    // The left button last went down on the map (not over a window or the
+    // HUD), and whether that press has since moved past ImGui's drag
+    // threshold and is panning the map.
+    bool press_on_map = false;
+    bool dragging = false;
 };
 
 // Road building: Idle, then picking the source office, then placing bends

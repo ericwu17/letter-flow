@@ -40,7 +40,7 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "Getting around",
-        .body = "Scroll the mouse wheel to zoom and use W A S D to pan the map.\n\n"
+        .body = "Drag the map or use W A S D to move around, and scroll the mouse wheel to zoom.\n\n"
                 "The panel on the left is the inspector: it shows whatever you select on the "
                 "map. The card at the top right shows your money and deliveries.",
     },

@@ -27,6 +27,7 @@
 namespace {
 
 using ui::g_game;
+using ui::CameraState;
 using ui::RoadBuildState;
 using ui::MoneyPopup;
 using ui::SpawnPulse;
@@ -111,9 +112,25 @@ ViewTransform ComputeViewTransform() {
     return vt;
 }
 
-void UpdateCamera() {
+// The camera's inputs: the mouse wheel zooms, and W A S D or a left-drag
+// that started on the map pans. The wheel is ignored mid-drag.
+void UpdateCamera(bool mouse_on_map) {
     ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantCaptureMouse && io.MouseWheel != 0) {
+    CameraState& camera = g_game.camera;
+    if (io.MouseClicked[0])
+        camera.press_on_map = mouse_on_map;
+    if (!io.MouseDown[0])
+        camera.dragging = false;  // press_on_map lasts the release frame, for DrawWorld's click check
+    else if (camera.press_on_map && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        camera.dragging = true;
+    if (camera.dragging) {
+        // `pan` is in screen pixels, so the map stays under the cursor.
+        camera.pan.x += io.MouseDelta.x;
+        camera.pan.y += io.MouseDelta.y;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    }
+
+    if (!io.WantCaptureMouse && !camera.dragging && io.MouseWheel != 0) {
         const float old_zoom = g_game.camera.zoom;
         const float new_zoom = std::clamp(old_zoom * std::pow(kZoomStep, io.MouseWheel),
                                           kZoomMin, kZoomMax);
@@ -723,7 +740,11 @@ ImVec2 ui::OfficeScreenPos(PostOfficeId office, const World& world) {
 }
 
 void DrawWorld(World& world) {
-    UpdateCamera();
+    ImGuiIO& io = ImGui::GetIO();
+    // The mouse is "on the map" unless an ImGui window or the transport bar
+    // is under it.
+    const bool mouse_on_map = !io.WantCaptureMouse && !ui::OverTransportBar(world, io.MousePos);
+    UpdateCamera(mouse_on_map);
     ui::EnsureOfficeSelected(world);
     // Null once the selected truck has arrived (or if none is selected); the
     // backup office then wears the selection ring instead.
@@ -735,7 +756,6 @@ void DrawWorld(World& world) {
     const float office_radius = 14.0f;
     const std::vector<PostOffice>& offices = world.get_post_offices();
 
-    ImGuiIO& io = ImGui::GetIO();
     Position mouse_world = ScreenToWorld(view, io.MousePos);
 
     DrawMapGrid(draw, view);
@@ -864,30 +884,33 @@ void DrawWorld(World& world) {
     DrawEventBadges(draw, view, world, office_radius);
     DrawMoneyPopups(draw, view, world);
 
-    // The mouse is "on the map" unless an ImGui window or the transport bar
-    // is under it.
-    const bool mouse_on_map = !io.WantCaptureMouse && !ui::OverTransportBar(world, io.MousePos);
-    const bool clicked_map = io.MouseClicked[0] && mouse_on_map;
+    // A click acts on release, and only if the press began on the map and
+    // stayed within the drag threshold: anything further was a drag (pan).
+    const float drag_threshold = io.MouseDragThreshold;
+    const bool clicked_map = io.MouseReleased[0] && g_game.camera.press_on_map && mouse_on_map &&
+                             io.MouseDragMaxDistanceSqr[0] < drag_threshold * drag_threshold;
 
     // Hover (outside road-building), topmost first: trucks draw over offices,
     // and offices win over roads (they draw on top, and every road ends at an
     // office position). At most one thing is hovered; a click acts on exactly
     // that (see the click handling below), and the hand cursor says so. Hit
     // areas are a little larger than what is drawn (everything is drawn at a
-    // fixed pixel size), so small things stay easy to click.
+    // fixed pixel size), so small things stay easy to click. Nothing is
+    // hovered while the map is being dragged.
     const float truck_hit_slack = 1.0f;
     const float office_hit_radius = office_radius + 6.0f;
     const float road_hit_tolerance = 8.0f;
     std::shared_ptr<Truck> hovered_truck;
     std::optional<PostOfficeId> hovered_office;
     std::optional<std::size_t> hovered_road;
-    if (mouse_on_map && g_game.road_build_state == RoadBuildState::Idle) {
+    const bool hovering = mouse_on_map && !g_game.camera.dragging;
+    if (hovering && g_game.road_build_state == RoadBuildState::Idle) {
         hovered_truck = HitTestTruck(world, view, io.MousePos, truck_hit_slack);
         if (hovered_truck == nullptr)
             hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
         if (hovered_truck == nullptr && !hovered_office.has_value())
             hovered_road = HitTestRoad(world.get_roads(), view, io.MousePos, road_hit_tolerance);
-    } else if (mouse_on_map && g_game.road_build_state == RoadBuildState::SelectSource) {
+    } else if (hovering && g_game.road_build_state == RoadBuildState::SelectSource) {
         // Picking a road's source office: only offices are clickable.
         hovered_office = HitTestOffice(offices, view, io.MousePos, office_hit_radius);
     }

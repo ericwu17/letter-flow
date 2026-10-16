@@ -88,7 +88,8 @@ mingw32-make && ./letter-flow.exe
   which office on which schedule, and where it arrived. Hover a letter in any
   list for its journey (with time spent waiting vs. on the road); the map
   highlights its route, its truck and its destination.
-- **Mouse wheel / WASD**: zoom and pan the map
+- **Mouse wheel / drag / WASD**: zoom and pan the map. A left-drag pans (the
+  wheel doesn't zoom mid-drag); a left-click that doesn't move selects.
 - **Transport bar**: play/pause (Shift), slow down / fast-forward (, / .),
   day/time readout. While paused, a label at the bottom of the map says so.
 - **Pause menu (Esc, or the HUD's Menu button)**: Resume / Save / Main menu /
