@@ -367,6 +367,8 @@ void DrawRoadMenu(World& world) {
                 g_game.road_menu.confirm = false;
             }
         }
+        ImGui::SetItemTooltip("Truck schedules on this road are switched off, "
+                              "and switch back on if the road is rebuilt.");
         ImGui::EndPopup();
     } else if (!g_game.road_menu.open_requested) {
         // The popup was closed externally (Esc or a click outside it). ImGui

@@ -743,8 +743,8 @@ void DrawSchedulesTab(const World& world) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             char route[256];
-            std::snprintf(route, sizeof(route), "%s #%zu  ->  %s", offices[r.src].name.c_str(), r.index + 1,
-                          offices[s.dst].name.c_str());
+            std::snprintf(route, sizeof(route), "%s #%zu  ->  %s%s", offices[r.src].name.c_str(), r.index + 1,
+                          offices[s.dst].name.c_str(), s.enabled ? "" : "  (off)");
             if (ImGui::Selectable(route, ui::g_game.stats_schedule == s.id, ImGuiSelectableFlags_SpanAllColumns)) {
                 ui::g_game.stats_schedule = s.id;
                 ui::SelectOffice(r.src);

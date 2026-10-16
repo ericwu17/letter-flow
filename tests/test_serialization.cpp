@@ -192,6 +192,9 @@ World build_fixture_world() {
     assert(w.get_post_offices()[flooded].overflow_ticks > 0);   // default: 0
     assert(!w.is_game_over());
 
+    // One schedule switched off (its road, Hopewell - Princeton, stays).
+    assert(w.set_schedule_enabled(3, 0, false));
+
     // The distinctness guarantees the round-trip test relies on: a forgotten
     // field would revert to a default that differs from every value below.
     assert(w.get_tick() > 0);                        // default: 0
@@ -211,7 +214,7 @@ World build_fixture_world() {
     assert(w.get_stats() != GlobalStats{});
     assert(!w.get_recent_deliveries().empty());
     bool office_stats = false, schedule_stats = false, departure_log = false, edits = false,
-         schedule_ids = false, trails = false, departed_stop = false;
+         schedule_ids = false, trails = false, departed_stop = false, disabled = false;
     bool event_letters = false;
     for (const PostOffice& office : w.get_post_offices()) {
         office_stats |= office.stats != OfficeStats{};
@@ -224,6 +227,7 @@ World build_fixture_world() {
             departure_log |= !schedule.departure_log.empty();
             edits |= !schedule.edits.empty();
             schedule_ids |= schedule.id != 0;  // default: kNoSchedule, and the first id is 0
+            disabled |= !schedule.enabled;     // default: true
         }
     }
     bool truck_schedule = false;
@@ -233,7 +237,7 @@ World build_fixture_world() {
             for (const TrailStop& stop : letter.trail)
                 departed_stop |= stop.schedule != kNoSchedule;
     }
-    assert(office_stats && schedule_stats && departure_log && edits && schedule_ids);
+    assert(office_stats && schedule_stats && departure_log && edits && schedule_ids && disabled);
     assert(trails && departed_stop && truck_schedule && event_letters);
     return w;
 }
@@ -352,6 +356,24 @@ void unusable_saves_load_as_nullopt() {
         assert(!WorldJson::from_json(j));
     }
 
+    // A schedule switched on with no road to run on. Hopewell's schedule to
+    // Princeton is off in the fixture, so dropping their road still loads;
+    // switching the schedule on as well does not.
+    {
+        nlohmann::json j = nlohmann::json::parse(good_json);
+        nlohmann::json& roads = j["roads"];
+        const auto road = std::find_if(roads.begin(), roads.end(), [](const nlohmann::json& r) {
+            return r["src"] == 1 && r["dst"] == 3;
+        });
+        assert(road != roads.end());
+        roads.erase(road);
+        nlohmann::json& schedule = j["post_offices"][3]["outbound_schedules"][0];
+        assert(schedule["dst"] == 1 && schedule["enabled"] == false);
+        assert(WorldJson::from_json(j));
+        schedule["enabled"] = true;
+        assert(!WorldJson::from_json(j));
+    }
+
     // Dangling post-office reference (office 9999 does not exist).
     {
         std::string s = good_json;
@@ -384,8 +406,9 @@ void legacy_single_prefix_loads() {
     assert(found);
 }
 
-// Saves from before statistics, trails and schedule ids still load: with
-// empty history, and with every schedule given a distinct fresh id.
+// Saves from before statistics, trails, schedule ids and the enabled flag
+// still load: with empty history, every schedule given a distinct fresh id,
+// and every schedule switched on.
 void pre_stats_save_loads() {
     const World original = fixture_world();
 
@@ -399,7 +422,8 @@ void pre_stats_save_loads() {
     for (std::string line; std::getline(lines, line);) {
         if (line.find("\"id\":") != std::string::npos ||
             line.find("\"next_schedule_id\":") != std::string::npos ||
-            line.find("\"schedule\":") != std::string::npos)
+            line.find("\"schedule\":") != std::string::npos ||
+            line.find("\"enabled\":") != std::string::npos)
             continue;
         out += line + "\n";
     }
@@ -440,6 +464,7 @@ void pre_stats_save_loads() {
             assert(letter.trail.empty());
         for (const TruckSchedule& schedule : office.outbound_schedules) {
             assert(schedule.stats == ScheduleStats{});
+            assert(schedule.enabled);
             ids.push_back(schedule.id);
         }
     }

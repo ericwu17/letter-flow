@@ -235,10 +235,14 @@ void schedule_errors() {
     assert(w.update_schedule(0, 0, h, 0, all));
     assert(w.update_schedule(0, 0, 3 * h, 0, exact));
 
-    // Removing the road takes the schedules with it; a new one is refused.
+    // Removing the road switches the schedules off; a new one is refused,
+    // but the switched-off ones can still be retuned.
     assert(w.remove_road(1, 0));
-    assert(w.get_post_offices()[0].outbound_schedules.empty());
+    assert(w.get_post_offices()[0].outbound_schedules.size() == 2);
+    for (const TruckSchedule& s : w.get_post_offices()[0].outbound_schedules)
+        assert(!s.enabled);
     assert(w.check_add_schedule(0, 1, h, exact) == ScheduleError::NoRoad);
+    assert(w.check_update_schedule(0, 0, 2 * h, exact) == ScheduleError::None);
     assert(!w.remove_road(0, 1));  // already gone
     assert(!w.remove_road(0, 99));
 }
@@ -498,9 +502,10 @@ void observed_truck_expires_on_arrival() {
 }
 
 // remove_road: money untouched, lookups fail in both argument orders, invalid calls
-// change nothing, dependent schedules cascade-delete on both endpoint
-// offices, the world stays stable afterwards (no phantom departures from the
-// removed road), in-flight trucks still deliver, and the road can be rebuilt.
+// change nothing, dependent schedules are switched off (not deleted) on both
+// endpoint offices, the world stays stable afterwards (no phantom departures
+// from the removed road), in-flight trucks still deliver, and the road can be
+// rebuilt.
 void road_removal() {
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
     const Tick huge = 100 * kTicksPerDay;  // one departure a day, at the start offset
@@ -526,17 +531,22 @@ void road_removal() {
     assert(!w.remove_road(0, 1));  // already gone
     assert(w.get_money() == money0);
 
-    // --- schedule cascade on both endpoint offices -------------------------
+    // --- schedules switched off on both endpoint offices -------------------
     assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
     assert(w.add_schedule(2, 0, kTicksPerHour, 0, exact));
-    assert(w.add_schedule(1, 2, kTicksPerHour, 0, exact));  // unrelated: survives
+    assert(w.add_schedule(1, 2, kTicksPerHour, 0, exact));  // unrelated: stays on
     assert(w.remove_road(0, 2));
-    assert(w.get_post_offices()[0].outbound_schedules.empty());
-    assert(w.get_post_offices()[2].outbound_schedules.empty());
+    assert(w.get_post_offices()[0].outbound_schedules.size() == 1);
+    assert(!w.get_post_offices()[0].outbound_schedules[0].enabled);
+    assert(w.get_post_offices()[2].outbound_schedules.size() == 1);
+    assert(!w.get_post_offices()[2].outbound_schedules[0].enabled);
     assert(w.get_post_offices()[1].outbound_schedules.size() == 1);
+    assert(w.get_post_offices()[1].outbound_schedules[0].enabled);
 
-    // A schedule cannot exist without its road...
+    // A new schedule cannot be added without its road, nor an old one
+    // switched back on...
     assert(!w.add_schedule(0, 2, kTicksPerHour, 0, exact));
+    assert(!w.set_schedule_enabled(0, 0, true));
 
     // --- stability: no phantom departures from removed roads ---------------
     // (Guards the crash where spawn_truck built a truck from an empty vertex
@@ -545,7 +555,7 @@ void road_removal() {
     World w2 = make_line_world(2, 5);  // road 0-1 only
     assert(w2.add_schedule(0, 1, kTicksPerHour, 0, exact));
     assert(w2.remove_road(0, 1));
-    assert(w2.get_post_offices()[0].outbound_schedules.empty());  // cascaded
+    assert(!w2.get_post_offices()[0].outbound_schedules[0].enabled);  // switched off
     for (int i = 0; i < 200; ++i)
         w2.advance_tick();
     assert(w2.get_trucks().empty());  // nothing departs, nothing crashes
@@ -569,6 +579,64 @@ void road_removal() {
     add_straight_road(w4, 0, 1);
     assert(w4.has_road(0, 1));
     assert(w4.get_money() == money4);
+}
+
+// set_schedule_enabled: a schedule switched off never departs; it can be
+// switched back on only while its road exists, and then resumes on its
+// departure grid instead of making up for the time it was off. Rebuilding a
+// road switches its schedules (both directions) back on, likewise on the grid.
+void schedule_enable_toggle() {
+    const RoutingRule all{RoutingRuleType::AllLetters, {}};
+    const Tick h = kTicksPerHour;
+
+    // --- invalid calls -----------------------------------------------------
+    World w = make_line_world(2, 0);
+    assert(w.add_schedule(0, 1, h, 0, all));
+    assert(!w.set_schedule_enabled(0, 1, false));   // no such schedule
+    assert(!w.set_schedule_enabled(9, 0, false));   // no such office
+    assert(w.set_schedule_enabled(0, 0, true));     // already on: no-op
+    assert(w.get_post_offices()[0].outbound_schedules[0].enabled);
+
+    // --- off on an intact road: no departures ------------------------------
+    World w2 = make_line_world(2, 5);
+    assert(w2.add_schedule(0, 1, h, 0, all));
+    assert(w2.set_schedule_enabled(0, 0, false));
+    assert(w2.set_schedule_enabled(0, 0, false));   // already off: no-op
+    for (Tick t = 0; t < 3 * h; ++t)
+        w2.advance_tick();
+    assert(w2.get_trucks().empty());
+    assert(w2.get_post_offices()[0].stats[OfficeStat::Departures].total == 0);
+
+    // --- back on: the next grid slot, no catch-up departure ----------------
+    const Tick now = w2.get_tick();  // on the hour: the slot itself is not "after now"
+    assert(w2.set_schedule_enabled(0, 0, true));
+    assert(w2.get_post_offices()[0].outbound_schedules[0].next_departure == now + h);
+    w2.advance_tick();
+    assert(w2.get_trucks().empty());
+    while (w2.get_tick() < now + h)
+        w2.advance_tick();
+    assert(w2.get_trucks().size() == 1);
+
+    // --- road destroyed: retunable but stuck off until rebuilt --------------
+    // --- road rebuilt: its schedules switch back on by themselves -----------
+    World w3 = make_line_world(2, 0);
+    assert(w3.add_schedule(0, 1, h, 0, all));
+    assert(w3.add_schedule(1, 0, h, 0, all));  // the other direction
+    assert(w3.remove_road(0, 1));
+    assert(!w3.set_schedule_enabled(0, 0, true));
+    assert(w3.update_schedule(0, 0, 2 * h, 30, all));  // retuned while off
+    assert(w3.get_post_offices()[0].outbound_schedules[0].period == 2 * h);
+    for (Tick t = 0; t < 5 * h; ++t)
+        w3.advance_tick();
+    assert(w3.get_trucks().empty());
+    const Tick rebuilt = w3.get_tick();  // 05:00
+    add_straight_road(w3, 0, 1);
+    const TruckSchedule& retuned = w3.get_post_offices()[0].outbound_schedules[0];
+    assert(retuned.enabled);
+    assert(retuned.next_departure == rebuilt + h + 30);  // 06:30 on the new grid, not now
+    assert(w3.get_post_offices()[1].outbound_schedules[0].enabled);
+    w3.advance_tick();
+    assert(w3.get_trucks().empty());  // no catch-up departure
 }
 
 // Hub-and-spoke end to end: mail rides a leg it is not addressed to, is
@@ -1028,6 +1096,8 @@ int main() {
     printf("PASS skipped_departures_and_orphaned_trucks\n");
     road_removal();
     printf("PASS road_removal\n");
+    schedule_enable_toggle();
+    printf("PASS schedule_enable_toggle\n");
     observed_truck_expires_on_arrival();
     printf("PASS observed_truck_expires_on_arrival\n");
 

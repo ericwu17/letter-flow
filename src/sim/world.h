@@ -96,9 +96,11 @@ private:
     TruckSchedule* find_schedule(PostOfficeId office, ScheduleId id);
     // Shared validation for add_schedule() / update_schedule() and their
     // check_* queries: why a schedule src -> dst with this period and
-    // (normalized) rule is refused.
+    // (normalized) rule is refused. The road is only required of a schedule
+    // that is switched on: one switched off by its road's destruction can 
+    // still be re-tuned.
     ScheduleError validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
-                                    const RoutingRule& normalized_rule) const;
+                                    const RoutingRule& normalized_rule, bool require_road) const;
 
 public:
     // Advances the simulation by one tick: new offices appearing, network
@@ -145,7 +147,8 @@ public:
                       const RoutingRule& rule);
     // Edits the timing and rule of the schedule at `schedule_index` in place
     // (the inspector's schedule table), keeping its destination and list
-    // position. Same validation as add_schedule. Changing period or
+    // position. Same validation as add_schedule, except that a switched-off
+    // schedule needs no road (see set_schedule_enabled). Changing period or
     // start_offset re-anchors the next departure on the new grid (first slot
     // strictly after now); changing only the rule keeps the next departure as
     // is. Returns false and changes nothing on an invalid index or schedule.
@@ -160,6 +163,10 @@ public:
     ScheduleError check_update_schedule(PostOfficeId src, std::size_t schedule_index, Tick period,
                                         const RoutingRule& rule) const;
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
+    // Switches the schedule at `schedule_index` on or off (the inspector's
+    // "On" checkbox). A schedule that is off never departs but keeps its
+    // rule, timing and history. Returns false and changes.
+    bool set_schedule_enabled(PostOfficeId src, std::size_t schedule_index, bool enabled);
     // Moves the schedule at index `from` to index `to` (drag-to-reorder in the
     // inspector). List order is the pick-up priority: departures fire in list
     // order and spawn_truck() moves letters out of the buffer, so when several
@@ -196,8 +203,11 @@ public:
     // matter). Truck schedules only ever use the direct
     // road (add_schedule checks has_road), and spawn_truck would dereference
     // an empty vertex list once the road is gone, so every schedule between
-    // the two endpoints is cascade-deleted on both offices (roads are
-    // undirected, schedules are per-source-office). In-flight trucks are
+    // the two endpoints is switched off on both offices (roads are
+    // undirected, schedules are per-source-office). They keep their rule,
+    // timing and history, and can be switched back on once a road connects
+    // the offices again (rebuilding one does not do so by itself; see
+    // set_schedule_enabled). In-flight trucks are
     // unaffected: they snapshot the polyline at departure. Returns false and
     // changes nothing if the ids are invalid or no such road exists.
     bool remove_road(PostOfficeId a, PostOfficeId b);

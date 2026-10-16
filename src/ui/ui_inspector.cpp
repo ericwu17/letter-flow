@@ -377,7 +377,7 @@ void DrawDragHandle(const char* number) {
 // The office's truck schedules as an editable table: the rule and timing
 // cells edit their schedule in place through World::update_schedule, which validates it the
 // same way add_schedule does. Rows can be dragged to reorder them (list
-// order is pick-up priority) and removed.
+// order is pick-up priority), switched off and on, and removed.
 void DrawScheduleTable(World& world, PostOfficeId selected) {
     const std::vector<PostOffice>& offices = world.get_post_offices();
     const PostOffice& office = offices[selected];
@@ -395,27 +395,29 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
     theme::HelpMarker("Departures run top to bottom: when several schedules depart at the same time, "
                       "the first one whose rule matches a letter picks it up.");
 
-    // Record edits, removals and reorders and apply them after the loop: the
+    // Record edits, toggles, removals and reorders and apply them after the loop: the
     // World mutates the very vector we are iterating, which would invalidate
     // `schedule` and shift the indices of every later row (and of a pending
     // drag-and-drop payload).
     std::optional<std::pair<std::size_t, TruckSchedule>> schedule_to_update;
+    std::optional<std::pair<std::size_t, bool>> schedule_to_toggle;  // index, enabled
     std::optional<std::size_t> schedule_to_remove;
     std::optional<std::pair<std::size_t, std::size_t>> schedule_to_move;  // from, to
     std::vector<float> row_tops;  // screen y where each row starts, to find the one under the mouse
 
     const ImGuiTableFlags flags = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInnerH |
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable;
-    // Nine columns need more room than a narrow inspector has: the table
+    // Ten columns need more room than a narrow inspector has: the table
     // keeps a minimum width and scrolls sideways inside an auto-height child
     // rather than crushing its stretch columns ("To", "Picks up").
     const float table_w = std::max(ImGui::GetContentRegionAvail().x, ImGui::GetFontSize() * 40.0f);
     ImGui::BeginChild("schedules_scroll", ImVec2(-FLT_MIN, 0.0f), ImGuiChildFlags_AutoResizeY,
                       ImGuiWindowFlags_HorizontalScrollbar);
-    if (ImGui::BeginTable("schedules", 9, flags, ImVec2(table_w, 0.0f))) {
+    if (ImGui::BeginTable("schedules", 10, flags, ImVec2(table_w, 0.0f))) {
         // Wide enough for DrawDragHandle's grip plus a two-digit row number.
         ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed,
                                 ImGui::GetFontSize() * 0.6f + ImGui::CalcTextSize("00").x + 6.0f);
+        ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn("To", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableSetupColumn("Picks up", ImGuiTableColumnFlags_WidthStretch, 1.6f);
         ImGui::TableSetupColumn("Every", ImGuiTableColumnFlags_WidthFixed);
@@ -458,12 +460,27 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
                 ImGui::EndDragDropTarget();
             }
 
-            // To: fixed once created (remove and re-add to change it).
+            // On: switches the schedule off and on. One whose road is gone
+            // can only be switched back on once a road connects the offices.
             ImGui::TableSetColumnIndex(1);
+            const bool has_road = world.has_road(selected, schedule.dst);
+            const bool can_enable = schedule.enabled || has_road;
+            bool enabled = schedule.enabled;
+            ImGui::BeginDisabled(!can_enable);
+            if (ImGui::Checkbox("##enabled", &enabled))
+                schedule_to_toggle = {i, enabled};
+            ImGui::EndDisabled();
+
+            if (!can_enable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("No road to %s.",
+                                  offices[schedule.dst].name.c_str());
+
+            // To: fixed once created (remove and re-add to change it).
+            ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(offices[schedule.dst].name.c_str());
 
             // Picks up: the rule type, plus the prefix list for PostalPrefix.
-            ImGui::TableSetColumnIndex(2);
+            ImGui::TableSetColumnIndex(3);
             const bool is_prefix = schedule.rule.type == RoutingRuleType::PostalPrefix;
             const auto rule_label = [&](RoutingRuleType type) {
                 return type == RoutingRuleType::PostalPrefix ? std::string("Postal prefix")
@@ -493,22 +510,28 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
             }
 
             // Every / Starting at: HH:MM, converted to ticks right away.
-            ImGui::TableSetColumnIndex(3);
+            ImGui::TableSetColumnIndex(4);
             if (EditHoursMinutes("every", edited.period, 24)) {
                 edited.period = std::clamp(edited.period, kMinSchedulePeriod, kTicksPerDay);
                 row_changed = true;
             }
-            ImGui::TableSetColumnIndex(4);
+            ImGui::TableSetColumnIndex(5);
             if (EditHoursMinutes("start", edited.start_offset, 23))
                 row_changed = true;
 
-            ImGui::TableSetColumnIndex(5);
-            char next[32];
-            FormatDayTime(schedule.next_departure, next, sizeof(next));
-            ImGui::TextUnformatted(next);
+            ImGui::TableSetColumnIndex(6);
+            if (!has_road) {
+                ImGui::TextColored(kColorErrorText, "No road");
+            } else if (!schedule.enabled) {
+                ImGui::TextDisabled("Off");
+            } else {
+                char next[32];
+                FormatDayTime(schedule.next_departure, next, sizeof(next));
+                ImGui::TextUnformatted(next);
+            }
 
             // Waiting: how much of the current buffer this rule would load.
-            ImGui::TableSetColumnIndex(6);
+            ImGui::TableSetColumnIndex(7);
             std::size_t matched = 0;
             for (const Letter& letter : office.outbound_letters)
                 if (schedule.rule.matches(letter.dst, offices[letter.dst].postal_code, schedule.dst))
@@ -517,10 +540,10 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
             ImGui::SetItemTooltip("Outbound letters this rule would pick up right now");
 
             // Load: how full this schedule's trucks have been leaving.
-            ImGui::TableSetColumnIndex(7);
+            ImGui::TableSetColumnIndex(8);
             ui::DrawScheduleLoadCell(schedule, world.get_tick());
 
-            ImGui::TableSetColumnIndex(8);
+            ImGui::TableSetColumnIndex(9);
             if (theme::DangerSmallButton(" x "))
                 schedule_to_remove = i;
             ImGui::SetItemTooltip("Remove this schedule");
@@ -562,6 +585,8 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
             edit_error.clear();
         else
             edit_error = ScheduleErrorText(error);
+    } else if (schedule_to_toggle.has_value()) {
+        world.set_schedule_enabled(selected, schedule_to_toggle->first, schedule_to_toggle->second);
     } else if (schedule_to_remove.has_value()) {
         world.remove_schedule(selected, *schedule_to_remove);
     } else if (schedule_to_move.has_value()) {

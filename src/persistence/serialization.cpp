@@ -48,6 +48,8 @@ namespace {
 //     not converted. Network events too: the world stores the event
 //     announced or running (if any), next_event_announce and events_so_far,
 //     and event letters are flagged "event".
+// Schedules' "enabled" flag was added within v4 as an optional key: a save
+// without it loads with every schedule switched on (as they all were then).
 constexpr int kSaveFormatVersion = 4;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
@@ -316,6 +318,7 @@ void to_json(nlohmann::json& j, const TruckSchedule& schedule) {
          {"period", schedule.period},
          {"start_offset", schedule.start_offset},
          {"next_departure", schedule.next_departure},
+         {"enabled", schedule.enabled},
          {"stats", schedule.stats},
          {"departure_log", schedule.departure_log},
          {"edits", schedule.edits}};
@@ -329,6 +332,7 @@ void from_json(const nlohmann::json& j, TruckSchedule& schedule) {
     j.at("period").get_to(schedule.period);
     j.at("start_offset").get_to(schedule.start_offset);
     j.at("next_departure").get_to(schedule.next_departure);
+    schedule.enabled = j.value("enabled", true);
     schedule.stats = j.value("stats", ScheduleStats{});
     schedule.departure_log = j.value("departure_log", std::vector<DepartureRecord>{});
     schedule.edits = j.value("edits", std::vector<Tick>{});
@@ -403,7 +407,8 @@ namespace {
 // already guarantees the JSON shape; this catches structurally valid but
 // logically broken saves (hand-edited or truncated files): dangling office
 // references, schedules violating the invariants add_schedule() enforces
-// (dst is another office, period > 0, non-empty distinct postal prefixes), and roads
+// (dst is another office, period > 0, non-empty distinct postal prefixes, and a
+// road to dst if the schedule is switched on — spawn_truck needs it), and roads
 // violating the invariants add_road() enforces (normalized src < dst, no
 // duplicates, at least two in-range vertices anchored at the endpoint
 // offices), letters (and their trails) naming offices that do not exist,
@@ -452,6 +457,12 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                 return false;
             if (!schedule.rule.is_well_formed())
                 return false;
+            const PostOfficeId lo = std::min(office_id, schedule.dst);
+            const PostOfficeId hi = std::max(office_id, schedule.dst);
+            if (schedule.enabled && std::none_of(roads.begin(), roads.end(), [&](const Road& road) {
+                    return road.src == lo && road.dst == hi;
+                }))
+                return false;  // switched on with no road to run on
         }
     }
     for (const std::shared_ptr<Truck>& truck : trucks) {

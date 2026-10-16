@@ -226,6 +226,9 @@ struct TruckSchedule {
                                        // start_offset + k * period (k = 0, 1, 2, ...) up
                                        // to midnight, then restart at start_offset
     Tick next_departure = 0;           // absolute tick of the next departure
+    bool enabled = true;               // off: never departs (switched off by the player, or
+                                       // by destroying its road; only a schedule whose road
+                                       // exists can be switched back on)
 
     // Utilization history. Kept across update_schedule() edits (it is the same
     // schedule, retuned), with the edit ticks recorded so a chart can mark them.
