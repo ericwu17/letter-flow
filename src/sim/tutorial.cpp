@@ -65,7 +65,7 @@ const TutorialStep kSteps[] = {
     {
         .title = "Start the clock",
         .body = "The game has been paused all along. Press the red play button in the bar at the "
-                "top of the map to let time run.",
+                "top of the map (or Shift) to let time run.",
         .anchor = TutorialAnchor::TransportBar,
         .done = [](const World& w, const TutorialUiFacts&) { return !w.is_paused(); },
     },
@@ -104,7 +104,7 @@ const TutorialStep kSteps[] = {
     {
         .title = "First delivery",
         .body = "The next truck leaves at the schedule's next departure time. Use the >> button "
-                "in the top bar to fast-forward, and watch the red truck drive to Central. When "
+                "in the top bar (or the period key) to fast-forward, and watch the red truck drive to Central. When "
                 "it arrives, the letters are delivered and you get paid.",
         .anchor = TutorialAnchor::TransportBar,
         .done = [](const World& w, const TutorialUiFacts&) {
@@ -209,7 +209,7 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "Statistics",
-        .body = "Press P, or the Statistics button top right, to see charts of money, mail and "
+        .body = "Press L, or the Statistics button top right, to see charts of money, mail and "
                 "how full each schedule's trucks run.",
         .anchor = TutorialAnchor::StatsButton,
         .done = [](const World&, const TutorialUiFacts& f) { return f.stats_open; },

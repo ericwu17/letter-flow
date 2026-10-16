@@ -535,8 +535,8 @@ PauseAction DrawGameOver(const World& world) {
         ImGui::Spacing();
         ImGui::Spacing();
 
-        if (ImGui::Button("Statistics  (P)", button_size) ||
-            (!ImGui::IsPopupOpen("Statistics###game_over_stats") && ImGui::IsKeyPressed(ImGuiKey_P, false)))
+        if (ImGui::Button("Statistics  (L)", button_size) ||
+            (!ImGui::IsPopupOpen("Statistics###game_over_stats") && ImGui::IsKeyPressed(ImGuiKey_L, false)))
             ImGui::OpenPopup("Statistics###game_over_stats");
         if (theme::PrimaryButton("Main menu", button_size))
             action = PauseAction::MainMenu;
@@ -545,7 +545,7 @@ PauseAction DrawGameOver(const World& world) {
 
         // The statistics window, as a modal over the card (the floating
         // window would sit behind the card, out of reach). Its title-bar
-        // button, Esc or P closes it again.
+        // button, Esc or L closes it again.
         ImGui::SetNextWindowSize(ImVec2(900.0f, 640.0f), ImGuiCond_Appearing);
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         bool stats_open = true;
@@ -553,7 +553,7 @@ PauseAction DrawGameOver(const World& world) {
             ui::DrawStatsContents(world);
             const bool typing = ImGui::GetIO().WantTextInput;
             if (!ImGui::IsWindowAppearing() && !typing &&
-                (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_P, false)))
+                (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_L, false)))
                 ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }

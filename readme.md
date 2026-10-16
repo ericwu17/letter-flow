@@ -74,7 +74,7 @@ mingw32-make && ./letter-flow.exe
   up a letter first. Schedules are free to create; each truck costs $15 when
   it departs (skipped if you can't afford it) and carries at most 5 letters,
   oldest first; the rest wait for the next truck.
-- **Statistics (P, or the HUD button)**: Factorio-style charts over the last
+- **Statistics (L, or the HUD button)**: Factorio-style charts over the last
   6 h / 1 day / 10 days / 30 days of game time. *Network*: money in and out,
   letters posted / delivered / lost (refused by a full buffer), letters waiting
   vs. on trucks, delivery time. *Offices*: a sortable table plus charts for
@@ -89,7 +89,8 @@ mingw32-make && ./letter-flow.exe
   list for its journey (with time spent waiting vs. on the road); the map
   highlights its route, its truck and its destination.
 - **Mouse wheel / WASD**: zoom and pan the map
-- **Transport bar**: play/pause, x4 fast-forward, day/time readout
+- **Transport bar**: play/pause (Shift), slow down / fast-forward (, / .),
+  day/time readout. While paused, a label at the bottom of the map says so.
 - **Pause menu (Esc, or the HUD's Menu button)**: Resume / Save / Main menu /
   Quit, over the frozen game; Esc again resumes. When Esc has something else
   to cancel (road building, an open popup, a text field), it does that first.
@@ -97,7 +98,7 @@ mingw32-make && ./letter-flow.exe
 - **F1 / F2**: Dear ImGui / ImPlot demo windows (widget reference while developing)
 - **Game over**: when an office overflows, the clock stops and a card
   names the office and sums up the game (how long it lasted, events weathered, letters
-  delivered and lost), with Statistics (P: the full statistics window, over
+  delivered and lost), with Statistics (L: the full statistics window, over
   the card), Main menu and Quit. The ended game is saved
   right away and stays in the save list marked GAME OVER; playing it
   again shows the final map and the card, but it can't be continued.

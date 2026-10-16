@@ -365,6 +365,37 @@ void DrawTransportBar(World& world) {
         else if (hover_faster)
             world.set_speed_multiplier(NextFasterSpeed(speed));
     }
+
+    // Keyboard: Shift (either one) plays/pauses, comma / period slow down /
+    // speed up. Not while typing, under the pause menu or once the game is over.
+    if (!io.WantCaptureKeyboard && !g_game.pause_menu_open && !world.is_game_over()) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftShift, false) || ImGui::IsKeyPressed(ImGuiKey_RightShift, false))
+            world.set_paused(!world.is_paused());
+        if (ImGui::IsKeyPressed(ImGuiKey_Comma, false))
+            world.set_speed_multiplier(NextSlowerSpeed(world.get_speed_multiplier()));
+        if (ImGui::IsKeyPressed(ImGuiKey_Period, false))
+            world.set_speed_multiplier(NextFasterSpeed(world.get_speed_multiplier()));
+    }
+
+    // While paused, a label at the bottom center of the map area (which
+    // excludes the docked inspector) says how to resume. The game-over card
+    // replaces it once the clock has stopped for good.
+    if (world.is_paused() && !world.is_game_over()) {
+        ImGui::PushFont(nullptr, theme::kFontHuge);
+        constexpr const char* kPausedText = "PAUSED (SHIFT to unpause)";
+        ImVec2 area_min, area_size;
+        ui::GetMapArea(area_min, area_size);
+        const float fh = ImGui::GetFrameHeight();
+        const ImVec2 text_size = ImGui::CalcTextSize(kPausedText);
+        const ImVec2 pad = {fh * 0.5f, fh * 0.3f};
+        const ImVec2 panel_min = {area_min.x + (area_size.x - text_size.x) * 0.5f - pad.x,
+                                  area_min.y + area_size.y - fh * 0.6f - text_size.y - 2.0f * pad.y};
+        const ImVec2 panel_max = {panel_min.x + text_size.x + 2.0f * pad.x,
+                                  panel_min.y + text_size.y + 2.0f * pad.y};
+        // theme::DrawShadowedPanel(draw, panel_min, panel_max, rounding * 1.5f);
+        draw->AddText({panel_min.x + pad.x, panel_min.y + pad.y}, kColorText, kPausedText);
+        ImGui::PopFont();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +469,7 @@ void DrawHUD(const World& world) {
     DrawHudEvent(world);
 
     ImGui::Spacing();
-    if (theme::PrimaryButton("Statistics  (P)", ImVec2(-FLT_MIN, 0.0f)))
+    if (theme::PrimaryButton("Statistics  (L)", ImVec2(-FLT_MIN, 0.0f)))
         g_game.stats_open = !g_game.stats_open;
     ui::NoteItemAnchor(TutorialAnchor::StatsButton);
     if (ImGui::Button("Menu  (Esc)", ImVec2(-FLT_MIN, 0.0f)))

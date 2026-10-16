@@ -890,14 +890,14 @@ void DrawStatsWindow(const World& world) {
     if (world.is_game_over())
         return;
     const ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_P, false))
+    if (!io.WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_L, false))
         ui::g_game.stats_open = !ui::g_game.stats_open;
     if (!ui::g_game.stats_open)
         return;
 
     ImGui::SetNextWindowSize(ImVec2(900.0f, 640.0f), ImGuiCond_FirstUseEver);
     // Floating only, like the HUD (the dockspace takes no other windows).
-    if (!ImGui::Begin("Statistics (P)###Statistics", &ui::g_game.stats_open, ImGuiWindowFlags_NoDocking)) {
+    if (!ImGui::Begin("Statistics (L)###Statistics", &ui::g_game.stats_open, ImGuiWindowFlags_NoDocking)) {
         ImGui::End();
         return;
     }
