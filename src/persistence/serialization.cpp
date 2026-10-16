@@ -50,6 +50,8 @@ namespace {
 //     and event letters are flagged "event".
 // Schedules' "enabled" flag was added within v4 as an optional key: a save
 // without it loads with every schedule switched on (as they all were then).
+// Schedules lost their timetable within v4: "period", "start_offset" and
+// "next_departure" are no longer written, and are ignored in older saves.
 constexpr int kSaveFormatVersion = 4;
 
 // RoutingRuleType is saved as a readable string rather than a number, so
@@ -315,9 +317,6 @@ void to_json(nlohmann::json& j, const TruckSchedule& schedule) {
     j = {{"id", schedule.id},
          {"dst", schedule.dst},
          {"rule", schedule.rule},
-         {"period", schedule.period},
-         {"start_offset", schedule.start_offset},
-         {"next_departure", schedule.next_departure},
          {"enabled", schedule.enabled},
          {"stats", schedule.stats},
          {"departure_log", schedule.departure_log},
@@ -329,9 +328,6 @@ void from_json(const nlohmann::json& j, TruckSchedule& schedule) {
     schedule.id = j.value("id", kNoSchedule);
     j.at("dst").get_to(schedule.dst);
     j.at("rule").get_to(schedule.rule);
-    j.at("period").get_to(schedule.period);
-    j.at("start_offset").get_to(schedule.start_offset);
-    j.at("next_departure").get_to(schedule.next_departure);
     schedule.enabled = j.value("enabled", true);
     schedule.stats = j.value("stats", ScheduleStats{});
     schedule.departure_log = j.value("departure_log", std::vector<DepartureRecord>{});
@@ -407,7 +403,7 @@ namespace {
 // already guarantees the JSON shape; this catches structurally valid but
 // logically broken saves (hand-edited or truncated files): dangling office
 // references, schedules violating the invariants add_schedule() enforces
-// (dst is another office, period > 0, non-empty distinct postal prefixes, and a
+// (dst is another office, non-empty distinct postal prefixes, and a
 // road to dst if the schedule is switched on — spawn_truck needs it), and roads
 // violating the invariants add_road() enforces (normalized src < dst, no
 // duplicates, at least two in-range vertices anchored at the endpoint
@@ -452,8 +448,6 @@ bool loaded_state_is_valid(const std::vector<PostOffice>& post_offices,
                 return false;
             schedule_ids.push_back(schedule.id);
             if (schedule.dst >= num_offices || schedule.dst == office_id)
-                return false;
-            if (schedule.period == 0)
                 return false;
             if (!schedule.rule.is_well_formed())
                 return false;

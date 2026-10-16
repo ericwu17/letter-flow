@@ -131,29 +131,14 @@ World build_fixture_world() {
     add_l_road(w, 5, 7, /*vertical_first=*/false);  // Edison -> Florham Park
     add_l_road(w, 7, 11, /*vertical_first=*/false); // Florham Park -> Asbury Park
 
-    // All three routing-rule types, distinct periods and start offsets;
-    // office 0 ends up with three schedules, so schedule list order (the
-    // pick-up priority) is exercised too. Periods stay modest: every
-    // departure costs kTruckDepartureCost, and the late routes below must
-    // still be affordable three days in.
+    // All three routing-rule types; office 0 ends up with three schedules
+    // (two now, one more below), so schedule list order (the pick-up
+    // priority) is exercised too.
     const RoutingRule prefix_rule{RoutingRuleType::PostalPrefix, {"NJ/Mercer", "PA"}};
     const RoutingRule all_rule{RoutingRuleType::AllLetters, {}};
-    assert(w.add_schedule(0, 1, 6 * kTicksPerHour, 0, {}));            // exact
-    assert(w.add_schedule(0, 2, 4 * kTicksPerHour, 13, prefix_rule));  // prefix
-    assert(w.add_schedule(3, 1, 8 * kTicksPerHour, 7, all_rule));      // all
-
-    // Force some late deliveries so letters_delivered_late is non-zero:
-    // AllLetters schedules whose first departure is later than any waiting
-    // letter's deadline can be (deadlines are at most two days after spawn).
-    // Every src below except office 0 — which also has the six-hourly exact
-    // route to office 1 added above — has no earlier departures, so its
-    // trucks arrive with guaranteed-late cargo. Each route follows one of
-    // the roads built above.
-    const Tick late_start = 3 * kTicksPerDay;
-    constexpr std::pair<PostOfficeId, PostOfficeId> kLateRoutes[] = {
-        {0, 1}, {2, 0}, {5, 4}, {7, 5}, {11, 7}};
-    for (const auto& [src, dst] : kLateRoutes)
-        assert(w.add_schedule(src, dst, kTicksPerDay, late_start, all_rule));
+    assert(w.add_schedule(0, 1, {}));           // exact
+    assert(w.add_schedule(0, 2, prefix_rule));  // prefix
+    assert(w.add_schedule(3, 1, all_rule));     // all
 
     // Network events, brought forward (the first would otherwise wait four
     // days): one runs its course early on, so events_so_far is non-zero, and
@@ -161,15 +146,29 @@ World build_fixture_world() {
     // in the buffers.
     w.schedule_next_event(1000);
 
-    // Retune one schedule a day in, so its edit log is non-empty too.
+    // Re-rule one schedule a day in, so its edit log is non-empty too.
     for (Tick t = 0; t < kTicksPerDay; ++t)
         w.advance_tick();
-    assert(w.update_schedule(3, 0, 7 * kTicksPerHour, 7, all_rule));
+    assert(w.update_schedule(3, 0, RoutingRule{}));
 
     while (w.get_event().has_value())
         w.advance_tick();
     assert(w.get_events_so_far() == 1);                          // default: 0
     w.schedule_next_event(2 * kTicksPerDay);  // runs from day 2.5 to day 3.5
+
+    // Force some late deliveries so letters_delivered_late is non-zero:
+    // AllLetters schedules added three days in, when mail that has waited at
+    // their offices since the start is past its deadline (deadlines are at
+    // most two days after spawn). Every src below except office 0 has had
+    // no schedule until now, so its trucks leave at once with
+    // guaranteed-late cargo. Each route follows one of the roads built above.
+    const Tick late_start = 3 * kTicksPerDay;
+    while (w.get_tick() < late_start)
+        w.advance_tick();
+    constexpr std::pair<PostOfficeId, PostOfficeId> kLateRoutes[] = {
+        {0, 1}, {2, 0}, {5, 4}, {7, 5}, {11, 7}};
+    for (const auto& [src, dst] : kLateRoutes)
+        assert(w.add_schedule(src, dst, all_rule));
 
     // Run past the late batch's arrivals (the longest of these routes is
     // in flight for well under 500 ticks).
@@ -405,6 +404,27 @@ void legacy_single_prefix_loads() {
     assert(found);
 }
 
+// Saves from when schedules ran on a timetable hold "period",
+// "start_offset" and "next_departure"; they load, with the timing ignored,
+// into the same world.
+void timetable_save_loads() {
+    const World original = fixture_world();
+    nlohmann::json j = WorldJson::to_json(original);
+    std::size_t schedules = 0;
+    for (nlohmann::json& office : j.at("post_offices")) {
+        for (nlohmann::json& schedule : office.at("outbound_schedules")) {
+            schedule["period"] = 6 * kTicksPerHour;
+            schedule["start_offset"] = 0;
+            schedule["next_departure"] = original.get_tick() + 1;
+            ++schedules;
+        }
+    }
+    assert(schedules > 0);
+    const auto loaded = parse(j.dump(2));
+    assert(loaded.has_value());
+    assert(*loaded == original);
+}
+
 // Saves from before statistics, trails, schedule ids and the enabled flag
 // still load: with empty history, every schedule given a distinct fresh id,
 // and every schedule switched on.
@@ -523,6 +543,8 @@ int main() {
     printf("PASS legacy_single_prefix_loads\n");
     pre_stats_save_loads();
     printf("PASS pre_stats_save_loads\n");
+    timetable_save_loads();
+    printf("PASS timetable_save_loads\n");
 
     printf("all serialization tests passed\n");
     return 0;

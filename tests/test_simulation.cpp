@@ -1,6 +1,7 @@
 // test_simulation.cpp — headless tests for the simulation rules (World's
 // public API): routing-rule matching, schedule validation, departure pricing
-// and truck capacity, the departure grid, pick-up priority,
+// and truck capacity, when schedules depart (a full load or a letter waiting
+// too long), pick-up priority,
 // delivery/forwarding, offices appearing on their own, the overflow timer
 // that ends the game, and network events. Run with
 // `make test`. Pure simulation layer: no SDL/imgui/OpenGL — no window needed.
@@ -116,25 +117,24 @@ void schedule_validation_and_pricing() {
 
     // Invalid routes are rejected and cost nothing.
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
-    assert(!w.add_schedule(99, 1, kTicksPerHour, 0, exact));        // bad src
-    assert(!w.add_schedule(0, 99, kTicksPerHour, 0, exact));        // bad dst
-    assert(!w.add_schedule(0, 0, kTicksPerHour, 0, exact));         // self-route
-    assert(!w.add_schedule(0, 1, 0, 0, exact));                     // zero period
+    assert(!w.add_schedule(99, 1, exact));         // bad src
+    assert(!w.add_schedule(0, 99, exact));         // bad dst
+    assert(!w.add_schedule(0, 0, exact));          // self-route
     const RoutingRule empty_prefix{RoutingRuleType::PostalPrefix, {}};
-    assert(!w.add_schedule(0, 1, kTicksPerHour, 0, empty_prefix));  // empty prefix
+    assert(!w.add_schedule(0, 1, empty_prefix));   // empty prefix
     const RoutingRule empty_element{RoutingRuleType::PostalPrefix, {"T/1", ""}};
-    assert(!w.add_schedule(0, 1, kTicksPerHour, 0, empty_element));  // one empty prefix
+    assert(!w.add_schedule(0, 1, empty_element));  // one empty prefix
     assert(w.get_money() == money0);
 
     // Creating a schedule is free: money only moves when trucks depart.
-    assert(w.add_schedule(0, 1, 3 * kTicksPerHour, 0, exact));
+    assert(w.add_schedule(0, 1, exact));
     assert(w.get_money() == money0);
 
     // The same (dst, rule) again is just another schedule, with its own id;
     // a stale prefix on a non-prefix rule is normalized away.
-    assert(w.add_schedule(0, 1, kTicksPerHour, 7, exact));
+    assert(w.add_schedule(0, 1, exact));
     const RoutingRule dirty_exact{RoutingRuleType::ExactDestination, {"junk"}};
-    assert(w.add_schedule(0, 1, kTicksPerHour, 0, dirty_exact));
+    assert(w.add_schedule(0, 1, dirty_exact));
     {
         const std::vector<TruckSchedule>& schedules = w.get_post_offices()[0].outbound_schedules;
         assert(schedules.size() == 3);
@@ -143,65 +143,54 @@ void schedule_validation_and_pricing() {
                schedules[0].id != schedules[2].id);
     }
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
-    assert(w.add_schedule(0, 1, kTicksPerHour, 0, all));
-    assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
+    assert(w.add_schedule(0, 1, all));
+    assert(w.add_schedule(0, 2, exact));
     assert(w.get_money() == money0);
 
 
     // A prefix listed twice is refused rather than quietly dropped, so an
     // inspector edit never makes a field vanish while it is being typed in.
     const std::size_t count = w.get_post_offices()[0].outbound_schedules.size();
-    assert(!w.add_schedule(0, 1, kTicksPerHour, 0, {RoutingRuleType::PostalPrefix, {"T/2", "T/1", "T/2"}}));
+    assert(!w.add_schedule(0, 1, {RoutingRuleType::PostalPrefix, {"T/2", "T/1", "T/2"}}));
     assert(w.get_post_offices()[0].outbound_schedules.size() == count);
-    assert(w.add_schedule(0, 1, kTicksPerHour, 0, {RoutingRuleType::PostalPrefix, {"T/2", "T/1"}}));
+    assert(w.add_schedule(0, 1, {RoutingRuleType::PostalPrefix, {"T/2", "T/1"}}));
 }
 
-// update_schedule() edits a schedule's rule and timing in place: same
-// rejection rules as add_schedule, destination and list position kept, and
-// the next departure re-anchored only when the timing changes.
+// update_schedule() edits a schedule's rule in place: same rejection rules
+// as add_schedule, destination and list position kept, and a real change
+// logged in the schedule's edits.
 void schedule_editing() {
     World w = make_line_world(2, 0);
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
     const RoutingRule prefix{RoutingRuleType::PostalPrefix, {"T/"}};
-    assert(w.add_schedule(0, 1, kTicksPerHour, 100, exact));
-    assert(w.add_schedule(0, 1, kTicksPerHour, 200, all));
+    assert(w.add_schedule(0, 1, exact));
+    assert(w.add_schedule(0, 1, all));
     const auto schedules = [&] { return w.get_post_offices()[0].outbound_schedules; };
     const std::vector<TruckSchedule> before = schedules();
 
     // Rejected edits change nothing.
-    assert(!w.update_schedule(0, 9, kTicksPerHour, 100, exact));  // bad index
-    assert(!w.update_schedule(9, 0, kTicksPerHour, 100, exact));  // bad src
-    assert(!w.update_schedule(0, 0, 0, 100, exact));              // zero period
-    assert(!w.update_schedule(0, 0, kTicksPerHour, 100,
-                              {RoutingRuleType::PostalPrefix, {}}));  // empty prefix
+    assert(!w.update_schedule(0, 9, exact));                                // bad index
+    assert(!w.update_schedule(9, 0, exact));                                // bad src
+    assert(!w.update_schedule(0, 0, {RoutingRuleType::PostalPrefix, {}}));  // empty prefix
     assert(schedules() == before);
 
-    // Re-submitting a schedule's own values changes nothing (no edit logged).
-    assert(w.update_schedule(0, 0, kTicksPerHour, 100, exact));
+    // Re-submitting a schedule's own rule changes nothing (no edit logged).
+    assert(w.update_schedule(0, 0, exact));
     assert(schedules() == before);
 
-    // A rule edit keeps the destination, the timing and the list position.
-    assert(w.update_schedule(0, 0, kTicksPerHour, 100, prefix));
+    // A rule edit keeps the destination and the list position.
+    assert(w.update_schedule(0, 0, prefix));
     assert(schedules()[0].rule == prefix);
     assert(schedules()[0].dst == before[0].dst);
-    assert(schedules()[0].next_departure == before[0].next_departure);
     assert(schedules()[1] == before[1]);
     assert(schedules()[0].edits == std::vector<Tick>{0});  // logged once, at tick 0
     // A stale prefix on a non-prefix rule is normalized away, as in
     // add_schedule, even when that makes the rule identical to #2's.
-    assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::AllLetters, {"junk"}}));
+    assert(w.update_schedule(0, 0, {RoutingRuleType::AllLetters, {"junk"}}));
     assert(schedules()[0].rule == all);
-    assert(w.update_schedule(0, 0, kTicksPerHour, 100, {RoutingRuleType::ExactDestination, {"junk"}}));
+    assert(w.update_schedule(0, 0, {RoutingRuleType::ExactDestination, {"junk"}}));
     assert(schedules()[0].rule == exact);
-
-    // A new period or offset re-anchors the next departure on the new grid.
-    while (w.get_tick() < 1000)
-        w.advance_tick();
-    assert(w.update_schedule(0, 0, 300, 50, exact));
-    assert(schedules()[0].period == 300);
-    assert(schedules()[0].start_offset == 50);
-    assert(schedules()[0].next_departure == 1250);  // 50 + 4 * 300, first slot after 1000
 }
 
 // check_add_schedule() / check_update_schedule() name the reason the
@@ -211,29 +200,25 @@ void schedule_errors() {
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
     const RoutingRule bad_prefix{RoutingRuleType::PostalPrefix, {"T/", ""}};
-    const Tick h = kTicksPerHour;
 
-    assert(w.check_add_schedule(99, 1, h, exact) == ScheduleError::UnknownOffice);
-    assert(w.check_add_schedule(0, 99, h, exact) == ScheduleError::UnknownOffice);
-    assert(w.check_add_schedule(0, 0, h, exact) == ScheduleError::SameOffice);
-    assert(w.check_add_schedule(0, 1, 0, exact) == ScheduleError::ZeroPeriod);
-    assert(w.check_add_schedule(0, 1, h, bad_prefix) == ScheduleError::MalformedRule);
-    assert(w.check_add_schedule(0, 2, h, exact) == ScheduleError::NoRoad);
-    assert(w.check_add_schedule(0, 1, h, exact) == ScheduleError::None);
-    assert(w.add_schedule(0, 1, h, 0, exact));
+    assert(w.check_add_schedule(99, 1, exact) == ScheduleError::UnknownOffice);
+    assert(w.check_add_schedule(0, 99, exact) == ScheduleError::UnknownOffice);
+    assert(w.check_add_schedule(0, 0, exact) == ScheduleError::SameOffice);
+    assert(w.check_add_schedule(0, 1, bad_prefix) == ScheduleError::MalformedRule);
+    assert(w.check_add_schedule(0, 2, exact) == ScheduleError::NoRoad);
+    assert(w.check_add_schedule(0, 1, exact) == ScheduleError::None);
+    assert(w.add_schedule(0, 1, exact));
     // An identical schedule is no reason to refuse.
-    assert(w.check_add_schedule(0, 1, 2 * h, exact) == ScheduleError::None);
-    assert(w.check_add_schedule(0, 1, h, {RoutingRuleType::ExactDestination, {"junk"}}) == ScheduleError::None);
-    assert(w.add_schedule(0, 1, h, 0, all));
+    assert(w.check_add_schedule(0, 1, exact) == ScheduleError::None);
+    assert(w.check_add_schedule(0, 1, {RoutingRuleType::ExactDestination, {"junk"}}) == ScheduleError::None);
+    assert(w.add_schedule(0, 1, all));
 
-    assert(w.check_update_schedule(0, 9, h, exact) == ScheduleError::UnknownOffice);  // no such schedule
-    assert(w.check_update_schedule(9, 0, h, exact) == ScheduleError::UnknownOffice);
-    assert(w.check_update_schedule(0, 0, 0, exact) == ScheduleError::ZeroPeriod);
-    assert(w.check_update_schedule(0, 0, h, bad_prefix) == ScheduleError::MalformedRule);
-    assert(w.check_update_schedule(0, 0, h, all) == ScheduleError::None);  // == #2, allowed
-    assert(w.check_update_schedule(0, 0, 3 * h, exact) == ScheduleError::None);
-    assert(w.update_schedule(0, 0, h, 0, all));
-    assert(w.update_schedule(0, 0, 3 * h, 0, exact));
+    assert(w.check_update_schedule(0, 9, exact) == ScheduleError::UnknownOffice);  // no such schedule
+    assert(w.check_update_schedule(9, 0, exact) == ScheduleError::UnknownOffice);
+    assert(w.check_update_schedule(0, 0, bad_prefix) == ScheduleError::MalformedRule);
+    assert(w.check_update_schedule(0, 0, all) == ScheduleError::None);  // == #2, allowed
+    assert(w.update_schedule(0, 0, all));
+    assert(w.update_schedule(0, 0, exact));
 
     // Removing the road switches the schedules off; a new one is refused,
     // but the switched-off ones can still be retuned.
@@ -241,8 +226,8 @@ void schedule_errors() {
     assert(w.get_post_offices()[0].outbound_schedules.size() == 2);
     for (const TruckSchedule& s : w.get_post_offices()[0].outbound_schedules)
         assert(!s.enabled);
-    assert(w.check_add_schedule(0, 1, h, exact) == ScheduleError::NoRoad);
-    assert(w.check_update_schedule(0, 0, 2 * h, exact) == ScheduleError::None);
+    assert(w.check_add_schedule(0, 1, exact) == ScheduleError::NoRoad);
+    assert(w.check_update_schedule(0, 0, all) == ScheduleError::None);
     assert(!w.remove_road(0, 1));  // already gone
     assert(!w.remove_road(0, 99));
 }
@@ -252,11 +237,11 @@ void schedule_errors() {
 // player cannot afford is skipped: no truck, no letters moved, no charge.
 void departures_are_charged() {
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
-    World w = make_line_world(2, 3);
+    World w = make_line_world(2, kTruckCapacity);  // one truckload waiting
     const int money0 = w.get_money();
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, all));
+    assert(w.add_schedule(0, 1, all));
     w.take_money_events();
-    w.advance_tick();  // tick 1: first departure
+    w.advance_tick();  // tick 1: a full load departs
     assert(w.get_trucks().size() == 1);
     assert(w.get_money() == money0 - kTruckDepartureCost);
     const std::vector<MoneyEvent> events = w.take_money_events();
@@ -265,12 +250,12 @@ void departures_are_charged() {
 
     // Just under one departure's price: the departure is skipped and nothing
     // changes.
-    World broke = make_line_world(2, 3);
+    World broke = make_line_world(2, kTruckCapacity);
     broke.set_money(kTruckDepartureCost - 1);
-    assert(broke.add_schedule(0, 1, kTicksPerHour, 1, all));
+    assert(broke.add_schedule(0, 1, all));
     const std::size_t waiting = broke.get_post_offices()[0].outbound_letters.size();
     broke.take_money_events();
-    broke.advance_tick();  // tick 1: due, but unaffordable
+    broke.advance_tick();  // tick 1: ready, but unaffordable
     assert(broke.get_trucks().empty());
     assert(broke.get_money() == kTruckDepartureCost - 1);
     assert(broke.take_money_events().empty());
@@ -283,7 +268,7 @@ void trucks_carry_at_most_capacity() {
     World w = make_line_world(2, 12);  // 12 seeded letters, all for office 1
     const std::vector<Letter> seeded = w.get_post_offices()[0].outbound_letters;
     assert(seeded.size() == 12);
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
+    assert(w.add_schedule(0, 1, {RoutingRuleType::AllLetters, {}}));
     w.advance_tick();  // tick 1
     assert(w.get_trucks().size() == 1);
     const std::vector<Letter>& cargo = w.get_trucks()[0]->get_letters();
@@ -298,119 +283,137 @@ void trucks_carry_at_most_capacity() {
     assert(w.get_post_offices()[0].outbound_letters.size() >= seeded.size() - kTruckCapacity);
 }
 
-// Departures land exactly on the start_offset + k * period grid, and a
-// schedule created at tick == start_offset first departs one period later
-// (the grid point strictly after creation).
-void departures_follow_the_offset_grid() {
+// A schedule departs as soon as a full truckload matches its rule, one truck
+// per tick for as long as a full load is left, and not before.
+void full_loads_depart_at_once() {
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
-    const Tick huge = 100 * kTicksPerDay;  // one departure a day, at the start offset
 
-    World w = make_line_world(2, 5);  // cargo waiting at office 0, all addressed to 1
-    assert(w.add_schedule(0, 1, huge, 1000, all));
-    while (w.get_tick() < 999)
+    // One letter short of a load: nothing leaves (the trickle at office 0 is
+    // slow enough to add no letter in a few ticks).
+    World short_one = make_line_world(2, kTruckCapacity - 1);
+    assert(short_one.add_schedule(0, 1, all));
+    for (int i = 0; i < 10; ++i)
+        short_one.advance_tick();
+    assert(short_one.get_trucks().empty());
+    assert(short_one.get_post_offices()[0].stats[OfficeStat::Departures].total == 0);
+
+    // Two and a half loads: a full truck on each of ticks 1 and 2, then the
+    // half load waits.
+    World w = make_line_world(2, 2 * kTruckCapacity + kTruckCapacity / 2);
+    assert(w.add_schedule(0, 1, all));
+    w.advance_tick();
+    assert(w.get_trucks().size() == 1);
+    w.advance_tick();
+    assert(w.get_trucks().size() == 2);
+    for (const std::shared_ptr<Truck>& truck : w.get_trucks())
+        assert(truck->get_num_letters() == kTruckCapacity);
+    for (int i = 0; i < 10; ++i)
+        w.advance_tick();
+    assert(w.get_trucks().size() == 2);
+    assert(w.get_post_offices()[0].outbound_letters.size() >= kTruckCapacity / 2);
+}
+
+// A letter that has waited kMaxLetterWait in its office goes out on a partly
+// full truck, along with the other matching letters. The wait counts from
+// when the letter reached the office it is in, so a forwarded letter starts
+// over at the hub.
+void long_waits_send_a_partial_load() {
+    World w;
+    const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, /*letters_per_day=*/2, 100);
+    const PostOfficeId b = w.add_office("B", "P/B", {100, 0}, 0, 100);
+    const PostOfficeId c = w.add_office("C", "P/C", {200, 0}, 0, 100);
+    w.seed_letters();  // two letters at A, addressed to B or C
+    add_straight_road(w, a, b);
+    add_straight_road(w, b, c);
+    assert(w.add_schedule(a, b, {RoutingRuleType::AllLetters, {}}));
+    assert(w.add_schedule(b, c, {RoutingRuleType::ExactDestination, {}}));
+
+    // The seeded letters were posted at tick 0: they leave together at
+    // kMaxLetterWait, not a tick earlier.
+    while (w.get_tick() + 1 < kMaxLetterWait)
         w.advance_tick();
     assert(w.get_trucks().empty());
-    w.advance_tick();  // tick 1000
+    w.advance_tick();
+    assert(w.get_tick() == kMaxLetterWait);
     assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0]->get_dst() == 1);
+    assert(w.get_trucks()[0]->get_num_letters() >= 2);  // the seeded pair, plus any trickle
+    const Tick arrival = w.get_trucks()[0]->get_arrival_tick();
+    std::size_t to_c = 0;
+    for (const Letter& letter : w.get_trucks()[0]->get_letters())
+        to_c += letter.dst == c ? 1 : 0;
+    // Leg 1 is done with: switched off, A's trickle mail stays put.
+    assert(w.set_schedule_enabled(a, 0, false));
 
-    World w2 = make_line_world(2, 5);
-    while (w2.get_tick() < 500)
-        w2.advance_tick();
-    assert(w2.add_schedule(0, 1, 200, 500, all));  // created AT its start offset...
-    w2.advance_tick();                             // ...so tick 500 is already past:
-    assert(w2.get_trucks().empty());               // the first departure is 500 + 200
-    while (w2.get_tick() < 699)
-        w2.advance_tick();
-    assert(w2.get_trucks().empty());
-    w2.advance_tick();  // tick 700
-    assert(w2.get_trucks().size() == 1);
-}
-
-// The offset grid restarts every day: "every 5 hours from 00:30" departs at
-// 00:30, 05:30, 10:30, 15:30, 20:30 and then 00:30 again — not 01:30, which
-// is where a grid running on from tick 0 would land.
-void departures_restart_each_day() {
-    const RoutingRule all{RoutingRuleType::AllLetters, {}};
-    const Tick half_hour = kTicksPerHour / 2;
-
-    World w = make_line_world(2, 0);
-    assert(w.add_schedule(0, 1, 5 * kTicksPerHour, half_hour, all));
-    std::vector<Tick> departures;
-    while (w.get_tick() < 2 * kTicksPerDay) {
-        const Tick due = w.get_post_offices()[0].outbound_schedules[0].next_departure;
+    // Forwarded C-mail waits at B a full kMaxLetterWait from its arrival.
+    while (w.get_tick() < arrival)
         w.advance_tick();
-        if (w.get_tick() == due)
-            departures.push_back(due);
-    }
-    std::vector<Tick> expected;
-    for (Tick day = 0; day < 2; ++day)
-        for (Tick k = 0; k < 5; ++k)
-            expected.push_back(day * kTicksPerDay + half_hour + k * 5 * kTicksPerHour);
-    assert(departures == expected);
+    assert(w.get_trucks().empty());
+    assert(to_c > 0);  // this seed sends some mail on to C
+    while (w.get_tick() + 1 < arrival + kMaxLetterWait)
+        w.advance_tick();
+    assert(w.get_trucks().empty());
+    w.advance_tick();
+    assert(w.get_trucks().size() == 1);
+    assert(w.get_trucks()[0]->get_src() == b);
+    assert(w.get_trucks()[0]->get_num_letters() == to_c);
 }
 
-// List order is pick-up priority: when two schedules depart on the same tick
-// and both match, the first in the list wins the contested letters — and
-// move_schedule() (drag-to-reorder) flips the winner. Both trucks still
-// depart: a truck leaves even when the winner took everything.
+// List order is pick-up priority: the first ready schedule whose rule
+// matches a letter wins it, and move_schedule() (drag-to-reorder) flips the
+// winner. A schedule left with less than a load does not depart.
 void first_matching_schedule_wins_contested_letters() {
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
-    const Tick huge = 100 * kTicksPerDay;
 
-    // The buffer holds exactly one truckload: the first AllLetters departure
-    // takes all of it; the second finds nothing and departs empty. Trucks
-    // spawn in schedule (list) order.
+    // The buffer holds exactly one truckload: the first AllLetters schedule
+    // takes all of it; the second has nothing left and stays home.
     World w = make_line_world(3, kTruckCapacity);
     add_underpass_road(w, 0, 2);
-    assert(w.add_schedule(0, 1, huge, 1, all));
-    assert(w.add_schedule(0, 2, huge, 1, all));
-    w.advance_tick();  // tick 1: both come due
-    assert(w.get_trucks().size() == 2);
+    assert(w.add_schedule(0, 1, all));
+    assert(w.add_schedule(0, 2, all));
+    w.advance_tick();  // tick 1: both have a load waiting, the first takes it
+    assert(w.get_trucks().size() == 1);
     assert(w.get_trucks()[0]->get_dst() == 1);
-    assert(w.get_trucks()[0]->get_num_letters() > 0);   // the winner is loaded
-    assert(w.get_trucks()[1]->get_dst() == 2);
-    assert(w.get_trucks()[1]->get_num_letters() == 0);  // the loser departs empty
+    assert(w.get_trucks()[0]->get_num_letters() == kTruckCapacity);
     assert(w.get_post_offices()[0].outbound_letters.empty());
 
     World w2 = make_line_world(3, kTruckCapacity);
     add_underpass_road(w2, 0, 2);
-    assert(w2.add_schedule(0, 1, huge, 1, all));
-    assert(w2.add_schedule(0, 2, huge, 1, all));
+    assert(w2.add_schedule(0, 1, all));
+    assert(w2.add_schedule(0, 2, all));
     w2.move_schedule(0, 0, 1);  // drag the route-to-1 below the route-to-2
     w2.advance_tick();
-    assert(w2.get_trucks().size() == 2);
+    assert(w2.get_trucks().size() == 1);
     assert(w2.get_trucks()[0]->get_dst() == 2);
-    assert(w2.get_trucks()[0]->get_num_letters() > 0);
-    assert(w2.get_trucks()[1]->get_dst() == 1);
-    assert(w2.get_trucks()[1]->get_num_letters() == 0);
+    assert(w2.get_trucks()[0]->get_num_letters() == kTruckCapacity);
 
-    // Identical schedules follow the same order: the first fills up, the
-    // second takes what is left.
-    World w3 = make_line_world(2, kTruckCapacity + 2);
-    assert(w3.add_schedule(0, 1, huge, 1, all));
-    assert(w3.add_schedule(0, 1, huge, 1, all));
+    // Identical schedules follow the same order: with two loads waiting,
+    // each takes one on the same tick.
+    World w3 = make_line_world(2, 2 * kTruckCapacity);
+    assert(w3.add_schedule(0, 1, all));
+    assert(w3.add_schedule(0, 1, all));
     w3.advance_tick();
     assert(w3.get_trucks().size() == 2);
+    assert(w3.get_trucks()[0]->get_schedule() == w3.get_post_offices()[0].outbound_schedules[0].id);
+    assert(w3.get_trucks()[1]->get_schedule() == w3.get_post_offices()[0].outbound_schedules[1].id);
     assert(w3.get_trucks()[0]->get_num_letters() == kTruckCapacity);
-    assert(w3.get_trucks()[1]->get_num_letters() > 0);
+    assert(w3.get_trucks()[1]->get_num_letters() == kTruckCapacity);
 }
 
-// Trucks depart on schedule even with an empty buffer — they just carry
-// nothing — and retire on arrival like any other truck.
 // Letters a departure leaves in the buffer keep their trails, including those
 // ahead of the first letter to board, which spawn_truck() must not move onto
 // themselves (that empties a vector under libc++).
 void letters_left_behind_keep_their_trails() {
     World w = make_line_world(3, 20);
-    // The first departure takes nothing, so it passes over every letter;
-    // the second takes the mail for office 1 out of the middle of the buffer.
-    assert(w.add_schedule(0, 1, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, {"Z"}}));
-    assert(w.add_schedule(0, 1, 100 * kTicksPerDay, 1, {RoutingRuleType::ExactDestination, {}}));
-    w.advance_tick();  // tick 1: both depart
+    // The schedule takes the mail for office 1 out of the middle of the
+    // buffer, passing over the mail for office 2. Run until it leaves (at the
+    // latest when the oldest letter has waited kMaxLetterWait).
+    assert(w.add_schedule(0, 1, {RoutingRuleType::ExactDestination, {}}));
+    while (w.get_trucks().empty())
+        w.advance_tick();
+    const Tick departed = w.get_tick();
 
     const std::vector<Letter>& left = w.get_post_offices()[0].outbound_letters;
-    const std::vector<Letter>& loaded = w.get_trucks()[1]->get_letters();
+    const std::vector<Letter>& loaded = w.get_trucks()[0]->get_letters();
     assert(!left.empty() && !loaded.empty());
     for (const Letter& letter : left) {
         assert(letter.trail.size() == 1);
@@ -419,42 +422,37 @@ void letters_left_behind_keep_their_trails() {
     for (const Letter& letter : loaded) {
         assert(letter.trail.size() == 2);
         assert(letter.trail[0].event == TrailEvent::Spawned && letter.trail[0].office == 0);
-        assert(letter.trail[1].event == TrailEvent::Departed && letter.trail[1].tick == 1);
+        assert(letter.trail[1].event == TrailEvent::Departed && letter.trail[1].tick == departed);
     }
 }
 
-void empty_buffer_still_spawns_a_truck() {
+// With nothing to carry, a schedule never sends a truck: no empty runs, no
+// charges.
+void no_mail_no_truck() {
     World w = make_line_world(2, 0);  // nobody ever produces mail
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
-    w.advance_tick();  // tick 1: first departure
-    assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0]->get_num_letters() == 0);  // departs empty
-    for (Tick t = 1; t < 2000; ++t)  // several departures come and go
+    const int money0 = w.get_money();
+    assert(w.add_schedule(0, 1, {RoutingRuleType::AllLetters, {}}));
+    for (Tick t = 0; t < 2 * kTicksPerDay; ++t)
         w.advance_tick();
-    assert(w.get_trucks().empty());  // every empty truck arrived and retired
+    assert(w.get_trucks().empty());
+    assert(w.get_money() == money0);
+    assert(w.get_post_offices()[0].outbound_schedules[0].stats[ScheduleStat::Departures].total == 0);
 }
 
-// A schedule's rule is evaluated at departure against the destination
-// offices' *current* postal codes, so inspector edits take effect on the
-// next departure without touching the schedule.
+// A schedule's rule is evaluated against the destination offices' *current*
+// postal codes, both to decide whether it is ready and to load the truck, so
+// inspector edits take effect on the very next tick without touching the
+// schedule.
 void postal_code_edits_take_effect_at_departure() {
     World w = make_line_world(3, 30);  // offices coded "T/0", "T/1", "T/2"
-    const Tick huge = 100 * kTicksPerDay;
-    assert(w.add_schedule(0, 1, huge, 5, {RoutingRuleType::PostalPrefix, {"ZZZ"}}));
-    while (w.get_tick() < 5)
+    assert(w.add_schedule(0, 1, {RoutingRuleType::PostalPrefix, {"ZZZ"}}));
+    for (int i = 0; i < 5; ++i)
         w.advance_tick();
-    // No code starts with "ZZZ": the truck still departs, but empty.
-    assert(w.get_trucks().size() == 1);
-    assert(w.get_trucks()[0]->get_num_letters() == 0);
+    // No code starts with "ZZZ": nothing to carry, so no truck.
+    assert(w.get_trucks().empty());
 
     w.set_postal_code(1, "ZZZ/rebranded");
-    // Same prefix idea, different string (an identical (dst, rule) pair would
-    // be rejected as a duplicate).
-    assert(w.add_schedule(0, 1, huge, 50, {RoutingRuleType::PostalPrefix, {"ZZ"}}));
-    // Run to tick 55: the loaded truck departs at 50, and the empty one
-    // (departed at 5, one 50-tick hop) arrives and retires at exactly 55.
-    while (w.get_tick() < 55)
-        w.advance_tick();
+    w.advance_tick();
     assert(w.get_trucks().size() == 1);
     // Only office-1 mail (now "ZZZ/...") boarded — a full truckload, since
     // 30 seeded letters leave more office-1 mail than fits — while every
@@ -473,8 +471,8 @@ void postal_code_edits_take_effect_at_departure() {
 // expires exactly when the World retires the truck on arrival.
 // get_arrival_tick() is exactly the tick has_arrived() first turns true.
 void observed_truck_expires_on_arrival() {
-    World w = make_line_world(2, 10);  // 10 seeded letters, all for office 1
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::ExactDestination, {}}));
+    World w = make_line_world(2, kTruckCapacity);  // one truckload, all for office 1
+    assert(w.add_schedule(0, 1, {RoutingRuleType::ExactDestination, {}}));
     w.advance_tick();  // tick 1: the truck departs with every seeded letter
     assert(w.get_trucks().size() == 1);
     const std::weak_ptr<const Truck> observed = w.get_trucks()[0];
@@ -485,7 +483,7 @@ void observed_truck_expires_on_arrival() {
         const std::shared_ptr<const Truck> truck = observed.lock();
         assert(truck != nullptr);
         cargo = truck->get_num_letters();
-        assert(cargo == kTruckCapacity);  // 10 waiting, but a truck holds only 5
+        assert(cargo == kTruckCapacity);
         arrival = truck->get_arrival_tick();
         assert(arrival == 1 + 50);  // one 100-unit hop at kTruckSpeed
         assert(!truck->has_arrived(arrival - 1));
@@ -508,7 +506,6 @@ void observed_truck_expires_on_arrival() {
 // rebuilt.
 void road_removal() {
     const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
-    const Tick huge = 100 * kTicksPerDay;  // one departure a day, at the start offset
 
     // --- removal, validation and money untouched --------------------------
     World w = make_line_world(3, 5);  // roads: 0-1, 1-2
@@ -532,9 +529,9 @@ void road_removal() {
     assert(w.get_money() == money0);
 
     // --- schedules switched off on both endpoint offices -------------------
-    assert(w.add_schedule(0, 2, kTicksPerHour, 0, exact));
-    assert(w.add_schedule(2, 0, kTicksPerHour, 0, exact));
-    assert(w.add_schedule(1, 2, kTicksPerHour, 0, exact));  // unrelated: stays on
+    assert(w.add_schedule(0, 2, exact));
+    assert(w.add_schedule(2, 0, exact));
+    assert(w.add_schedule(1, 2, exact));  // unrelated: stays on
     assert(w.remove_road(0, 2));
     assert(w.get_post_offices()[0].outbound_schedules.size() == 1);
     assert(!w.get_post_offices()[0].outbound_schedules[0].enabled);
@@ -545,7 +542,7 @@ void road_removal() {
 
     // A new schedule cannot be added without its road, nor an old one
     // switched back on...
-    assert(!w.add_schedule(0, 2, kTicksPerHour, 0, exact));
+    assert(!w.add_schedule(0, 2, exact));
     assert(!w.set_schedule_enabled(0, 0, true));
 
     // --- stability: no phantom departures from removed roads ---------------
@@ -553,7 +550,7 @@ void road_removal() {
     // list after its road was destroyed.) The surviving 1->2 schedule keeps
     // running normally while the removed 0-1 road never spawns anything.
     World w2 = make_line_world(2, 5);  // road 0-1 only
-    assert(w2.add_schedule(0, 1, kTicksPerHour, 0, exact));
+    assert(w2.add_schedule(0, 1, exact));
     assert(w2.remove_road(0, 1));
     assert(!w2.get_post_offices()[0].outbound_schedules[0].enabled);  // switched off
     for (int i = 0; i < 200; ++i)
@@ -562,7 +559,7 @@ void road_removal() {
 
     // --- in-flight trucks are safe: they snapshot the polyline -------------
     World w3 = make_line_world(2, 5);
-    assert(w3.add_schedule(0, 1, huge, 1, {RoutingRuleType::AllLetters, {}}));
+    assert(w3.add_schedule(0, 1, {RoutingRuleType::AllLetters, {}}));
     w3.advance_tick();  // tick 1: truck departs with the 5 seeded letters
     assert(w3.get_trucks().size() == 1);
     assert(w3.remove_road(0, 1));  // destroy the road mid-transit
@@ -581,67 +578,59 @@ void road_removal() {
     assert(w4.get_money() == money4);
 }
 
-// set_schedule_enabled: a schedule switched off never departs; it can be
-// switched back on only while its road exists, and then resumes on its
-// departure grid instead of making up for the time it was off. Rebuilding a
-// road switches its schedules (both directions) back on, likewise on the grid.
+// set_schedule_enabled: a schedule switched off never departs, however much
+// mail waits; it can be switched back on only while its road exists, and
+// then departs as soon as it has a load. Rebuilding a road switches its
+// schedules (both directions) back on.
 void schedule_enable_toggle() {
     const RoutingRule all{RoutingRuleType::AllLetters, {}};
-    const Tick h = kTicksPerHour;
+    const RoutingRule exact{RoutingRuleType::ExactDestination, {}};
 
     // --- invalid calls -----------------------------------------------------
     World w = make_line_world(2, 0);
-    assert(w.add_schedule(0, 1, h, 0, all));
+    assert(w.add_schedule(0, 1, all));
     assert(!w.set_schedule_enabled(0, 1, false));   // no such schedule
     assert(!w.set_schedule_enabled(9, 0, false));   // no such office
     assert(w.set_schedule_enabled(0, 0, true));     // already on: no-op
     assert(w.get_post_offices()[0].outbound_schedules[0].enabled);
 
-    // --- off on an intact road: no departures ------------------------------
-    World w2 = make_line_world(2, 5);
-    assert(w2.add_schedule(0, 1, h, 0, all));
+    // --- off on an intact road: no departures, even past kMaxLetterWait ----
+    World w2 = make_line_world(2, kTruckCapacity);
+    assert(w2.add_schedule(0, 1, all));
     assert(w2.set_schedule_enabled(0, 0, false));
     assert(w2.set_schedule_enabled(0, 0, false));   // already off: no-op
-    for (Tick t = 0; t < 3 * h; ++t)
+    for (Tick t = 0; t < kMaxLetterWait + 10; ++t)
         w2.advance_tick();
     assert(w2.get_trucks().empty());
     assert(w2.get_post_offices()[0].stats[OfficeStat::Departures].total == 0);
 
-    // --- back on: the next grid slot, no catch-up departure ----------------
-    const Tick now = w2.get_tick();  // on the hour: the slot itself is not "after now"
+    // --- back on: the waiting load leaves on the next tick ------------------
     assert(w2.set_schedule_enabled(0, 0, true));
-    assert(w2.get_post_offices()[0].outbound_schedules[0].next_departure == now + h);
     w2.advance_tick();
-    assert(w2.get_trucks().empty());
-    while (w2.get_tick() < now + h)
-        w2.advance_tick();
     assert(w2.get_trucks().size() == 1);
 
-    // --- road destroyed: retunable but stuck off until rebuilt --------------
+    // --- road destroyed: re-ruled but stuck off until rebuilt ---------------
     // --- road rebuilt: its schedules switch back on by themselves -----------
     World w3 = make_line_world(2, 0);
-    assert(w3.add_schedule(0, 1, h, 0, all));
-    assert(w3.add_schedule(1, 0, h, 0, all));  // the other direction
+    assert(w3.add_schedule(0, 1, all));
+    assert(w3.add_schedule(1, 0, all));  // the other direction
     assert(w3.remove_road(0, 1));
     assert(!w3.set_schedule_enabled(0, 0, true));
-    assert(w3.update_schedule(0, 0, 2 * h, 30, all));  // retuned while off
-    assert(w3.get_post_offices()[0].outbound_schedules[0].period == 2 * h);
-    for (Tick t = 0; t < 5 * h; ++t)
-        w3.advance_tick();
-    assert(w3.get_trucks().empty());
-    const Tick rebuilt = w3.get_tick();  // 05:00
+    assert(w3.update_schedule(0, 0, exact));  // re-ruled while off
+    assert(w3.get_post_offices()[0].outbound_schedules[0].rule == exact);
     add_straight_road(w3, 0, 1);
-    const TruckSchedule& retuned = w3.get_post_offices()[0].outbound_schedules[0];
-    assert(retuned.enabled);
-    assert(retuned.next_departure == rebuilt + h + 30);  // 06:30 on the new grid, not now
+    assert(w3.get_post_offices()[0].outbound_schedules[0].enabled);
     assert(w3.get_post_offices()[1].outbound_schedules[0].enabled);
     w3.advance_tick();
-    assert(w3.get_trucks().empty());  // no catch-up departure
+    assert(w3.get_trucks().empty());  // nothing to carry
 }
 
 // Hub-and-spoke end to end: mail rides a leg it is not addressed to, is
 // forwarded into the hub's buffer (bypassing the spawn cap), and a second
 // schedule delivers it onward — every seeded letter ends up scored, on time.
+// Leg 1 leaves at once with a full load and is then switched off (so A's
+// trickle mail stays put); leg 2 has less than a load of forwarded mail, so
+// it leaves once that has waited kMaxLetterWait at the hub.
 void multi_hop_forwarding_delivers_every_letter() {
     World w;
     const PostOfficeId a = w.add_office("A", "P/A", {0, 0}, kTruckCapacity, 100);
@@ -652,19 +641,22 @@ void multi_hop_forwarding_delivers_every_letter() {
     add_straight_road(w, b, c);
 
     // Leg 1 (A -> B) takes everything: both downstream codes start with "P".
-    // Leg 2 (B -> C) is exact-destination and departs after leg 1 arrives
-    // (tick 1 + 50 = 51), so it finds the forwarded C-mail waiting at B.
-    assert(w.add_schedule(a, b, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, {"P"}}));
-    assert(w.add_schedule(b, c, 100 * kTicksPerDay, 60, {RoutingRuleType::ExactDestination, {}}));
+    // Leg 2 (B -> C) is exact-destination and finds the forwarded C-mail
+    // waiting at B once leg 1 arrives (tick 1 + 50 = 51).
+    assert(w.add_schedule(a, b, {RoutingRuleType::PostalPrefix, {"P"}}));
+    assert(w.add_schedule(b, c, {RoutingRuleType::ExactDestination, {}}));
+    w.advance_tick();  // tick 1: leg 1 leaves with the seeded load
+    assert(w.set_schedule_enabled(a, 0, false));
 
-    for (Tick t = 0; t < 110; ++t)  // leg 2 departs at 60, arrives at 110
+    // Leg 2 leaves by 51 + kMaxLetterWait and arrives 50 ticks later.
+    while (w.get_tick() < 51 + kMaxLetterWait + 50)
         w.advance_tick();
 
     assert(w.get_trucks().empty());
     assert(w.get_letters_delivered_late() == 0);      // deadlines are >= half a day out
     assert(w.get_letters_delivered_on_time() == kTruckCapacity);  // every seeded letter, nothing lost
-    for (const PostOffice& office : w.get_post_offices())
-        assert(office.outbound_letters.empty());
+    assert(w.get_post_offices()[b].outbound_letters.empty());
+    assert(w.get_post_offices()[c].outbound_letters.empty());
 }
 
 // The hub route above, checked through its statistics and letter trails:
@@ -679,15 +671,20 @@ void stats_and_trails_follow_a_hub_route() {
     add_straight_road(w, a, b);
     add_straight_road(w, b, c);
     assert(w.get_money() == kStartingMoney);  // roads are free
-    assert(w.add_schedule(a, b, 100 * kTicksPerDay, 1, {RoutingRuleType::PostalPrefix, {"P"}}));
-    assert(w.add_schedule(b, c, 100 * kTicksPerDay, 60, {RoutingRuleType::ExactDestination, {}}));
+    assert(w.add_schedule(a, b, {RoutingRuleType::PostalPrefix, {"P"}}));
+    assert(w.add_schedule(b, c, {RoutingRuleType::ExactDestination, {}}));
 
     int64_t to_b = 0, to_c = 0;
     for (const Letter& letter : w.get_post_offices()[a].outbound_letters)
         (letter.dst == b ? to_b : to_c) += 1;
     assert(to_b + to_c == static_cast<int64_t>(kTruckCapacity));
+    // This seed splits the load, so leg 2 runs with less than a full truck.
+    assert(to_c > 0 && to_c < static_cast<int64_t>(kTruckCapacity));
+    const Tick leg2_departs = 51 + kMaxLetterWait;
 
-    for (Tick t = 0; t < 110; ++t)
+    w.advance_tick();  // tick 1: leg 1 leaves
+    assert(w.set_schedule_enabled(a, 0, false));
+    while (w.get_tick() < leg2_departs + 50)
         w.advance_tick();
 
     const GlobalStats& g = w.get_stats();
@@ -738,8 +735,8 @@ void stats_and_trails_follow_a_hub_route() {
             {51, TrailEvent::Arrived, b, kNoSchedule},
         };
         if (d.letter.dst == c) {
-            expected.push_back({60, TrailEvent::Departed, b, leg2});
-            expected.push_back({110, TrailEvent::Arrived, c, kNoSchedule});
+            expected.push_back({leg2_departs, TrailEvent::Departed, b, leg2});
+            expected.push_back({leg2_departs + 50, TrailEvent::Arrived, c, kNoSchedule});
         }
         assert(d.letter.trail == expected);
         assert(d.delivered == expected.back().tick);
@@ -764,19 +761,21 @@ void lost_letters_are_counted() {
     assert(w.get_stats()[GlobalStat::Backlog].total == 2);
 }
 
-// An unaffordable departure does not happen, and a truck whose schedule is
-// removed mid-trip still scores its letters globally.
+// An unaffordable departure does not happen (and is tried again every tick),
+// and a truck whose schedule is removed mid-trip still scores its letters
+// globally.
 void skipped_departures_and_orphaned_trucks() {
-    World w = make_line_world(2, 5);
-    assert(w.add_schedule(0, 1, kTicksPerHour, 1, {RoutingRuleType::AllLetters, {}}));
+    World w = make_line_world(2, kTruckCapacity);
+    assert(w.add_schedule(0, 1, {RoutingRuleType::AllLetters, {}}));
     const int money = w.get_money();
     w.set_money(0);
-    w.advance_tick();  // tick 1: due, unaffordable
+    w.advance_tick();  // tick 1: ready, unaffordable
     assert(w.get_trucks().empty());
 
+    // Once it can be paid for, the load leaves on the very next tick.
     w.set_money(money);
-    while (w.get_trucks().empty())
-        w.advance_tick();
+    w.advance_tick();
+    assert(w.get_trucks().size() == 1);
     assert(w.get_trucks()[0]->get_schedule() == w.get_post_offices()[0].outbound_schedules[0].id);
     w.remove_schedule(0, 0);
     while (!w.get_trucks().empty())
@@ -965,8 +964,7 @@ void overflow_timer_drains() {
     assert(before == 300);
 
     // A truck leaves next tick with all five letters.
-    assert(w.add_schedule(a, b, kTicksPerDay, (w.get_tick() + 1) % kTicksPerDay,
-                          RoutingRule{RoutingRuleType::AllLetters, {}}));
+    assert(w.add_schedule(a, b, RoutingRule{RoutingRuleType::AllLetters, {}}));
     for (int i = 0; i < 50; ++i)
         w.advance_tick();
     assert(w.get_post_offices()[a].outbound_letters.size() < 5);
@@ -1096,16 +1094,16 @@ int main() {
     printf("PASS departures_are_charged\n");
     trucks_carry_at_most_capacity();
     printf("PASS trucks_carry_at_most_capacity\n");
-    departures_follow_the_offset_grid();
-    printf("PASS departures_follow_the_offset_grid\n");
-    departures_restart_each_day();
-    printf("PASS departures_restart_each_day\n");
+    full_loads_depart_at_once();
+    printf("PASS full_loads_depart_at_once\n");
+    long_waits_send_a_partial_load();
+    printf("PASS long_waits_send_a_partial_load\n");
     first_matching_schedule_wins_contested_letters();
     printf("PASS first_matching_schedule_wins_contested_letters\n");
     letters_left_behind_keep_their_trails();
     printf("PASS letters_left_behind_keep_their_trails\n");
-    empty_buffer_still_spawns_a_truck();
-    printf("PASS empty_buffer_still_spawns_a_truck\n");
+    no_mail_no_truck();
+    printf("PASS no_mail_no_truck\n");
     postal_code_edits_take_effect_at_departure();
     printf("PASS postal_code_edits_take_effect_at_departure\n");
     multi_hop_forwarding_delivers_every_letter();

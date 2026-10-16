@@ -116,7 +116,7 @@ void following_the_steps_finishes_the_tutorial() {
     t.next();
 
     expect_step(t, "Create a schedule");
-    assert(w.add_schedule(kAshford, kCentral, hours_minutes_to_ticks(6, 0), 0, RoutingRule{}));  // the UI's defaults
+    assert(w.add_schedule(kAshford, kCentral, RoutingRule{}));  // the UI's default
     t.update(w, facts);
 
     expect_step(t, "First delivery");
@@ -124,10 +124,6 @@ void following_the_steps_finishes_the_tutorial() {
 
     expect_step(t, "Inspect a truck");
     facts.truck_selected = true;
-    t.update(w, facts);
-
-    expect_step(t, "Update a schedule");
-    assert(w.update_schedule(kAshford, 0, hours_minutes_to_ticks(0, 30), 0, RoutingRule{}));
     t.update(w, facts);
 
     expect_step(t, "Grow the network");
@@ -141,8 +137,7 @@ void following_the_steps_finishes_the_tutorial() {
     assert(w.get_money() > 2000);
 
     expect_step(t, "Hub and spoke");
-    assert(w.update_schedule(kAshford, 0, hours_minutes_to_ticks(0, 30), 0,
-                             RoutingRule{RoutingRuleType::AllLetters, {}}));
+    assert(w.update_schedule(kAshford, 0, RoutingRule{RoutingRuleType::AllLetters, {}}));
     t.update(w, facts);
 
     expect_step(t, "Postal codes");
@@ -156,16 +151,14 @@ void following_the_steps_finishes_the_tutorial() {
 
     expect_step(t, "Prefix routing");
     // A prefix that misses Elmwood doesn't count.
-    assert(w.add_schedule(kCentral, kDunmore, kTicksPerHour, 0,
-                          RoutingRule{RoutingRuleType::PostalPrefix, {"SOUTH/Dunmore"}}));
+    assert(w.add_schedule(kCentral, kDunmore, RoutingRule{RoutingRuleType::PostalPrefix, {"SOUTH/Dunmore"}}));
     t.update(w, facts);
     expect_step(t, "Prefix routing");
-    assert(w.add_schedule(kCentral, kDunmore, kTicksPerHour, 0,
-                          RoutingRule{RoutingRuleType::PostalPrefix, {"SOUTH/"}}));
+    assert(w.add_schedule(kCentral, kDunmore, RoutingRule{RoutingRuleType::PostalPrefix, {"SOUTH/"}}));
     t.update(w, facts);
 
     expect_step(t, "The last leg");
-    assert(w.add_schedule(kDunmore, kElmwood, kTicksPerHour, 0, RoutingRule{}));
+    assert(w.add_schedule(kDunmore, kElmwood, RoutingRule{}));
     t.update(w, facts);
 
     expect_step(t, "Who picks up first");

@@ -18,23 +18,6 @@
 
 namespace {
 
-// First departure tick strictly after `now` for a schedule that departs at
-// time of day `start_offset` and then every `period` ticks until midnight.
-// The grid restarts every day: departures fall on
-// day_start + start_offset + k * period for k = 0, 1, 2, ... while that stays
-// within the day. e.g. "every 5 hours starting at 00:30" fires at 00:30,
-// 05:30, 10:30, 15:30, 20:30, then 00:30 again the next day.
-Tick first_departure_after(Tick start_offset, Tick period, Tick now) {
-    const Tick time_of_day = now % kTicksPerDay;
-    const Tick day_start = now - time_of_day;
-    if (time_of_day < start_offset)
-        return day_start + start_offset;
-    const Tick next = start_offset + ((time_of_day - start_offset) / period + 1) * period;
-    if (next < kTicksPerDay)
-        return day_start + next;
-    return day_start + kTicksPerDay + start_offset;  // first departure after is the first departure of the next day.
-}
-
 // Only PostalPrefix rules carry prefixes, so equality (e.g. update_schedule's
 // "did the rule change" check) compares like with like.
 RoutingRule normalized(RoutingRule rule) {
@@ -101,17 +84,16 @@ void World::advance_tick() {
     for (PostOfficeId id = 0; id < post_offices.size(); ++id)
         maybe_spawn_letter(id);
 
-    // 3. Departures: fire every schedule that has come due.
-    //    Schedules fire in list order (the order shown in the inspector) and
-    //    spawn_truck() MOVES picked-up letters out of the buffer, so when
-    //    several schedules of one office depart on the same tick and their
-    //    rules both match a letter, the first schedule in the list wins it.
+    // 3. Departures: every schedule with a truckload waiting (or a letter
+    //    that has waited too long) sends one truck. Schedules are checked in
+    //    list order (the order shown in the inspector) and spawn_truck()
+    //    MOVES picked-up letters out of the buffer, so when the rules of
+    //    several schedules of one office match a letter, the first ready
+    //    schedule in the list wins it; later ones judge what is left.
     for (PostOfficeId id = 0; id < post_offices.size(); ++id) {
         for (TruckSchedule& schedule : post_offices[id].outbound_schedules) {
-            if (schedule.enabled && schedule.period != 0 && current_tick >= schedule.next_departure) {
+            if (schedule.enabled && ready_to_depart(id, schedule))
                 spawn_truck(id, schedule);
-                schedule.next_departure = first_departure_after(schedule.start_offset, schedule.period, current_tick);
-            }
         }
     }
 
@@ -402,6 +384,17 @@ void World::spawn_letter(PostOfficeId office_id, std::optional<PostOfficeId> for
     }
 }
 
+bool World::ready_to_depart(PostOfficeId src_id, const TruckSchedule& schedule) const {
+    std::size_t matched = 0;
+    for (const Letter& letter : post_offices[src_id].outbound_letters) {
+        if (!schedule.rule.matches(letter.dst, post_offices[letter.dst].postal_code, schedule.dst))
+            continue;
+        if (++matched >= kTruckCapacity || current_tick - letter.waiting_since() >= kMaxLetterWait)
+            return true;
+    }
+    return false;
+}
+
 void World::spawn_truck(PostOfficeId src_id, TruckSchedule& schedule) {
     PostOffice& src = post_offices[src_id];
 
@@ -520,14 +513,12 @@ void World::deliver(Truck& truck) {
         money_events.push_back({arrived_at, earned});
 }
 
-ScheduleError World::validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
+ScheduleError World::validate_schedule(PostOfficeId src, PostOfficeId dst,
                                        const RoutingRule& normalized_rule, bool require_road) const {
     if (src >= post_offices.size() || dst >= post_offices.size())
         return ScheduleError::UnknownOffice;
     if (src == dst)
         return ScheduleError::SameOffice;
-    if (period == 0)
-        return ScheduleError::ZeroPeriod;
     if (!normalized_rule.is_well_formed())
         return ScheduleError::MalformedRule;  // e.g. an empty prefix must be an explicit AllLetters rule
 
@@ -536,54 +527,42 @@ ScheduleError World::validate_schedule(PostOfficeId src, PostOfficeId dst, Tick 
     return ScheduleError::None;
 }
 
-ScheduleError World::check_add_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
-                                        const RoutingRule& rule) const {
-    return validate_schedule(src, dst, period, normalized(rule), /*require_road=*/true);
+ScheduleError World::check_add_schedule(PostOfficeId src, PostOfficeId dst, const RoutingRule& rule) const {
+    return validate_schedule(src, dst, normalized(rule), /*require_road=*/true);
 }
 
-ScheduleError World::check_update_schedule(PostOfficeId src, std::size_t schedule_index, Tick period,
+ScheduleError World::check_update_schedule(PostOfficeId src, std::size_t schedule_index,
                                            const RoutingRule& rule) const {
     if (src >= post_offices.size() || schedule_index >= post_offices[src].outbound_schedules.size())
         return ScheduleError::UnknownOffice;
     const TruckSchedule& schedule = post_offices[src].outbound_schedules[schedule_index];
-    return validate_schedule(src, schedule.dst, period, normalized(rule), schedule.enabled);
+    return validate_schedule(src, schedule.dst, normalized(rule), schedule.enabled);
 }
 
-bool World::add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
-                         const RoutingRule& rule) {
+bool World::add_schedule(PostOfficeId src, PostOfficeId dst, const RoutingRule& rule) {
     RoutingRule normalized_rule = normalized(rule);
-    if (validate_schedule(src, dst, period, normalized_rule, /*require_road=*/true) != ScheduleError::None)
+    if (validate_schedule(src, dst, normalized_rule, /*require_road=*/true) != ScheduleError::None)
         return false;
 
     TruckSchedule schedule;
     schedule.id = next_schedule_id++;
     schedule.dst = dst;
     schedule.rule = std::move(normalized_rule);
-    schedule.period = period;
-    schedule.start_offset = start_offset;
-    schedule.next_departure = first_departure_after(start_offset, period, current_tick);
     post_offices[src].outbound_schedules.push_back(std::move(schedule));
     return true;
 }
 
-bool World::update_schedule(PostOfficeId src, std::size_t schedule_index,
-                            Tick period, Tick start_offset, const RoutingRule& rule) {
-    if (check_update_schedule(src, schedule_index, period, rule) != ScheduleError::None)
+bool World::update_schedule(PostOfficeId src, std::size_t schedule_index, const RoutingRule& rule) {
+    if (check_update_schedule(src, schedule_index, rule) != ScheduleError::None)
         return false;
     TruckSchedule& schedule = post_offices[src].outbound_schedules[schedule_index];
     RoutingRule normalized_rule = normalized(rule);
 
-    // Only a new departure grid moves the next departure; a rule edit leaves
-    // the timing exactly as it was. A real change is logged for the
-    // schedule's utilization chart; re-submitting the same values is not one.
-    const bool timing_changed = period != schedule.period || start_offset != schedule.start_offset;
-    if (timing_changed)
-        schedule.next_departure = first_departure_after(start_offset, period, current_tick);
-    if (timing_changed || normalized_rule != schedule.rule)
+    // A real change is logged for the schedule's utilization chart;
+    // re-submitting the same rule is not one.
+    if (normalized_rule != schedule.rule)
         push_bounded(schedule.edits, current_tick, kScheduleEditLogSize);
     schedule.rule = std::move(normalized_rule);
-    schedule.period = period;
-    schedule.start_offset = start_offset;
     return true;
 }
 
@@ -601,11 +580,8 @@ bool World::set_schedule_enabled(PostOfficeId src, std::size_t schedule_index, b
     TruckSchedule& schedule = post_offices[src].outbound_schedules[schedule_index];
     if (schedule.enabled == enabled)
         return true;
-    if (enabled) {
-        if (!has_road(src, schedule.dst))
-            return false;
-        schedule.next_departure = first_departure_after(schedule.start_offset, schedule.period, current_tick);
-    }
+    if (enabled && !has_road(src, schedule.dst))
+        return false;
     schedule.enabled = enabled;
     return true;
 }

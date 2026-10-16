@@ -83,6 +83,10 @@ private:
     void update_event();
     void announce_event();
     void post_event_letters();
+    // Whether `schedule` (one of `src`'s) sends a truck this tick: at least
+    // kTruckCapacity outbound letters match its rule, or one matching letter
+    // has waited kMaxLetterWait. Never with nothing to carry.
+    bool ready_to_depart(PostOfficeId src, const TruckSchedule& schedule) const;
     void spawn_truck(PostOfficeId src, TruckSchedule& schedule);
     void deliver(Truck& truck);
     // Runs every office's overflow timer for this tick and ends the game when
@@ -93,11 +97,10 @@ private:
     // The schedule with this id among `office`'s schedules, or nullptr.
     TruckSchedule* find_schedule(PostOfficeId office, ScheduleId id);
     // Shared validation for add_schedule() / update_schedule() and their
-    // check_* queries: why a schedule src -> dst with this period and
-    // (normalized) rule is refused. The road is only required of a schedule
-    // that is switched on: one switched off by its road's destruction can 
-    // still be re-tuned.
-    ScheduleError validate_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
+    // check_* queries: why a schedule src -> dst with this (normalized) rule
+    // is refused. The road is only required of a schedule that is switched
+    // on: one switched off by its road's destruction can still be re-tuned.
+    ScheduleError validate_schedule(PostOfficeId src, PostOfficeId dst,
                                     const RoutingRule& normalized_rule, bool require_road) const;
 
 public:
@@ -129,46 +132,40 @@ public:
     void seed_letters();
 
     // Player actions (called from the UI).
-    // Creates a truck schedule on the src -> dst route: each day, departures
-    // fall on the grid start_offset + k * period up to midnight, restarting at
-    // start_offset the next day (both in ticks; start_offset is a time of day,
-    // i.e. ticks since midnight). The routing rule decides
-    // which outbound letters each departure picks up (at most kTruckCapacity).
-    // Creating a schedule is free; each departure costs kTruckDepartureCost.
-    // Returns false and changes nothing if the route is invalid (bad ids,
-    // zero period, a PostalPrefix rule with no, an empty or a repeated
+    // Creates a truck schedule on the src -> dst route. It has no timetable:
+    // on any tick where at least kTruckCapacity outbound letters match its
+    // rule, or a matching letter has waited kMaxLetterWait, it sends one
+    // truck, which picks up matching letters oldest first (at most
+    // kTruckCapacity). Creating a schedule is free; each departure costs
+    // kTruckDepartureCost. Returns false and changes nothing if the route is
+    // invalid (bad ids, a PostalPrefix rule with no, an empty or a repeated
     // prefix) or no road connects src and dst.
     // Any number of schedules may share a dst, identical ones included; on a
     // tick where several depart, the earlier one in the list takes contested
     // letters.
-    bool add_schedule(PostOfficeId src, PostOfficeId dst, Tick period, Tick start_offset,
-                      const RoutingRule& rule);
-    // Edits the timing and rule of the schedule at `schedule_index` in place
-    // (the inspector's schedule table), keeping its destination and list
+    bool add_schedule(PostOfficeId src, PostOfficeId dst, const RoutingRule& rule);
+    // Edits the rule of the schedule at `schedule_index` in place (the
+    // inspector's schedule table), keeping its destination and list
     // position. Same validation as add_schedule, except that a switched-off
-    // schedule needs no road (see set_schedule_enabled). Changing period or
-    // start_offset re-anchors the next departure on the new grid (first slot
-    // strictly after now); changing only the rule keeps the next departure as
-    // is. Returns false and changes nothing on an invalid index or schedule.
-    bool update_schedule(PostOfficeId src, std::size_t schedule_index,
-                         Tick period, Tick start_offset, const RoutingRule& rule);
+    // schedule needs no road (see set_schedule_enabled). Returns false and
+    // changes nothing on an invalid index or rule.
+    bool update_schedule(PostOfficeId src, std::size_t schedule_index, const RoutingRule& rule);
     // Why add_schedule() / update_schedule() with these arguments would
-    // return false right now, or ScheduleError::None if it would succeed
-    // (start_offset is never a reason, so it is left out). The UI uses these
-    // to explain a refused schedule-table edit.
-    ScheduleError check_add_schedule(PostOfficeId src, PostOfficeId dst, Tick period,
-                                     const RoutingRule& rule) const;
-    ScheduleError check_update_schedule(PostOfficeId src, std::size_t schedule_index, Tick period,
+    // return false right now, or ScheduleError::None if it would succeed.
+    // The UI uses these to explain a refused schedule-table edit.
+    ScheduleError check_add_schedule(PostOfficeId src, PostOfficeId dst, const RoutingRule& rule) const;
+    ScheduleError check_update_schedule(PostOfficeId src, std::size_t schedule_index,
                                         const RoutingRule& rule) const;
     void remove_schedule(PostOfficeId src, std::size_t schedule_index);
     // Switches the schedule at `schedule_index` on or off (the inspector's
     // "On" checkbox). A schedule that is off never departs but keeps its
-    // rule, timing and history. Returns false and changes.
+    // rule and history. Returns false and changes nothing on an invalid
+    // index, or when switching on a schedule with no road to its dst.
     bool set_schedule_enabled(PostOfficeId src, std::size_t schedule_index, bool enabled);
     // Moves the schedule at index `from` to index `to` (drag-to-reorder in the
     // inspector). List order is the pick-up priority: departures fire in list
-    // order and spawn_truck() moves letters out of the buffer, so when several
-    // schedules depart on the same tick, the first matching one wins a letter.
+    // order and spawn_truck() moves letters out of the buffer, so the first
+    // ready schedule whose rule matches a letter wins it.
     void move_schedule(PostOfficeId src, std::size_t from, std::size_t to);
     // Replaces an office's postal code (edited in the inspector).
     void set_postal_code(PostOfficeId office, std::string postal_code);
@@ -202,8 +199,8 @@ public:
     // road (add_schedule checks has_road), and spawn_truck would dereference
     // an empty vertex list once the road is gone, so every schedule between
     // the two endpoints is switched off on both offices (roads are
-    // undirected, schedules are per-source-office). They keep their rule,
-    // timing and history, and can be switched back on once a road connects
+    // undirected, schedules are per-source-office). They keep their rule
+    // and history, and can be switched back on once a road connects
     // the offices again (rebuilding one does not do so by itself; see
     // set_schedule_enabled). In-flight trucks are
     // unaffected: they snapshot the polyline at departure. Returns false and

@@ -92,18 +92,19 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "Create a schedule",
-        .body = "A truck schedule sends trucks on a regular timetable. Under Ashford's schedule "
-                "table, click \"+ New schedule\" and choose Central. New schedules pick up mail "
-                "for their destination and leave every 6 hours, starting at midnight.\n\n"
+        .body = "A truck schedule sends trucks down a road whenever there is mail for them. Under "
+                "Ashford's schedule table, click \"+ New schedule\" and choose Central. New "
+                "schedules pick up mail for their destination.\n\n"
                 "Schedules are free, but every truck costs $15 when it leaves and carries at "
-                "most 5 letters.",
+                "most 5 letters. A truck leaves as soon as 5 matching letters are waiting, or "
+                "once one of them has waited 6 hours.",
         .office = kAshford,
         .anchor = TutorialAnchor::AddScheduleButton,
         .done = [](const World& w, const TutorialUiFacts&) { return has_schedule(w, kAshford, kCentral); },
     },
     {
         .title = "First delivery",
-        .body = "The next truck leaves at the schedule's next departure time. Use the >> button "
+        .body = "The next truck leaves once Ashford has a truckload for Central. Use the >> button "
                 "in the top bar (or the period key) to fast-forward, and watch the red truck drive to Central. When "
                 "it arrives, the letters are delivered and you get paid.",
         .anchor = TutorialAnchor::TransportBar,
@@ -114,24 +115,8 @@ const TutorialStep kSteps[] = {
     {
         .title = "Inspect a truck",
         .body = "Click a truck on the road while it is driving to see its route, its arrival "
-                "time and the letters it carries. Trucks leave Ashford every 6 hours.",
+                "time and the letters it carries.",
         .done = [](const World&, const TutorialUiFacts& f) { return f.truck_selected; },
-    },
-    {
-        .title = "Update a schedule",
-        .body = "Six hours is a long wait for a busy office, and schedules can be changed at any "
-                "time. Select Ashford and, in its schedule table, set \"Every\" to 01:00 by "
-                "typing into its hour and minute fields.\n\n"
-                "Busy routes need more trucks; quiet ones waste $15 per empty run.",
-        .office = kAshford,
-        .anchor = TutorialAnchor::ScheduleTable,
-        .done = [](const World& w, const TutorialUiFacts&) {
-            for (const PostOffice& office : w.get_post_offices())
-                for (const TruckSchedule& s : office.outbound_schedules)
-                    if (!s.edits.empty())
-                        return true;
-            return false;
-        },
     },
     {
         .title = "Grow the network",

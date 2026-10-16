@@ -198,7 +198,6 @@ enum class ScheduleError {
     None,           // valid
     UnknownOffice,  // src or dst is not an office id (or, for an update, no such schedule)
     SameOffice,     // src == dst
-    ZeroPeriod,     // period == 0
     MalformedRule,  // RoutingRule::is_well_formed() is false
     NoRoad,         // no road connects src and dst
 };
@@ -216,16 +215,13 @@ struct DepartureRecord {
 inline constexpr std::size_t kDepartureLogSize = 50;
 inline constexpr std::size_t kScheduleEditLogSize = 20;
 
+// A schedule has no timetable: it sends a truck whenever enough outbound
+// letters match its rule to fill one, or a matching letter has waited
+// kMaxLetterWait (see World::ready_to_depart).
 struct TruckSchedule {
     ScheduleId id = kNoSchedule;       // assigned by World::add_schedule
     PostOfficeId dst = kNoPostOffice;  // src is implicitly the office that owns this schedule
     RoutingRule rule;                  // which outbound letters the truck picks up
-    Tick period = 0;                   // one departure every `period` ticks (must be > 0)
-    Tick start_offset = 0;             // time of day of the first departure, in ticks since
-                                       // midnight; each day, departures fall on the grid
-                                       // start_offset + k * period (k = 0, 1, 2, ...) up
-                                       // to midnight, then restart at start_offset
-    Tick next_departure = 0;           // absolute tick of the next departure
     bool enabled = true;               // off: never departs (switched off by the player, or
                                        // by destroying its road; only a schedule whose road
                                        // exists can be switched back on)

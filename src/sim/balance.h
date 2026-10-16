@@ -31,8 +31,11 @@ constexpr std::size_t kTruckCapacity = 5;
 
 constexpr float kTruckSpeed = 2.0f;  // world units per tick
 
-// Shortest allowed schedule period: one departure every 5 in-game minutes.
-constexpr Tick kMinSchedulePeriod = hours_minutes_to_ticks(0, 5);
+// Schedules have no timetable: a schedule sends a truck as soon as enough
+// letters match its rule to fill one. So that quiet routes still move, it
+// also sends a partly full truck once a matching letter has waited this long
+// in the office (since it was posted there or arrived there).
+constexpr Tick kMaxLetterWait = hours_minutes_to_ticks(6, 0);
 
 // ---------------------------------------------------------------------------
 // Letters
