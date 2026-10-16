@@ -61,7 +61,7 @@ void RoadBuilder::build_to(Position target_position) {
 
     middle.reset();
     head.reset();
-    is_invalid = false;
+    invalid_reason.clear();
 
     const Position start = vertices.back();
     const int64_t dx = target_position.x - start.x;
@@ -180,8 +180,32 @@ void RoadBuilder::preview_to(Position target, const World& world) {
     previewed_target = target;
 }
 
-void RoadBuilder::check_road(const World& world) {
+const std::string& RoadBuilder::check_road(const World& world) {
     const std::vector<Position> path = preview_vertices();
-    // No self-intersection, and no crossing an existing road.
-    is_invalid = polyline_self_intersects(path) || world.polyline_intersects_any(path);
+    const std::vector<PostOffice>& offices = world.get_post_offices();
+    invalid_reason.clear();
+
+    // Ending at an office the source already has a road to. Checked first:
+    // a duplicate that also overlaps the old road is best explained this way.
+    for (PostOfficeId id = 0; id < offices.size(); ++id) {
+        if (id != src && offices[id].pos == path.back() && world.has_road(src, id)) {
+            invalid_reason = "Already connected.";
+            return invalid_reason;
+        }
+    }
+
+    if (polyline_self_intersects(path)) {
+        invalid_reason = "Road crosses itself.";
+        return invalid_reason;
+    }
+
+    // Touching an existing road anywhere but a shared end office.
+    for (const Road& road : world.get_roads()) {
+        if (polyline_crosses_road(road, path)) {
+            invalid_reason = "Crosses the road from " + offices[road.src].name + " to "
+                           + offices[road.dst].name + ".";
+            return invalid_reason;
+        }
+    }
+    return invalid_reason;
 }

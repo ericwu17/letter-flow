@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 class World;
@@ -25,7 +26,7 @@ struct RoadBuilder {
     std::vector<Position> vertices = {};  // the part that the user has committed to building
     std::optional<Position> middle = {};  // the snapped corner towards the cursor, if any
     std::optional<Position> head = {};    // the cursor end of the uncommitted stretch
-    bool is_invalid = false;              // set by check_road()
+    std::string invalid_reason = {};      // why the preview is illegal, empty if it isn't; set by check_road()
     bool prefer_first_direction_ortho = true;
     std::optional<bool> trail_first_ortho = {};
     // How far (in position units) the cursor must be from the source before
@@ -53,9 +54,14 @@ struct RoadBuilder {
     // The finished road (call after commit_to_destination).
     Road into_road() const;
 
-    // Sets is_invalid if the previewed road crosses itself or any road
-    // already in `world`, and clears it otherwise.
-    void check_road(const World& world);
+    // True if the last check_road() found the previewed road illegal.
+    bool is_invalid() const { return !invalid_reason.empty(); }
+
+    // Sets invalid_reason to a player-facing explanation if the previewed
+    // road ends at an office already connected to the source, crosses
+    // itself, or touches any road already in `world`; clears it otherwise.
+    // Returns invalid_reason.
+    const std::string& check_road(const World& world);
 
     // build_to(target) then check_road(world), skipped when nothing changed
     // since the last call: the UI calls this every frame, and the crossing

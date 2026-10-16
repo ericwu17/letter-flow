@@ -9,6 +9,7 @@
 #include <cassert>
 #include <cstdio>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace {
@@ -89,7 +90,8 @@ void commit_collapses_straight_runs() {
 }
 
 // The finished road is what World::add_road accepts, and check_road flags a
-// preview that crosses an existing road or itself.
+// preview that crosses an existing road or itself, or duplicates a road,
+// with a reason the player can read.
 void finished_roads_and_validity() {
     World w;
     const PostOfficeId a = w.add_office("A", "A", {0, 0}, 0, 10);
@@ -101,23 +103,25 @@ void finished_roads_and_validity() {
     ab.build_to({100, 0});
     ab.commit_middle_and_head();
     ab.check_road(w);
-    assert(!ab.is_invalid);
+    assert(!ab.is_invalid());
     ab.commit_to_destination({200, 0}, b);
     const Road road = ab.into_road();
     assert(road.src == a && road.dst == b);
     assert((road.vertices == Path{{0, 0}, {200, 0}}));
     assert(w.add_road(road.src, road.dst, road.vertices));
 
-    // C straight down to D crosses A-B.
+    // C straight down to D crosses A-B, and the reason names that road.
     RoadBuilder cd = RoadBuilder::from_source({100, -100}, c);
     cd.build_to({100, 100});
-    cd.check_road(w);
-    assert(cd.is_invalid);
-    // Re-snapping clears the flag until the next check.
+    const std::string& reason = cd.check_road(w);
+    assert(cd.is_invalid());
+    assert(&reason == &cd.invalid_reason);
+    assert(cd.invalid_reason == "Crosses the road from A to B.");
+    // Re-snapping clears the reason until the next check.
     cd.build_to({100, -50});
-    assert(!cd.is_invalid);
-    cd.check_road(w);
-    assert(!cd.is_invalid);
+    assert(!cd.is_invalid());
+    assert(cd.check_road(w).empty());
+    assert(!cd.is_invalid());
 
     // Doubling back over itself is invalid too.
     RoadBuilder back = RoadBuilder::from_source({100, -100}, c);
@@ -125,7 +129,20 @@ void finished_roads_and_validity() {
     back.commit_middle_and_head();
     back.build_to({120, -100});
     back.check_road(w);
-    assert(back.is_invalid);
+    assert(back.invalid_reason == "Road crosses itself.");
+
+    // A second road between A and B, around through the empty space above
+    // the first, touches it only at the shared offices but is still refused.
+    RoadBuilder again = RoadBuilder::from_source({0, 0}, a);
+    again.build_to({0, -50});
+    again.commit_middle_and_head();
+    again.build_to({200, -50});
+    again.commit_middle_and_head();
+    again.build_to({200, 0});
+    again.check_road(w);
+    assert(again.invalid_reason == "Already connected.");
+    again.commit_to_destination({200, 0}, b);
+    assert(!w.add_road(again.src, again.dst, again.into_road().vertices));
 }
 
 // preview_to() only redoes the work when the target moved or a click
@@ -136,14 +153,14 @@ void preview_is_recomputed_only_when_needed() {
     b.preview_to({100, 40}, w);
     assert((b.preview_vertices() == Path{{0, 0}, {60, 0}, {100, 40}}));
 
-    // Same target: nothing recomputed (a tampered flag survives).
-    b.is_invalid = true;
+    // Same target: nothing recomputed (a tampered reason survives).
+    b.invalid_reason = "x";
     b.preview_to({100, 40}, w);
-    assert(b.is_invalid);
+    assert(b.invalid_reason == "x");
 
     // A new target recomputes.
     b.preview_to({100, 0}, w);
-    assert(!b.is_invalid);
+    assert(!b.is_invalid());
     assert((b.preview_vertices() == Path{{0, 0}, {100, 0}}));
 
     // A click commits; previewing the same spot again re-snaps from there

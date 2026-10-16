@@ -723,7 +723,8 @@ void DrawWorld(World& world) {
 
         g_game.road_builder.preview_to(mouse_world, world);
 
-        const ImU32 road_color = g_game.road_builder.is_invalid ? kColorRoadBad : kColorRoadPreview;
+        const bool invalid = g_game.road_builder.is_invalid();
+        const ImU32 road_color = invalid ? kColorRoadBad : kColorRoadPreview;
 
         // Draw the segments, with a dot on every vertex past the source.
         const std::vector<Position> full_path = g_game.road_builder.preview_vertices();
@@ -734,12 +735,20 @@ void DrawWorld(World& world) {
             draw->AddCircleFilled(b, 3.5f, kColorRoadVertex);
         }
 
-        // Show the live length.
+        // Show the live length, and under it why the road is illegal, if it is.
         char length_text[64];
         std::snprintf(length_text, sizeof(length_text), "%.0f units", polyline_length(full_path));
         const ImVec2 length_size = ImGui::CalcTextSize(length_text);
         DrawChip(draw, {io.MousePos.x + 16.0f + length_size.x * 0.5f, io.MousePos.y + 2.0f}, length_text,
-                 g_game.road_builder.is_invalid ? kColorRoadBad : kColorText);
+                 invalid ? kColorRoadBad : kColorText);
+        if (invalid) {
+            const char* reason = g_game.road_builder.invalid_reason.c_str();
+            const ImVec2 reason_size = ImGui::CalcTextSize(reason);
+            DrawChip(draw,
+                     {io.MousePos.x + 16.0f + reason_size.x * 0.5f,
+                      io.MousePos.y + 2.0f + ImGui::GetTextLineHeight() + 6.0f},
+                     reason, kColorRoadBad);
+        }
     }
 
     // Post offices, with the rings announcing new ones and the network
@@ -887,16 +896,25 @@ void DrawWorld(World& world) {
                     g_game.road_build_state = RoadBuildState::PlacingVertices;
                 }
             } 
-            else if (g_game.road_build_state == RoadBuildState::PlacingVertices) {
+            // An illegal (red) preview takes no clicks: the player can only
+            // move the cursor somewhere legal or cancel. The preview above
+            // was checked against this frame's cursor.
+            else if (g_game.road_build_state == RoadBuildState::PlacingVertices
+                     && !g_game.road_builder.is_invalid()) {
                 // A click near a destination office completes the road
                 // there (the same office the preview snapped to).
                 if (const std::optional<PostOfficeId> dst = NearestRoadDestination(
                         offices, view, io.MousePos, office_radius * 3.0f, g_game.road_builder.src)) {
-                    g_game.road_builder.commit_to_destination(offices[*dst].pos, *dst);
-                    world.add_road(g_game.road_builder.src, g_game.road_builder.dst, g_game.road_builder.into_road().vertices);
-                    g_game.road_build_state = RoadBuildState::Idle;
-                    g_game.road_builder = RoadBuilder{};
-                    SelectOffice(*dst);
+                    // Finish a copy: the preview ran the same checks, so
+                    // add_road should not fail, but if it does the player
+                    // keeps drawing instead of the road vanishing silently.
+                    RoadBuilder finished = g_game.road_builder;
+                    finished.commit_to_destination(offices[*dst].pos, *dst);
+                    if (world.add_road(finished.src, finished.dst, finished.into_road().vertices)) {
+                        g_game.road_build_state = RoadBuildState::Idle;
+                        g_game.road_builder = RoadBuilder{};
+                        SelectOffice(*dst);
+                    }
                 } else {
                     // Place a vertex at the snapped point.
                     g_game.road_builder.commit_middle_and_head();
