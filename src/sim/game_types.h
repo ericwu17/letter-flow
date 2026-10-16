@@ -52,10 +52,9 @@ constexpr Tick hours_minutes_to_ticks(int hour, int minute) {
 // World geometry
 // ---------------------------------------------------------------------------
 
-// The game plays out in a virtual coordinate space; the UI scales it to fit
-// whatever window size the player has.
-constexpr float kWorldWidth  = 2000.0f;
-constexpr float kWorldHeight = 1300.0f;
+// The game plays out in a virtual coordinate space with no edges: the first
+// office opens at the origin and the cluster of offices grows outward from
+// there.
 
 // Largest |x| or |y| a road vertex may have. Keeps the exact integer geometry
 // in road.cpp overflow-free: coordinate differences stay within 2e9, so every

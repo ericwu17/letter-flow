@@ -205,7 +205,6 @@ World build_fixture_world() {
     assert(w.get_letters_delivered_late() > 0);      // default: 0
     assert(!w.get_trucks().empty());                 // default: empty
     assert(!w.get_roads().empty());                  // default: empty
-    assert(w.get_next_office_spawn() != kOfficeSpawnIntervalStart);  // default: that
     assert(w.get_event().has_value() && w.get_event()->posted > 0);   // default: none
     assert(w.get_next_event_announce() != kNever);                     // default: kNever
 

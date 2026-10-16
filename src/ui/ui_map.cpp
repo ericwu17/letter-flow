@@ -43,7 +43,7 @@ struct ViewTransform {
 
 constexpr float kZoomStep = 1.2f;
 constexpr float kPanStep = 5.0f;
-constexpr float kZoomMin = 0.5f;
+constexpr float kZoomMin = 0.15f;  // room to see a cluster grown far from the origin
 constexpr float kZoomMax = 8.0f;
 
 // Map label for an office's postal code: a small chip under the office.
@@ -84,33 +84,26 @@ constexpr ImU32 kColorRoadBad     = U32(theme::kBad);        // invalid preview 
 // The map's paper grid, in world units.
 constexpr float kGridStep = 100.0f;
 
+// Screen pixels per world unit at zoom 1.
+constexpr float kPixelsPerUnit = 0.7f;
+
 // ---------------------------------------------------------------------------
-// World -> screen mapping: scale the fixed-size world to fit the display,
-// then apply the camera on top.
+// World -> screen mapping: the world origin (where the first office opens)
+// at the display center, kPixelsPerUnit at zoom 1, then the camera on top.
 // ---------------------------------------------------------------------------
 
 ViewTransform ComputeViewTransform() {
     ImGuiIO& io = ImGui::GetIO();
-    const float margin = 24.0f;
-    const float avail_w = io.DisplaySize.x - 2.0f * margin;
-    const float avail_h = io.DisplaySize.y - 2.0f * margin;
-    ViewTransform vt;
-    vt.scale = std::min(avail_w / kWorldWidth, avail_h / kWorldHeight);
-    vt.offset.x = margin + (avail_w - kWorldWidth * vt.scale) * 0.5f;
-    vt.offset.y = margin + (avail_h - kWorldHeight * vt.scale) * 0.5f;
-
-    // Zoom about the display center c rather than about the world origin:
-    //     screen = c + (fit(world) - c) * zoom + pan
-    // The fit transform maps the world center to c, so this keeps the point
-    // under the display center pinned there for any zoom. Expanding into the
-    // usual screen = offset + world * scale form gives the offset below.
+    // Zoom about the display center c, which the unpanned view keeps the
+    // world origin under:
+    //     screen = c + world * kPixelsPerUnit * zoom + pan
+    // so the point under the display center stays pinned there for any zoom
+    // (UpdateCamera rescales `pan` to match).
     const ImVec2 c = {io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f};
-    const ImVec2 fit_offset = vt.offset;
-    const float zoom = g_game.camera.zoom;
-    vt.scale *= zoom;
-    vt.offset.x = c.x - (c.x - fit_offset.x) * zoom + g_game.camera.pan.x;
-    vt.offset.y = c.y - (c.y - fit_offset.y) * zoom + g_game.camera.pan.y;
-
+    ViewTransform vt;
+    vt.scale = kPixelsPerUnit * g_game.camera.zoom;
+    vt.offset.x = c.x + g_game.camera.pan.x;
+    vt.offset.y = c.y + g_game.camera.pan.y;
     return vt;
 }
 
@@ -138,7 +131,7 @@ void UpdateCamera(bool mouse_on_map) {
                                           kZoomMin, kZoomMax);
         // `pan` is applied in screen pixels *after* the zoom, so once the view
         // has been panned, the world point under the display center is no
-        // longer the world center. Rescaling the pan by the zoom ratio keeps
+        // longer the world origin. Rescaling the pan by the zoom ratio keeps
         // that under-center point pinned there through the zoom.
         const float pan_scale = new_zoom / old_zoom;
         g_game.camera.pan.x *= pan_scale;

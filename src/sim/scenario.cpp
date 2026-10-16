@@ -31,11 +31,11 @@ World create_tutorial_world() {
     // Several times a real game's mail rates, so letters show up within
     // seconds of pressing play.
     const OfficeDef defs[] = {
-        {tutorial_map::kCentral,   "Central",   "CITY/Central",    {1000, 600}, 120},
-        {tutorial_map::kAshford,   "Ashford",   "NORTH/Ashford",   { 750, 350},  80},
-        {tutorial_map::kBrookside, "Brookside", "NORTH/Brookside", {1250, 350},  80},
-        {tutorial_map::kDunmore,   "Dunmore",   "SOUTH/Dunmore",   {1000, 900},  80},
-        {tutorial_map::kElmwood,   "Elmwood",   "ELM-01",          {1300, 900},  80},
+        {tutorial_map::kCentral,   "Central",   "CITY/Central",    {   0,  -50}, 120},
+        {tutorial_map::kAshford,   "Ashford",   "NORTH/Ashford",   {-250, -300},  80},
+        {tutorial_map::kBrookside, "Brookside", "NORTH/Brookside", { 250, -300},  80},
+        {tutorial_map::kDunmore,   "Dunmore",   "SOUTH/Dunmore",   {   0,  250},  80},
+        {tutorial_map::kElmwood,   "Elmwood",   "ELM-01",          { 300,  250},  80},
     };
     for (const OfficeDef& def : defs) {
         // Roomy buffers: overflow can still end the tutorial, but not while

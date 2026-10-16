@@ -785,27 +785,24 @@ void skipped_departures_and_orphaned_trucks() {
     assert(w.get_stats()[GlobalStat::IncomeValue].total > 0);
 }
 
-// Every office is clear of the map's edges and of every other office, as
-// spawn_random_office() places them.
+// Every office is clear of every other office, as spawn_random_office()
+// places them.
 void assert_well_placed(const std::vector<PostOffice>& offices) {
     for (std::size_t i = 0; i < offices.size(); ++i) {
         const Position p = offices[i].pos;
-        assert(static_cast<double>(p.x) >= kOfficeSpawnMargin);
-        assert(static_cast<double>(p.x) <= kWorldWidth - kOfficeSpawnMargin);
-        assert(static_cast<double>(p.y) >= kOfficeSpawnMargin);
-        assert(static_cast<double>(p.y) <= kWorldHeight - kOfficeSpawnMargin);
         for (std::size_t j = 0; j < i; ++j)
             assert(euclidean_length(offices[j].pos - p) >= kOfficeMinSpacing);
     }
 }
 
 // A new game opens with a few offices from the name list, with no postal
-// codes, spread out over the map; and the same seed is the same game every
+// codes, the first at the origin; and the same seed is the same game every
 // time, while another seed is another game.
 void opening_offices() {
     const World w = create_default_world();
     const std::vector<PostOffice>& offices = w.get_post_offices();
     assert(offices.size() == kInitialOffices);
+    assert((offices[0].pos == Position{0, 0}));
     std::set<std::string> names;
     for (const PostOffice& office : offices) {
         assert(office.postal_code.empty());
@@ -818,40 +815,29 @@ void opening_offices() {
     }
     assert(names.size() == offices.size());  // all different
     assert_well_placed(offices);
-    assert(w.get_next_office_spawn() == kOfficeSpawnIntervalStart);
+    assert(w.get_next_office_spawn() == kOfficeSpawnInterval);
     assert(!w.is_game_over());
     assert(create_default_world() == w);
     assert(create_default_world(7) == create_default_world(7));
     assert(!(create_default_world(7) == w));
 }
 
-// Offices keep appearing: exactly when due, a little sooner each time, but
-// never more often than kOfficeSpawnIntervalMin.
+// Offices keep appearing: exactly when due, one every kOfficeSpawnInterval.
 void offices_appear_over_time() {
     World w = create_default_world();
-    while (w.get_tick() + 1 < kOfficeSpawnIntervalStart)
+    while (w.get_tick() + 1 < kOfficeSpawnInterval)
         w.advance_tick();
     assert(w.get_post_offices().size() == kInitialOffices);
     w.advance_tick();  // the first spawn
-    assert(w.get_tick() == kOfficeSpawnIntervalStart);
+    assert(w.get_tick() == kOfficeSpawnInterval);
     assert(w.get_post_offices().size() == kInitialOffices + 1);
     assert(w.get_post_offices().back().postal_code.empty());
-    assert(w.get_next_office_spawn() == w.get_tick() + kOfficeSpawnIntervalStart - kOfficeSpawnIntervalStep);
+    assert(w.get_next_office_spawn() == w.get_tick() + kOfficeSpawnInterval);  // the next waits as long
     assert_well_placed(w.get_post_offices());
-
-    // A crowded map waits only the minimum.
-    World crowded;
-    for (int i = 0; i < 30; ++i)
-        assert(crowded.spawn_random_office().has_value());
-    while (crowded.get_tick() < kOfficeSpawnIntervalStart)
-        crowded.advance_tick();
-    assert(crowded.get_post_offices().size() == 31);
-    assert(crowded.get_next_office_spawn() == crowded.get_tick() + kOfficeSpawnIntervalMin);
-    assert_well_placed(crowded.get_post_offices());
 }
 
-// New offices keep clear of roads, give up when the map has no room left,
-// and never reuse a name.
+// New offices keep clear of roads, keep coming until the names run out (the
+// cluster has no edge to fill up against), and never reuse a name.
 void spawn_placement_and_names() {
     // A road straight across the middle of the map.
     World w;
@@ -863,9 +849,7 @@ void spawn_placement_and_names() {
         const Road& road = w.get_roads()[0];
         assert(distance_to_polyline(w.get_post_offices()[*spawned].pos, road.vertices) >= kOfficeRoadClearance);
     }
-    // The map filled up long before the names ran out.
-    assert(w.get_post_offices().size() > 10);
-    assert(w.get_post_offices().size() < office_names().size());
+    assert(w.get_post_offices().size() == 2 + office_names().size());  // West and East aren't from the list
     std::vector<PostOffice> spawned_offices(w.get_post_offices().begin() + 2, w.get_post_offices().end());
     assert_well_placed(spawned_offices);
 
@@ -880,6 +864,44 @@ void spawn_placement_and_names() {
     const World before = named_out;
     assert(!named_out.spawn_random_office().has_value());
     assert(named_out == before);
+}
+
+// New offices land on the edge of the cluster: never in the empty middle of
+// a wide square of offices, always next to an office, and never with an
+// office near them that is farther out from the cluster's centroid.
+void spawn_stays_on_the_edge() {
+    World w;
+    w.add_office("SW", "", {0, 0}, 0, 100);
+    w.add_office("SE", "", {3000, 0}, 0, 100);
+    w.add_office("NE", "", {3000, 3000}, 0, 100);
+    w.add_office("NW", "", {0, 3000}, 0, 100);
+    for (int i = 0; i < 60; ++i) {
+        const std::vector<PostOffice> before = w.get_post_offices();
+        double cx = 0.0;
+        double cy = 0.0;
+        for (const PostOffice& o : before) {
+            cx += static_cast<double>(o.pos.x);
+            cy += static_cast<double>(o.pos.y);
+        }
+        cx /= static_cast<double>(before.size());
+        cy /= static_cast<double>(before.size());
+        const auto from_center = [&](Position p) {
+            return std::hypot(static_cast<double>(p.x) - cx, static_cast<double>(p.y) - cy);
+        };
+
+        const std::optional<PostOfficeId> id = w.spawn_random_office();
+        assert(id.has_value());
+        const Position p = w.get_post_offices()[*id].pos;
+        assert(!(p.x > 0 && p.x < 3000 && p.y > 0 && p.y < 3000));
+        bool next_to_one = false;
+        for (const PostOffice& o : before) {
+            const bool near = euclidean_length(o.pos - p) <= kOfficeSpawnBand;
+            next_to_one = next_to_one || near;
+            assert(!near || from_center(o.pos) <= from_center(p));
+        }
+        assert(next_to_one);
+    }
+    assert_well_placed(w.get_post_offices());
 }
 
 // Offices keep only their numbers; office_class_of() recovers the class
@@ -1106,6 +1128,7 @@ int main() {
     offices_appear_over_time();
     printf("PASS offices_appear_over_time\n");
     spawn_placement_and_names();
+    spawn_stays_on_the_edge();
     printf("PASS spawn_placement_and_names\n");
     office_classes_are_recoverable();
     printf("PASS office_classes_are_recoverable\n");

@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -88,7 +89,7 @@ void World::advance_tick() {
     // 0. Now and then a new office opens somewhere on the map.
     if (current_tick >= next_office_spawn) {
         spawn_random_office();
-        next_office_spawn = current_tick + office_spawn_interval();
+        next_office_spawn = current_tick + kOfficeSpawnInterval;
     }
 
     // 1. Network events: announced ahead, then a day of extra mail.
@@ -231,13 +232,6 @@ void World::post_event_letters() {
     }
 }
 
-Tick World::office_spawn_interval() const {
-    const std::size_t extra = post_offices.size() > kInitialOffices ? post_offices.size() - kInitialOffices : 0;
-    const Tick shortened = static_cast<Tick>(extra) * kOfficeSpawnIntervalStep;
-    if (shortened >= kOfficeSpawnIntervalStart - kOfficeSpawnIntervalMin)
-        return kOfficeSpawnIntervalMin;
-    return kOfficeSpawnIntervalStart - shortened;
-}
 
 std::optional<PostOfficeId> World::spawn_random_office() {
     // A name no office has yet.
@@ -251,22 +245,49 @@ std::optional<PostOfficeId> World::spawn_random_office() {
     if (free_names.empty())
         return std::nullopt;
 
-    // A spot inside the margins, clear of every office and every road.
-    // Coordinates are whole world units, like every other position.
-    std::uniform_int_distribution<int64_t> pick_x(static_cast<int64_t>(kOfficeSpawnMargin),
-                                                  static_cast<int64_t>(kWorldWidth - kOfficeSpawnMargin));
-    std::uniform_int_distribution<int64_t> pick_y(static_cast<int64_t>(kOfficeSpawnMargin),
-                                                  static_cast<int64_t>(kWorldHeight - kOfficeSpawnMargin));
+    // A spot on the edge of the cluster, clear of every office and every
+    // road: next to a random office (kOfficeMinSpacing to kOfficeSpawnBand
+    // from it), with no office near it (within kOfficeSpawnBand) farther from
+    // the cluster's centroid than it is. Spots with offices farther out
+    // around them are inside the cluster, not on its edge. The very first
+    // office opens at the origin. Coordinates are whole world units, like
+    // every other position.
     std::optional<Position> spot;
+    if (post_offices.empty())
+        spot = Position{0, 0};
+    double cx = 0.0;
+    double cy = 0.0;
+    for (const PostOffice& o : post_offices) {
+        cx += static_cast<double>(o.pos.x);
+        cy += static_cast<double>(o.pos.y);
+    }
+    if (!post_offices.empty()) {
+        cx /= static_cast<double>(post_offices.size());
+        cy /= static_cast<double>(post_offices.size());
+    }
+    const auto from_center = [&](Position p) {
+        return std::hypot(static_cast<double>(p.x) - cx, static_cast<double>(p.y) - cy);
+    };
+    std::uniform_int_distribution<std::size_t> pick_anchor(0, post_offices.empty() ? 0 : post_offices.size() - 1);
+    std::uniform_real_distribution<double> pick_angle(0.0, 2.0 * std::numbers::pi);
+    std::uniform_real_distribution<double> pick_distance(kOfficeMinSpacing, kOfficeSpawnBand);
     for (int attempt = 0; attempt < kOfficeSpawnAttempts && !spot; ++attempt) {
-        const Position candidate{pick_x(rng), pick_y(rng)};
+        const Position anchor = post_offices[pick_anchor(rng)].pos;
+        const double angle = pick_angle(rng);
+        const double distance = pick_distance(rng);
+        const Position candidate{anchor.x + std::llround(distance * std::cos(angle)),
+                                 anchor.y + std::llround(distance * std::sin(angle))};
+        const double candidate_from_center = from_center(candidate);
         const bool crowded = std::any_of(post_offices.begin(), post_offices.end(), [&](const PostOffice& o) {
             return euclidean_length(o.pos - candidate) < kOfficeMinSpacing;
+        });
+        const bool inside = std::any_of(post_offices.begin(), post_offices.end(), [&](const PostOffice& o) {
+            return euclidean_length(o.pos - candidate) <= kOfficeSpawnBand && from_center(o.pos) > candidate_from_center;
         });
         const bool on_road = std::any_of(roads.begin(), roads.end(), [&](const Road& r) {
             return distance_to_polyline(candidate, r.vertices) < kOfficeRoadClearance;
         });
-        if (!crowded && !on_road)
+        if (!crowded && !inside && !on_road)
             spot = candidate;
     }
     if (!spot)

@@ -49,7 +49,7 @@ private:
     ScheduleId next_schedule_id = 0;                 // next id add_schedule hands out
 
     // When advance_tick() next calls spawn_random_office().
-    Tick next_office_spawn = kOfficeSpawnIntervalStart;
+    Tick next_office_spawn = kOfficeSpawnInterval;
     // The office whose overflow timer ran out, ending the game; kNoPostOffice
     // while the game is still on.
     PostOfficeId game_over_office = kNoPostOffice;
@@ -88,8 +88,6 @@ private:
     // Runs every office's overflow timer for this tick and ends the game when
     // one runs out.
     void update_overflow();
-    // How long after a spawn the next one comes, given the offices so far.
-    Tick office_spawn_interval() const;
     // Records this tick's sample of every gauge statistic.
     void sample_gauges();
     // The schedule with this id among `office`'s schedules, or nullptr.

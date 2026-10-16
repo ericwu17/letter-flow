@@ -58,12 +58,9 @@ constexpr double kDestinationDistanceScale = 150.0;
 // with kInitialOffices of them, and another arrives every spawn interval.
 constexpr std::size_t kInitialOffices = 3;
 
-// The first spawn comes this long into the game; every office beyond the
-// opening ones shortens the wait for the next by kOfficeSpawnIntervalStep,
-// down to kOfficeSpawnIntervalMin.
-constexpr Tick kOfficeSpawnIntervalStart = kTicksPerDay;
-constexpr Tick kOfficeSpawnIntervalStep  = kTicksPerHour;
-constexpr Tick kOfficeSpawnIntervalMin   = 8 * kTicksPerHour;
+// The first spawn comes this long into the game, and each later one this
+// long after the last.
+constexpr Tick kOfficeSpawnInterval = kTicksPerDay;
 
 // The kinds of office that can appear, drawn with odds proportional to
 // spawn_weight.
@@ -91,13 +88,16 @@ constexpr std::size_t office_class_of(std::size_t letters_per_day) {
     return index;
 }
 
-// Where a new office may appear: at least kOfficeSpawnMargin inside the
-// world's edges, kOfficeMinSpacing from every other office and
-// kOfficeRoadClearance from every road (all in world units). A spawn tries
-// this many random spots before giving up until the next interval.
-constexpr double kOfficeSpawnMargin    = 80.0;
-constexpr double kOfficeMinSpacing     = 150.0;
-constexpr double kOfficeRoadClearance  = 40.0;
+// Where a new office may appear: on the edge of the cluster of offices,
+// within kOfficeSpawnBand of some office but with none of the offices that
+// near it farther from the cluster's centroid, and at least
+// kOfficeMinSpacing from every other office and kOfficeRoadClearance from
+// every road (all in world units). The cluster has no edge to stop it. A
+// spawn tries this many random spots before giving up until the next
+// interval.
+constexpr double kOfficeSpawnBand      = 400.0;
+constexpr double kOfficeMinSpacing     = 200.0;
+constexpr double kOfficeRoadClearance  = 60.0;
 constexpr int kOfficeSpawnAttempts     = 200;
 
 // ---------------------------------------------------------------------------
