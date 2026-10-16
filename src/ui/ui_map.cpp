@@ -58,7 +58,9 @@ constexpr ImU32 kColorGrid          = U32(theme::kMapGrid);      // the map's pa
 constexpr ImU32 kColorShadow        = U32(theme::kShadow, 0.22f);
 constexpr ImU32 kColorChipBg        = U32(theme::kPaperLight, 0.9f);  // postal-code chips, cost label
 constexpr ImU32 kColorChipBorder    = U32(theme::kPaper3);
-constexpr ImU32 kColorOfficeBody    = U32(theme::kPaperLight);   // unfilled part of an office
+constexpr ImU32 kColorOfficeBody    = U32(theme::kPaperLight);   // a truck's letters
+constexpr ImU32 kColorOfficeEmpty   = U32(theme::kNavy);         // unfilled part of an office
+constexpr ImU32 kColorOfficeFill    = U32(theme::kPaperLight);   // filled part, until it nears full
 constexpr ImU32 kColorOfficeRing    = U32(theme::kNavy);
 constexpr ImU32 kColorOverflow      = U32(theme::kBad);          // overflow timer, full office's name
 constexpr ImU32 kColorOverflowTrack = U32(theme::kBad, 0.2f);    // the rest of the timer's circle
@@ -835,16 +837,14 @@ void DrawWorld(World& world) {
         const std::vector<ImVec2> shadow = OfficeOutline(shape, {c.x, c.y + 2.0f}, office_radius + 1.0f);
         draw->AddConvexPolyFilled(shadow.data(), static_cast<int>(shadow.size()), kColorShadow);
 
-        // Clock-style fill: a wedge sweeping clockwise from 12 o'clock
-        // shows how full the outbound buffer is, turning warn then bad
-        // as it nears max_outbound_letters.
+        // Clock-style fill
         const float fill = office.max_outbound_letters == 0 ? 0.0f
             : std::min(1.0f, static_cast<float>(office.outbound_letters.size())
                                  / static_cast<float>(office.max_outbound_letters));
-        const ImU32 fill_color = U32(theme::FillColor(fill));
+        const ImU32 fill_color = fill >= theme::kWarnFraction ? U32(theme::FillColor(fill)) : kColorOfficeFill;
         const std::vector<ImVec2> outline = OfficeOutline(shape, c, office_radius);
         const int outline_size = static_cast<int>(outline.size());
-        draw->AddConvexPolyFilled(outline.data(), outline_size, kColorOfficeBody);
+        draw->AddConvexPolyFilled(outline.data(), outline_size, kColorOfficeEmpty);
         if (fill >= 1.0f)
             draw->AddConvexPolyFilled(outline.data(), outline_size, fill_color);
         else if (fill > 0.0f)
