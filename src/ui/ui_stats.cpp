@@ -897,7 +897,8 @@ void DrawStatsWindow(const World& world) {
 
     ImGui::SetNextWindowSize(ImVec2(900.0f, 640.0f), ImGuiCond_FirstUseEver);
     // Floating only, like the HUD (the dockspace takes no other windows).
-    if (!ImGui::Begin("Statistics (L)###Statistics", &ui::g_game.stats_open, ImGuiWindowFlags_NoDocking)) {
+    if (!ImGui::Begin("Statistics (L)###Statistics", &ui::g_game.stats_open,
+                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
     }
