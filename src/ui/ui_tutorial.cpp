@@ -94,8 +94,6 @@ void DrawSpotlights(const TutorialStep& step, const World& world) {
         return;
     }
     const AnchorRect* rect = FindAnchor(step.anchor);
-    if (rect == nullptr && step.anchor == TutorialAnchor::PostalCodeInput)
-        rect = FindAnchor(TutorialAnchor::SettingsHeader);  // the section is still collapsed
     if (rect != nullptr)
         SpotlightRect(rect->min, rect->max);
 }

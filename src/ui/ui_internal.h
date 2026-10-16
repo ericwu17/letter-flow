@@ -70,8 +70,8 @@ struct SpawnPulse {
     float age = 0.0f;  // seconds
 };
 
-// The inspector's editable fields for one office. DrawOfficePanel reloads
-// them all whenever the inspected office changes.
+// The inspector's editable fields for one office. DrawOfficePanel resets
+// them whenever the inspected office changes.
 struct InspectorForms {
     PostOfficeId office = kNoPostOffice;  // whose values the fields below hold
     // Why the last schedule-table edit was refused, shown under the table
@@ -82,8 +82,12 @@ struct InspectorForms {
     // the hovered one's rule matches are highlighted, else the selected one's.
     ScheduleId selected_schedule = kNoSchedule;
     ScheduleId hovered_schedule = kNoSchedule;
-    // The postal-code field: InputText needs a mutable buffer. Every
-    // keystroke is committed to the World, so the map label updates live.
+    // The header's postal code: shown as a tag until its pencil is clicked,
+    // then as a field (focused on the frame after the click) until it loses
+    // focus. InputText needs a mutable buffer. Every keystroke is committed
+    // to the World, so the map label updates live.
+    bool editing_postal_code = false;
+    bool focus_postal_code = false;
     char postal_code[128] = "";
 };
 

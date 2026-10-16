@@ -63,7 +63,7 @@ mingw32-make && ./letter-flow.exe
 ## Controls
 
 - **Click an office**: inspect its mail, add/remove truck schedules, and
-  give it a postal code (Settings). While its overflow timer runs, the
+  give it a postal code (the pencil by its name). While its overflow timer runs, the
   inspector says how long is left.
 - **Truck schedules**: each schedule has a routing rule — only letters for the
   destination, letters addressed to a postal-code prefix, or all letters.

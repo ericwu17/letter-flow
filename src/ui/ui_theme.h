@@ -86,6 +86,10 @@ bool SegmentedButton(const char* label, bool selected, ImVec2 size = ImVec2(0.0f
 // A small rounded tag ("LATE", a postal code), laid out like a text item.
 void Pill(const char* text, ImVec4 bg, ImVec4 fg);
 
+// A small square button with a drawn pencil icon, one text line tall, for
+// switching a displayed value into an edit field. Returns true when clicked.
+bool PencilButton(const char* str_id);
+
 // A dimmed "(?)" that shows `text` in a wrapped tooltip on hover.
 void HelpMarker(const char* text);
 

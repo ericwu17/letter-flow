@@ -575,31 +575,44 @@ void DrawScheduleTable(World& world, PostOfficeId selected) {
         ImGui::TextColored(kColorErrorText, "Not applied: %s", edit_error.c_str());
 }
 
-// The office panel's header: name, postal-code tag and an office switcher
-// (map clicking is the other way to change selection).
-void DrawOfficeHeader(const std::vector<PostOffice>& offices, PostOfficeId selected) {
-    const PostOffice& office = offices[selected];
+// The office panel's header: name and postal-code tag. The pencil beside the
+// tag swaps it for a field; Enter, clicking away or selecting another office
+// (which resets the forms) swaps it back.
+void DrawOfficeHeader(World& world, PostOfficeId selected) {
+    const PostOffice& office = world.get_post_offices()[selected];
     ImGui::PushFont(nullptr, theme::kFontTitle);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(office.name.c_str());
     ImGui::PopFont();
 
-    const float combo_w = ImGui::GetFontSize() * 8.0f;
-    ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - combo_w));
-    ImGui::SetNextItemWidth(combo_w);
-    if (ImGui::BeginCombo("##office", "Switch office", ImGuiComboFlags_HeightLarge)) {
-        for (PostOfficeId id = 0; id < offices.size(); ++id) {
-            if (ImGui::Selectable(offices[id].name.c_str(), id == selected))
-                SelectOffice(id);
+    ui::InspectorForms& forms = g_game.forms;
+    if (forms.editing_postal_code) {
+        // One ID per office: an edit still active when the selection changes
+        // would otherwise carry its text over to the newly selected office.
+        ImGui::PushID(static_cast<int>(selected));
+        if (std::exchange(forms.focus_postal_code, false))
+            ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+        if (ImGui::InputText("##postal_code", forms.postal_code, sizeof(forms.postal_code)))
+            world.set_postal_code(selected, forms.postal_code);
+        if (ImGui::IsItemDeactivated())
+            forms.editing_postal_code = false;
+        ui::NoteItemAnchor(TutorialAnchor::PostalCodeInput);
+        ImGui::PopID();
+    } else {
+        if (!office.postal_code.empty())
+            theme::Pill(office.postal_code.c_str(), theme::kPaper2, theme::kInkDim);
+        else
+            ImGui::TextDisabled("No postal code");
+        ImGui::SameLine();
+        if (theme::PencilButton("##edit_postal_code")) {
+            std::snprintf(forms.postal_code, sizeof(forms.postal_code), "%s", office.postal_code.c_str());
+            forms.editing_postal_code = true;
+            forms.focus_postal_code = true;
         }
-        ImGui::EndCombo();
+        ImGui::SetItemTooltip("Edit postal code");
+        ui::NoteItemAnchor(TutorialAnchor::PostalCodeInput);
     }
-
-    if (!office.postal_code.empty())
-        theme::Pill(office.postal_code.c_str(), theme::kPaper2, theme::kInkDim);
-    else
-        ImGui::TextDisabled("No postal code (set one under Settings)");
     ImGui::Spacing();
 }
 
@@ -737,15 +750,13 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
     const std::vector<PostOffice>& offices = world.get_post_offices();
     const PostOffice& office = offices[selected];
 
-    // Another office is shown: its forms start over, from its own values.
+    // Another office is shown: its forms start over.
     if (g_game.forms.office != selected) {
         g_game.forms = ui::InspectorForms{};
         g_game.forms.office = selected;
-        std::snprintf(g_game.forms.postal_code, sizeof(g_game.forms.postal_code), "%s",
-                      office.postal_code.c_str());
     }
 
-    DrawOfficeHeader(offices, selected);
+    DrawOfficeHeader(world, selected);
 
     DrawCapacityBar(office);
     ImGui::Spacing();
@@ -768,28 +779,13 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
     ImGui::EndGroup();
     ui::NoteItemAnchor(TutorialAnchor::OutboundLetters);
 
-    if (ImGui::CollapsingHeader("Statistics"))
-        ui::DrawOfficeStats(world, selected);
-
     if (ImGui::CollapsingHeader("Truck schedules", ImGuiTreeNodeFlags_DefaultOpen)) {
         DrawScheduleTable(world, selected);
         DrawAddScheduleButton(world, selected);
     }
 
-    // Postal code, editable: every keystroke is committed to the World, so
-    // the map label updates live.
-    const bool settings_open = ImGui::CollapsingHeader("Settings");
-    ui::NoteItemAnchor(TutorialAnchor::SettingsHeader);
-    if (settings_open) {
-        // One ID per office: an edit still active when the selection changes
-        // would otherwise carry its text over to the newly selected office.
-        ImGui::PushID(static_cast<int>(selected));
-        char* postal_buf = g_game.forms.postal_code;
-        if (ImGui::InputText("Postal code", postal_buf, sizeof(g_game.forms.postal_code)))
-            world.set_postal_code(selected, postal_buf);
-        ui::NoteItemAnchor(TutorialAnchor::PostalCodeInput);
-        ImGui::PopID();
-    }
+    if (ImGui::CollapsingHeader("Statistics"))
+        ui::DrawOfficeStats(world, selected);
 }
 
 // Road-building controls, shown under either panel.

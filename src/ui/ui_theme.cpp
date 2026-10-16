@@ -203,6 +203,29 @@ void Pill(const char* text, ImVec4 bg, ImVec4 fg) {
     draw->AddText(ImVec2(min.x + pad_x, min.y + pad_y), U32(fg), text);
 }
 
+bool PencilButton(const char* str_id) {
+    const float s = ImGui::GetTextLineHeight();
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    const bool pressed = ImGui::InvisibleButton(str_id, ImVec2(s, s));
+    const bool hovered = ImGui::IsItemHovered();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    if (hovered)
+        draw->AddRectFilled(min, ImVec2(min.x + s, min.y + s), U32(ImGui::IsItemActive() ? kPaper4 : kPaper3),
+                            s * 0.2f);
+
+    // A pencil leaning 45 degrees: the tip at the bottom left, the body
+    // running up to the top right, ending in a short eraser band.
+    const ImU32 color = U32(hovered ? kInk : kInkDim);
+    auto at = [&](float x, float y) { return ImVec2(min.x + s * x, min.y + s * y); };
+    const float w = 0.11f;  // half the body's width, along the perpendicular
+    draw->AddQuadFilled(at(0.38f - w, 0.62f - w), at(0.66f - w, 0.34f - w), at(0.66f + w, 0.34f + w),
+                        at(0.38f + w, 0.62f + w), color);
+    draw->AddQuadFilled(at(0.71f - w, 0.29f - w), at(0.78f - w, 0.22f - w), at(0.78f + w, 0.22f + w),
+                        at(0.71f + w, 0.29f + w), color);
+    draw->AddTriangleFilled(at(0.38f - w, 0.62f - w), at(0.38f + w, 0.62f + w), at(0.2f, 0.8f), color);
+    return pressed;
+}
+
 void HelpMarker(const char* text) {
     ImGui::TextDisabled("(?)");
     if (ImGui::BeginItemTooltip()) {

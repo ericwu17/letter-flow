@@ -34,8 +34,7 @@ enum class TutorialAnchor {
     OutboundLetters,    // an office's outbound letter list
     ScheduleTable,      // an office's schedule table
     AddScheduleButton,  // the "+ New schedule" button
-    SettingsHeader,     // the office's collapsed "Settings" section...
-    PostalCodeInput,    // ...and the postal-code field inside it
+    PostalCodeInput,    // an office's postal code in the inspector header (pencil or field)
     StatsButton,        // the HUD's statistics button
     Count,
 };

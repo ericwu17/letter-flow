@@ -168,8 +168,8 @@ const TutorialStep kSteps[] = {
     {
         .title = "Fix a postal code",
         .body = "Elmwood is in the south, but it was filed as ELM-01, so a \"SOUTH/\" schedule "
-                "would miss its mail. Select Elmwood, open its Settings section and change its "
-                "postal code to SOUTH/Elmwood.",
+                "would miss its mail. Select Elmwood, click the pencil next to its postal code "
+                "and change it to SOUTH/Elmwood.",
         .office = kElmwood,
         .anchor = TutorialAnchor::PostalCodeInput,
         .done = [](const World& w, const TutorialUiFacts&) {
