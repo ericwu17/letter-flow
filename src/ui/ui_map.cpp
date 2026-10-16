@@ -832,7 +832,6 @@ void DrawWorld(World& world) {
         const float extent = OfficeShapeExtent(shape, office_radius);
         if (selected_truck == nullptr && id == g_game.selected_office) {
             draw->AddCircleFilled(c, extent + 9.0f, kColorSelectionHalo);
-            draw->AddCircle(c, extent + 5.0f, kColorSelection, 0, 3.0f);
         }
         if (full)
             draw->AddCircleFilled(c, extent + 8.0f + 5.0f * flash, U32(theme::kBad, 0.15f + 0.35f * flash));
