@@ -65,6 +65,10 @@ mingw32-make && ./letter-flow.exe
 - **Click an office**: inspect its mail, add/remove truck schedules, and
   give it a postal code (the pencil by its name). While its overflow timer runs, the
   inspector says how long is left.
+- **Build road (R, or the button at the bottom left of the map)**: click the
+  office the road starts from, click empty map to place bends, then click the
+  office it ends at. R again, Esc or a right-click cancels. Click a road to
+  remove it.
 - **Truck schedules**: each schedule has a routing rule — only letters for the
   destination, letters addressed to a postal-code prefix, or all letters.
   Letters that arrive at an office they are not addressed to are forwarded
@@ -166,7 +170,7 @@ src/ui/                  Dear ImGui presentation layer (the only place ImGui exi
   ui.*                   public entry points; shared UI state and its reset, formatting, the dockspace
   ui_internal.h          the per-game UI state (GameUiState) and helpers shared between the ui*.cpp files
   ui_map.cpp             the map: camera, offices, roads, trucks, selection, road building
-  ui_hud.cpp             transport bar (play/pause, speed, clock) and the HUD card
+  ui_hud.cpp             transport bar (play/pause, speed, clock), the HUD card and the road tool
   ui_inspector.cpp       inspector: office panel (letters, schedules, new-schedule form), truck panel
   ui_menu.cpp            main menu, credits page and save list (the screens before a game starts), pause menu, game-over card
   ui_tutorial.cpp        tutorial cards and spotlights

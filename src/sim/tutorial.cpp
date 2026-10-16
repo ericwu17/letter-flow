@@ -46,8 +46,8 @@ const TutorialStep kSteps[] = {
     },
     {
         .title = "Start a road",
-        .body = "Trucks only drive on roads, and there are none yet. Press \"Build a road...\" "
-                "at the bottom of the inspector to start drawing one.",
+        .body = "Trucks only drive on roads, and there are none yet. Press \"Build road\" "
+                "in the bottom-left corner of the map (or press R) to start drawing one.",
         .anchor = TutorialAnchor::BuildRoadButton,
         .done = [](const World& w, const TutorialUiFacts& f) {
             return f.building_road || w.has_road(kAshford, kCentral);

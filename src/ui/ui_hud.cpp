@@ -1,12 +1,14 @@
 // ui_hud.cpp — the overlays on the map: the transport bar (play/pause,
-// speed, day/time) and the HUD card (money, deliveries, the network event,
-// statistics and menu buttons).
+// speed, day/time), the HUD card (money, deliveries, the network event,
+// statistics and menu buttons) and the road tool (the road-building button
+// and its step-by-step banner).
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
 
 #include "sim/events.h"
 #include "sim/game_types.h"
+#include "sim/road.h"
 #include "sim/world.h"
 #include "imgui.h"
 #include "implot.h"  // ImPlot::ShowDemoWindow (the HUD's demo toggle)
@@ -17,11 +19,13 @@
 #include <cmath>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace {
 
 using ui::FormatDayTime;
 using ui::g_game;
+using ui::RoadBuildState;
 namespace theme = ui::theme;
 using theme::U32;
 
@@ -480,4 +484,80 @@ void DrawHUD(const World& world) {
         ImGui::ShowDemoWindow(&show_imgui_demo);
     if (show_implot_demo)
         ImPlot::ShowDemoWindow(&show_implot_demo);
+}
+
+// ---------------------------------------------------------------------------
+// Road tool
+// ---------------------------------------------------------------------------
+
+void DrawRoadTool(const World& world) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (world.is_game_over())
+        return;
+
+    // R starts road building, or cancels it. Not while typing or under the
+    // pause menu.
+    if (!io.WantCaptureKeyboard && !g_game.pause_menu_open && ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+        g_game.road_build_state = g_game.road_build_state == RoadBuildState::Idle ? RoadBuildState::SelectSource
+                                                                                  : RoadBuildState::Idle;
+        g_game.road_builder = RoadBuilder{};
+    }
+
+    // A card pinned to the bottom-left corner of the map area, clear of the
+    // tutorial cards and the paused label at bottom center. While building it
+    // grows in place into a banner walking through the steps.
+    ImVec2 area_min, area_size;
+    ui::GetMapArea(area_min, area_size);
+    const float margin = ImGui::GetFrameHeight() * 0.4f;
+    ImGui::SetNextWindowPos({area_min.x + margin, area_min.y + area_size.y - margin}, ImGuiCond_Always,
+                            {0.0f, 1.0f});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+    ImGui::Begin("##road_tool", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImGui::PopStyleVar();
+    const ImVec2 card_min = ImGui::GetWindowPos();
+    const ImVec2 card_size = ImGui::GetWindowSize();
+    theme::DrawShadowedPanel(ImGui::GetBackgroundDrawList(), card_min,
+                             {card_min.x + card_size.x, card_min.y + card_size.y}, ImGui::GetStyle().WindowRounding);
+
+    if (g_game.road_build_state == RoadBuildState::Idle) {
+        if (theme::PrimaryButton("Build road  (R)")) {
+            g_game.road_build_state = RoadBuildState::SelectSource;
+            g_game.road_builder = RoadBuilder{};
+        }
+        ui::NoteItemAnchor(TutorialAnchor::BuildRoadButton);
+        ImGui::SetItemTooltip("Click a road on the map to remove it.");
+        ImGui::End();
+        return;
+    }
+
+    // Road-building mode: a warn-tinted banner walking through the steps, at a
+    // fixed width so the card doesn't jump as the text changes.
+    const float width = ImGui::GetFontSize() * 22.0f;
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Rgb(214, 158, 46, 45));
+    ImGui::BeginChild("road_banner", ImVec2(width, 0.0f),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::PushFont(nullptr, theme::kFontSmall);
+    ImGui::TextColored(theme::kWarnText, "ROAD-BUILDING MODE");
+    ImGui::PopFont();
+
+    if (g_game.road_build_state == RoadBuildState::SelectSource) {
+        ImGui::TextUnformatted("1. Click the office the road starts from.");
+    } else {
+        ImGui::TextUnformatted("2.Click to place bends, then click the office it ends at.");
+    }
+    ImGui::PopTextWrapPos();
+
+    if (ImGui::Button("Cancel  (Esc)")) {
+        g_game.road_build_state = RoadBuildState::Idle;
+        g_game.road_builder = RoadBuilder{};
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("or right-click");
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::End();
 }

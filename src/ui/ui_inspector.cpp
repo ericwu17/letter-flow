@@ -1,7 +1,6 @@
 // ui_inspector.cpp — the inspector docked on the left: the selected post
 // office (letters, statistics, schedule table and its "+ New schedule"
-// button, postal code) or truck (route, timing, cargo), and the road-building
-// controls.
+// button, postal code) or truck (route, timing, cargo).
 #include "ui/ui.h"
 #include "ui/ui_internal.h"
 #include "ui/ui_theme.h"
@@ -10,8 +9,6 @@
 #include "sim/entities.h"
 #include "sim/events.h"
 #include "sim/game_types.h"
-#include "sim/road.h"
-#include "sim/road_builder.h"
 #include "sim/truck.h"
 #include "sim/world.h"
 #include "imgui.h"
@@ -32,7 +29,6 @@ namespace {
 using ui::FormatDayTime;
 using ui::FormatDuration;
 using ui::g_game;
-using ui::RoadBuildState;
 using ui::SelectOffice;
 namespace theme = ui::theme;
 
@@ -788,52 +784,6 @@ void DrawOfficePanel(World& world, PostOfficeId selected) {
         ui::DrawOfficeStats(world, selected);
 }
 
-// Road-building controls, shown under either panel.
-void DrawRoadBuildSection(const World& world) {
-    const std::vector<PostOffice>& offices = world.get_post_offices();
-
-    theme::SectionHeading("Roads");
-
-    if (g_game.road_build_state == RoadBuildState::Idle) {
-        if (ImGui::Button("Build a road...")) {
-            g_game.road_build_state = RoadBuildState::SelectSource;
-            g_game.road_builder = RoadBuilder{};
-        }
-        ui::NoteItemAnchor(TutorialAnchor::BuildRoadButton);
-        ImGui::SameLine();
-        ImGui::TextDisabled("Click a road on the map to remove it.");
-        return;
-    }
-
-    // Road-building mode: a warn-tinted banner walking through the steps.
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::Rgb(214, 158, 46, 45));
-    ImGui::BeginChild("road_banner", ImVec2(-FLT_MIN, 0.0f),
-                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
-    ImGui::PushFont(nullptr, theme::kFontSmall);
-    ImGui::TextColored(theme::kWarnText, "ROAD-BUILDING MODE");
-    ImGui::PopFont();
-
-    if (g_game.road_build_state == RoadBuildState::SelectSource) {
-        ImGui::TextUnformatted("1. Click the office the road starts from.");
-    } else {
-        ImGui::Text("2. From %s: click to place bends, then click the office it ends at.",
-                    g_game.road_builder.src != kNoPostOffice ? offices[g_game.road_builder.src].name.c_str() : "?");
-        const std::size_t bends = g_game.road_builder.vertices.empty() ? 0
-                                : g_game.road_builder.vertices.size() - 1;  // exclude source office vertex
-        ImGui::TextDisabled("%zu bends placed, %.0f units so far.", bends,
-                            polyline_length(g_game.road_builder.vertices));
-    }
-
-    if (ImGui::Button("Cancel  (Esc)")) {
-        g_game.road_build_state = RoadBuildState::Idle;
-        g_game.road_builder = RoadBuilder{};
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("or right-click the map");
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-}
-
 }  // namespace
 
 void DrawInspector(World& world) {
@@ -864,6 +814,5 @@ void DrawInspector(World& world) {
         DrawTruckPanel(world, *truck);
     else
         DrawOfficePanel(world, office);
-    DrawRoadBuildSection(world);
     ImGui::End();
 }

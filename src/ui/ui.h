@@ -73,6 +73,11 @@ void DrawTransportBar(World& world);
 // windows (F1 / F2).
 void DrawHUD(const World& world);
 
+// Road tool pinned to the bottom-left of the map: the "Build road" button
+// (also R, which cancels too), growing into a banner that walks through the
+// steps while a road is being drawn. Hidden once the game is over.
+void DrawRoadTool(const World& world);
+
 // Inspector for the current selection, docked on the left: for a post
 // office, its outbound letter table and schedule editing; for a truck, its
 // route, timing and cargo. A selected truck that arrives hands the

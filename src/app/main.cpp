@@ -249,6 +249,7 @@ int main(int, char**)
             DrawWorld(*world);
             DrawTransportBar(*world);
             DrawHUD(*world);
+            DrawRoadTool(*world);
             DrawInspector(*world);
             DrawStatsWindow(*world);
             const bool left_tutorial = tutorial && !game_over && DrawTutorial(*tutorial, *world);
